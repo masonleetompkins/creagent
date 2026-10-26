@@ -8,6 +8,7 @@ import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
 import { runDraftAll, runDraftSlot } from "./lib/drafting";
 import { isIngestSource, runIngest } from "./lib/ingest";
+import { metaChatClient, runAgentTurn } from "./lib/agent";
 import { runSlotAutoEdit } from "./lib/autoedit";
 import { requestKey, runKeyingSetup } from "./lib/corridorkey";
 import { runExport } from "./lib/export";
@@ -107,6 +108,12 @@ async function dispatch(job: JobRow): Promise<unknown> {
     const result = runKeyingSetup();
     updateProgress(job.id, { stage: "ready" });
     return result;
+  }
+  if (job.name === "agent_turn") {
+    const { chatId, message } = data;
+    if (typeof chatId !== "string" || !chatId) throw new Error("chatId is required");
+    if (typeof message !== "string" || !message.trim()) throw new Error("message is required");
+    return runAgentTurn(chatId, message, metaChatClient());
   }
   if (job.name === "video_autoedit") {
     const { slotId } = data;

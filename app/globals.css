@@ -739,6 +739,46 @@ button:disabled {
   margin: 2px 0;
   font-size: 0.8rem;
 }
+.chat {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.chat-list {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chat-main {
+  flex: 1;
+  min-width: 0;
+}
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.chat-msg {
+  padding: 8px 12px;
+  border: 1px solid #333;
+  white-space: pre-wrap;
+}
+.chat-msg.user {
+  background: #1a2b3d;
+  align-self: flex-end;
+  max-width: 80%;
+}
+.chat-msg.assistant {
+  background: #161616;
+}
+.chat-tool {
+  font-size: 0.75rem;
+  color: #888;
+}
 .ved-noteitem {
   display: flex;
   gap: 8px;

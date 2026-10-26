@@ -21,6 +21,7 @@ export default function RootLayout({
             </a>
             <nav>
               <a href="/ingest">Ingest</a>
+              <a href="/chat">Chat</a>
               <a href="/brain">Brain</a>
               <a href="/pillars">Pillars</a>
               <a href="/queue">Queue</a>
