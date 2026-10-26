@@ -1,0 +1,774 @@
+:root {
+  --bg: #ffffff;
+  --ink: #1a1a1a;
+  --muted: #5c5c5c;
+  --line: #e3e3e3;
+  --accent: #0b5fff;
+  --good: #157f3d;
+  --bad: #b3261e;
+  --warn: #9a5b00;
+  --field: #f6f6f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.shell {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 20px 64px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0 16px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 28px;
+}
+
+.brand {
+  font-weight: 650;
+  font-size: 17px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 14px;
+}
+
+.topbar nav a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 550;
+}
+
+select {
+  padding: 9px 11px;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  max-width: 100%;
+}
+
+.cal {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.cal.month .day {
+  min-height: 88px;
+}
+
+.day.dim {
+  opacity: 0.45;
+}
+
+@media (max-width: 700px) {
+  .cal {
+    grid-template-columns: 1fr;
+  }
+}
+
+.day {
+  min-width: 0;
+}
+
+.dayhead {
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+.slot {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-weight: 400;
+  margin-bottom: 6px;
+  padding: 8px 9px;
+}
+
+.slot .slottime {
+  font-weight: 650;
+  margin: 0 6px;
+}
+
+.slot .slotmain {
+  display: block;
+  margin: 2px 0 0 16px;
+}
+
+.slot .slotsub {
+  display: block;
+  margin-left: 16px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: baseline;
+}
+
+.d-red {
+  background: #d13438;
+}
+
+.d-orange {
+  background: #e8820c;
+}
+
+.d-green {
+  background: #157f3d;
+}
+
+.d-gray {
+  background: #9a9a9a;
+}
+
+.st-gray {
+  opacity: 0.65;
+}
+
+.stext-red {
+  color: #d13438;
+}
+
+.stext-orange {
+  color: #9a5b00;
+}
+
+.stext-green {
+  color: #157f3d;
+}
+
+.stext-gray {
+  color: #6e6e6e;
+}
+
+.draftbody {
+  white-space: pre-wrap;
+  background: var(--field);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.mult {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--good);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dialog {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  width: min(640px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+}
+
+.dialog textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  padding: 10px;
+  resize: vertical;
+}
+
+.edgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 16px 0;
+}
+
+@media (max-width: 700px) {
+  .edgrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.slot.sel {
+  border-color: var(--ink);
+  border-width: 2px;
+}
+
+.preview {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+textarea {
+  flex: 1 1 100%;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  padding: 10px;
+}
+
+input[type="color"] {
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  vertical-align: middle;
+}
+
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.photogrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.photo {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--field);
+}
+
+.photo img {
+  display: block;
+  width: 100%;
+  height: 90px;
+  object-fit: cover;
+}
+
+.photo.tagged {
+  outline: 2px solid var(--good);
+}
+
+h1 {
+  font-size: 26px;
+  margin: 0 0 8px;
+}
+
+h2 {
+  font-size: 18px;
+  margin: 28px 0 8px;
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+ol.steps {
+  padding-left: 22px;
+}
+
+ol.steps li {
+  margin-bottom: 8px;
+}
+
+.keycard {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin: 14px 0;
+}
+
+.keycard h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.status {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.status.set {
+  color: var(--good);
+}
+
+.status.unset {
+  color: var(--warn);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+input[type="password"],
+input[type="text"] {
+  flex: 1 1 280px;
+  padding: 9px 11px;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+}
+
+button {
+  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.note {
+  margin-top: 10px;
+  font-size: 13.5px;
+}
+
+.note.ok {
+  color: var(--good);
+}
+
+.note.err {
+  color: var(--bad);
+}
+
+.ved {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ved-top {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.ved-preview {
+  flex: 0 0 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ved-screen {
+  position: relative;
+  width: 100%;
+  max-height: 52vh;
+  margin: 0 auto;
+  background: #000;
+  border: 1px solid #333;
+  aspect-ratio: 9 / 16;
+  max-width: calc(52vh * 9 / 16);
+}
+.ved-screen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.ved-zone {
+  position: absolute;
+  background: rgba(255, 60, 60, 0.1);
+  outline: 1px dashed rgba(255, 60, 60, 0.7);
+  pointer-events: none;
+}
+.ved-caption {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 27%;
+  text-align: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  color: #fff;
+  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  pointer-events: none;
+}
+.ved-nosignal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+}
+.ved-rawbadge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: #f80;
+  color: #000;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+}
+.ved-side {
+  flex: 1;
+  min-width: 0;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+.ved-asset {
+  border: 1px solid #333;
+  padding: 6px 8px;
+  margin: 6px 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.ved-file input[type="file"] {
+  display: none;
+}
+.ved-file {
+  border: 1px solid #555;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.ved-words span {
+  cursor: pointer;
+}
+.ved-words span:hover {
+  background: #333;
+}
+.ved-lowconf {
+  color: #f80;
+  text-decoration: underline dotted;
+}
+.ved-take {
+  border-left: 4px solid #888;
+  padding: 4px 8px;
+  margin: 6px 0;
+  background: #161616;
+}
+.ved-take.keep {
+  border-color: #2c2;
+}
+.ved-take.cut {
+  border-color: #c22;
+}
+.ved-take.unsure {
+  border-color: #f80;
+}
+.ved-strip {
+  position: relative;
+  height: 34px;
+  background: #222;
+  margin: 8px 0;
+}
+.ved-used {
+  position: absolute;
+  top: 0;
+  height: 14px;
+  background: rgba(40, 200, 40, 0.55);
+}
+.ved-takemark {
+  position: absolute;
+  bottom: 0;
+  height: 16px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.ved-takemark.keep {
+  background: #2c2;
+}
+.ved-takemark.cut {
+  background: #c22;
+}
+.ved-takemark.unsure {
+  background: #f80;
+}
+.ved-timeline {
+  border: 1px solid #333;
+}
+.ved-scroll {
+  overflow-x: auto;
+}
+.ved-content {
+  position: relative;
+  min-height: 200px;
+}
+.ved-ruler {
+  position: relative;
+  height: 24px;
+  border-bottom: 1px solid #333;
+  cursor: ew-resize;
+  user-select: none;
+}
+.ved-tick {
+  position: absolute;
+  top: 2px;
+  font-size: 0.7rem;
+  color: #999;
+  border-left: 1px solid #555;
+  padding-left: 3px;
+}
+.ved-lane {
+  position: relative;
+  height: 44px;
+  border-bottom: 1px solid #2a2a2a;
+}
+.ved-lane.kind-audio {
+  height: 32px;
+}
+.ved-lane.kind-caption,
+.ved-lane.kind-graphics {
+  height: 30px;
+}
+.ved-lane.kind-review {
+  display: none;
+}
+.ved-lane.review {
+  height: 26px;
+}
+.ved-lane.review.armed {
+  background: #241a08;
+}
+.ved-lanename {
+  position: sticky;
+  left: 4px;
+  top: 2px;
+  font-size: 0.65rem;
+  color: #777;
+  z-index: 3;
+}
+.ved-clip {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: #274b6d;
+  border: 1px solid #4a90c2;
+  border-radius: 3px;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+.kind-audio .ved-clip {
+  background: #3d5a34;
+  border-color: #6fae5d;
+}
+.ved-clip.sel {
+  outline: 2px solid #fc3;
+}
+.ved-clipname {
+  font-size: 0.7rem;
+  padding: 0 12px;
+  white-space: nowrap;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 30px;
+}
+.ved-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+.ved-handle.l {
+  left: 0;
+  border-left: 3px solid #fc3;
+}
+.ved-handle.r {
+  right: 0;
+  border-right: 3px solid #fc3;
+}
+.ved-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #f33;
+  z-index: 4;
+  pointer-events: none;
+}
+.ved-notemark {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: rgba(255, 180, 0, 0.6);
+  border: 1px solid #fa0;
+  cursor: pointer;
+}
+.ved-notemark.done {
+  background: rgba(80, 160, 80, 0.5);
+  border-color: #4a4;
+}
+.ved-notedraft {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: rgba(255, 200, 0, 0.3);
+  border: 1px dashed #fc0;
+}
+.ved-cap {
+  border: 1px solid #333;
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+.ved-cap.off {
+  opacity: 0.45;
+}
+.ved-capline {
+  margin: 4px 0 4px 12px;
+}
+.ved-capline input[type="text"] {
+  flex: 1;
+}
+.ved-capwords span {
+  cursor: pointer;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+.ved-capwords span:hover {
+  background: #333;
+}
+.ved-capwords span.sel {
+  background: #fc3;
+  color: #000;
+}
+.ved-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ved-graphic {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  text-align: center;
+  font-weight: 900;
+  font-size: 1.6rem;
+  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  pointer-events: none;
+}
+.ved-hfposter {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.ved-hfbadge {
+  position: absolute;
+  top: 40%;
+  left: 6%;
+  right: 6%;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px dashed #4a90c2;
+  padding: 6px;
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+.ved-posterthumb {
+  max-width: 160px;
+  display: block;
+  margin-top: 4px;
+  border: 1px solid #333;
+}
+.ved-exports p {
+  margin: 2px 0;
+  font-size: 0.8rem;
+}
+.ved-noteitem {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ved-keydialog {
+  max-width: 560px;
+}
+.ved-paintstack {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: #000;
+}
+.ved-frame {
+  display: block;
+  width: 100%;
+}
+.ved-paint {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  opacity: 0.75;
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: var(--field);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
