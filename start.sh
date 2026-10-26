@@ -4,10 +4,13 @@ set -euo pipefail
 PORT="${PORT:-3000}"
 APP_DIR="/Users/masontompkins/creagent"
 CONFIG_DIR="/Users/masontompkins/.config/creagent"
+# Finder-launched apps get a minimal PATH; restore the Node toolchain.
+export PATH="/usr/local/bin:$PATH:/opt/homebrew/bin:/usr/local/bin"
 mkdir -p "$CONFIG_DIR"
 cd "$APP_DIR"
 ("$APP_DIR/scripts/ensure-tools.sh") || echo "WARNING: video tools are incomplete."
 (cd "$APP_DIR" && npx tsx scripts/migrate.ts) || echo "WARNING: migrations did not complete."
+URL="http://127.0.0.1:$PORT"
 if [ -f "$CONFIG_DIR/server.pid" ] && kill -0 "$(cat "$CONFIG_DIR/server.pid")" 2>/dev/null; then
   echo "Server already running (pid $(cat "$CONFIG_DIR/server.pid")). Opening browser…"
 else
@@ -17,9 +20,12 @@ else
   echo "Starting worker..."
   nohup npx tsx worker.ts >>"$CONFIG_DIR/worker.log" 2>&1 &
   echo $! > "$CONFIG_DIR/worker.pid"
-  sleep 4
+  echo "Waiting for server…"
+  for _ in $(seq 1 60); do
+    if curl -sf -o /dev/null "$URL/api/health" 2>/dev/null; then break; fi
+    sleep 2
+  done
 fi
-URL="http://127.0.0.1:$PORT"
 if command -v open >/dev/null 2>&1; then open "$URL" || true;
 elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 & disown;
 else echo "Open $URL in your browser."; fi
