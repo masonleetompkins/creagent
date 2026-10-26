@@ -127,7 +127,12 @@ chmod +x "$APP_DIR/stop.sh"
 if [ "$OS" = "Darwin" ]; then
   BUNDLE="$HOME/Applications/$APP_NAME.app"
   log "Creating $BUNDLE"
-  mkdir -p "$BUNDLE/Contents/MacOS"
+  mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+  if [ -f "$APP_DIR/assets/Creagent.icns" ]; then
+    cp "$APP_DIR/assets/Creagent.icns" "$BUNDLE/Contents/Resources/"
+  else
+    log "WARNING: assets/Creagent.icns missing, bundle will have no icon."
+  fi
   cat > "$BUNDLE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -145,6 +150,8 @@ if [ "$OS" = "Darwin" ]; then
   <string>APPL</string>
   <key>CFBundleExecutable</key>
   <string>launcher</string>
+  <key>CFBundleIconFile</key>
+  <string>Creagent</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.0</string>
 </dict>
