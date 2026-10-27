@@ -214,7 +214,7 @@ export const AGENT_TOOLS: ToolDef[] = [
   {
     name: "add_template",
     description:
-      "Add a posting time to the weekly queue. Weekdays: 0=Sun..6=Sat. Set everyday=true to add the same slot all 7 days. Pillar accepts a name (matched case-insensitively) or id.",
+      "Add a posting time to the weekly queue. Weekdays: 0=Sun..6=Sat. Set everyday=true to add the same slot all 7 days. Pillar accepts a name (matched case-insensitively) or id. Always assign the best-fit confirmed pillar; leave it blank only when the user has none.",
     parameters: objParam(
       {
         weekday: N("0=Sunday .. 6=Saturday (ignored when everyday=true)"),

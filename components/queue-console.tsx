@@ -458,7 +458,7 @@ export default function QueueConsole(): React.ReactNode {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: `Set up my posting queue as follows: ${text}\n\nRules: weekdays are 0=Sunday..6=Saturday. First call list_templates to see the current schedule and list_pillars for pillar names. Use add_template for each slot (everyday=true for daily cadences) and delete_template to remove ones I no longer want. When the templates are right, call run_planner once to materialize slots, then reply with a short summary of the schedule.`,
+            message: `Set up my posting queue as follows: ${text}\n\nRules: weekdays are 0=Sunday..6=Saturday. First call list_templates to see the current schedule and list_pillars for pillar names. Use add_template for each slot (everyday=true for daily cadences) and delete_template to remove ones I no longer want. Always assign every slot the best-fit confirmed pillar, even when I don't name one — never leave pillar blank unless I have no confirmed pillars. When the templates are right, call run_planner once to materialize slots, then reply with a short summary of the schedule including which pillar each slot uses.`,
           }),
         }),
       )) as { jobId: string };
@@ -479,6 +479,25 @@ export default function QueueConsole(): React.ReactNode {
       setError((e as Error).message);
     } finally {
       setAgentBusy(false);
+    }
+  }
+
+  async function setTemplatePillar(ids: string[], pillarId: string): Promise<void> {
+    try {
+      await Promise.all(
+        ids.map(async (id) =>
+          readJson(
+            await fetch(`/api/templates/${id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pillar_id: pillarId || null }),
+            }),
+          ),
+        ),
+      );
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -864,16 +883,29 @@ export default function QueueConsole(): React.ReactNode {
         const card = (
           key: string,
           label: string,
-          t: { content_type: string; pillar_name: string | null; platforms: string },
+          t: { content_type: string; pillar_id: string | null; platforms: string },
+          ids: string[],
           onDelete: () => void,
           deleteLabel: string,
         ): React.ReactNode => (
           <section className="keycard" key={key}>
             <p>
-              <strong>{label}</strong> · {typeLabel(t.content_type)} · {t.pillar_name ?? "no pillar"} ·{" "}
+              <strong>{label}</strong> · {typeLabel(t.content_type)} ·{" "}
               {parsePlatforms(t.platforms).join(", ") || "no platforms"}
             </p>
             <div className="row">
+              <select
+                aria-label="Pillar"
+                value={t.pillar_id ?? ""}
+                onChange={(e) => void setTemplatePillar(ids, e.target.value)}
+              >
+                <option value="">No pillar</option>
+                {pillars.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name}
+                  </option>
+                ))}
+              </select>
               <button className="danger" onClick={() => void onDelete()}>
                 {deleteLabel}
               </button>
@@ -885,11 +917,18 @@ export default function QueueConsole(): React.ReactNode {
           if (!first) continue;
           if (new Set(g.map((t) => t.weekday)).size === 7) {
             rows.push(
-              card(`daily-${first.id}`, `Every day ${first.time}`, first, () => removeDaily(g.map((t) => t.id)), "Delete all 7"),
+              card(
+                `daily-${first.id}`,
+                `Every day ${first.time}`,
+                first,
+                g.map((t) => t.id),
+                () => removeDaily(g.map((t) => t.id)),
+                "Delete all 7",
+              ),
             );
           } else {
             for (const t of g.slice().sort((a, b) => a.weekday - b.weekday)) {
-              rows.push(card(t.id, `${DAYS[t.weekday]} ${t.time}`, t, () => removeTemplate(t.id), "Delete"));
+              rows.push(card(t.id, `${DAYS[t.weekday]} ${t.time}`, t, [t.id], () => removeTemplate(t.id), "Delete"));
             }
           }
         }
