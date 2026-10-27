@@ -54,13 +54,18 @@ async function draftOne(slot: SlotRow): Promise<void> {
   );
   const body = resp.output_text.trim();
   if (!body) throw new Error("model returned an empty draft");
+  saveDraft(slot.id, slot.content_type, body);
+}
 
+export function saveDraft(slotId: string, kind: string, body: string): string {
   const db = getDb();
+  const id = randomUUID();
   db.prepare(
     `INSERT INTO drafts (id, slot_id, kind, body, status, created_at)
-     VALUES (?, ?, ?, 'draft', ?)`,
-  ).run(randomUUID(), slot.id, slot.content_type, body, nowIso());
-  db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slot.id);
+     VALUES (?, ?, ?, ?, 'draft', ?)`,
+  ).run(id, slotId, kind, body, nowIso());
+  db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slotId);
+  return id;
 }
 
 function loadSlot(id: string): SlotRow | null {

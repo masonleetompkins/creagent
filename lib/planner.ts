@@ -7,6 +7,7 @@ export type PlannerResult = {
   created: number;
   rolled: number;
   stuck: number;
+  synced: number;
 };
 
 type TemplateRow = {
@@ -68,6 +69,30 @@ export function runPlanner(days = 14): PlannerResult {
   let created = 0;
   let rolled = 0;
   let stuck = 0;
+  let synced = 0;
+
+  // Sync first: template edits (pillar, type, platforms) flow into future
+  // red slots so the calendar matches Queue setup. Orange+ slots have work
+  // attached and are never touched. This also prevents duplicate creation
+  // below when a template's pillar changed after its slots materialized.
+  const byTemplate = new Map(templates.map((t) => [t.id, t]));
+  const redFuture = db
+    .prepare(`SELECT id, brief FROM queue_slots WHERE status = 'red' AND scheduled_at >= ?`)
+    .all(new Date().toISOString()) as { id: string; brief: string }[];
+  const syncSlot = db.prepare(
+    `UPDATE queue_slots SET pillar_id = ?, content_type = ?, platforms = ? WHERE id = ?`,
+  );
+  for (const s of redFuture) {
+    try {
+      const tid = (JSON.parse(s.brief || "{}") as { template_id?: string }).template_id;
+      const t = tid ? byTemplate.get(tid) : undefined;
+      if (!t) continue;
+      syncSlot.run(t.pillar_id, t.content_type, t.platforms, s.id);
+      synced++;
+    } catch {
+      /* leave malformed rows alone */
+    }
+  }
 
   const findSlot = db.prepare(
     `SELECT id FROM queue_slots
@@ -124,5 +149,5 @@ export function runPlanner(days = 14): PlannerResult {
     }
   }
 
-  return { created, rolled, stuck };
+  return { created, rolled, stuck, synced };
 }

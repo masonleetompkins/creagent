@@ -104,6 +104,24 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function summarizeResult(result: unknown): string {
+  if (typeof result !== "object" || result === null) return "done.";
+  const r = result as Record<string, unknown>;
+  if (typeof r.drafted === "number") {
+    const failures = Array.isArray(r.failures) ? r.failures.length : 0;
+    const skipped = typeof r.skipped === "number" ? r.skipped : 0;
+    return `${r.drafted} drafted, ${skipped} skipped${failures > 0 ? `, ${failures} failed` : ""}.`;
+  }
+  if (typeof r.created === "number") {
+    const bits = [`${r.created} created`];
+    if (typeof r.synced === "number" && r.synced > 0) bits.push(`${r.synced} synced to setup`);
+    if (typeof r.rolled === "number" && r.rolled > 0) bits.push(`${r.rolled} rolled forward`);
+    if (typeof r.stuck === "number" && r.stuck > 0) bits.push(`${r.stuck} stuck`);
+    return `${bits.join(", ")}.`;
+  }
+  return `${JSON.stringify(result).slice(0, 200)}`;
+}
+
 function typeLabel(t: string): string {
   return (CONTENT_TYPES as Record<string, { label: string }>)[t]?.label ?? t;
 }
@@ -206,7 +224,7 @@ export default function QueueConsole(): React.ReactNode {
       );
       const done = await pollJob(started.jobId as string);
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
-      setNote(`${label}: ${JSON.stringify(done.result ?? {}).slice(0, 200)}`);
+      setNote(`${label}: ${summarizeResult(done.result)}`);
       await refresh();
       setSelected(null);
     } catch (e) {
