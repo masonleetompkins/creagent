@@ -65,6 +65,30 @@ export default function DataConsole(): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<"date" | "platform" | "likes" | "comments" | "shares" | "views">("date");
+  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+
+  const sorted = [...posts].sort((a, b) => {
+    if (sortKey === "platform") return sortDir * a.platform.localeCompare(b.platform);
+    if (sortKey === "date") {
+      const da = a.posted_at ?? a.collected_at;
+      const db = b.posted_at ?? b.collected_at;
+      return sortDir * da.localeCompare(db);
+    }
+    const ma = a.multipliers[sortKey] ?? -1;
+    const mb = b.multipliers[sortKey] ?? -1;
+    return sortDir * (ma - mb);
+  });
+
+  const toggleSort = (key: typeof sortKey): void => {
+    if (key === sortKey) setSortDir((d) => (d === 1 ? -1 : 1));
+    else {
+      setSortKey(key);
+      setSortDir(key === "platform" ? 1 : -1);
+    }
+  };
+
+  const arrow = (key: typeof sortKey): string => (key === sortKey ? (sortDir === 1 ? " ↑" : " ↓") : "");
 
   const refresh = useCallback(async () => {
     try {
@@ -146,17 +170,17 @@ export default function DataConsole(): React.ReactNode {
         <table className="vtable">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Platform</th>
-              <th>Likes</th>
-              <th>Comments</th>
-              <th>Shares</th>
-              <th>Views</th>
+              <th><button className="th-sort" onClick={() => toggleSort("date")}>Date{arrow("date")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("platform")}>Platform{arrow("platform")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("likes")}>Likes{arrow("likes")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("comments")}>Comments{arrow("comments")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("shares")}>Shares{arrow("shares")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("views")}>Views{arrow("views")}</button></th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {posts.map((p) => (
+            {sorted.map((p) => (
               <tr key={p.id}>
                 <td className="nowrap muted">{(p.posted_at ?? p.collected_at).slice(0, 10)}</td>
                 <td className="nowrap">{p.platform}</td>

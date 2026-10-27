@@ -34,7 +34,7 @@ const TYPES = [
   { id: "metric", label: "Metrics" },
 ];
 
-export default function BrainConsole(): React.ReactNode {
+export default function BrainConsole({ pillars }: { pillars?: React.ReactNode }): React.ReactNode {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [docs, setDocs] = useState<VaultDoc[]>([]);
   const [query, setQuery] = useState("");
@@ -163,6 +163,7 @@ export default function BrainConsole(): React.ReactNode {
       ) : (
         <p className="muted">No voice profile yet — run ingest in Settings.</p>
       )}
+      {pillars}
       <h2>Vault</h2>
       <div className="vtab">
         {TYPES.map((t) => (

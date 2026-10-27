@@ -12,13 +12,18 @@ export default function BrainPage(): React.ReactNode {
           </div>
         </div>
       </div>
-      <BrainConsole />
-      <h2>Content pillars</h2>
-      <p className="muted">
-        Discovered by analysis, editable by you. The queue planner assigns one
-        pillar to each posting slot.
-      </p>
-      <PillarsManager />
+      <BrainConsole
+        pillars={
+          <>
+            <h2>Content pillars</h2>
+            <p className="muted">
+              Discovered by analysis, editable by you. The queue planner assigns
+              one pillar to each posting slot.
+            </p>
+            <PillarsManager />
+          </>
+        }
+      />
     </>
   );
 }
