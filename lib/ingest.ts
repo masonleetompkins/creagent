@@ -64,6 +64,7 @@ function itemToAsset(item: Record<string, unknown>): {
   title: string;
   transcript: string;
   sourceUrl: string | null;
+  postedAt: string | null;
 } {
   const text = pick(
     item,
@@ -81,7 +82,43 @@ function itemToAsset(item: Record<string, unknown>): {
     title: title.slice(0, 300),
     transcript: text.slice(0, 20000),
     sourceUrl: url || null,
+    postedAt: parsePostedAt(item),
   };
+}
+
+const DATE_KEYS = [
+  "created_at",
+  "createdAt",
+  "published_at",
+  "publishedAt",
+  "date",
+  "timestamp",
+  "taken_at",
+  "upload_date",
+];
+
+export function parsePostedAt(item: Record<string, unknown>): string | null {
+  for (const key of DATE_KEYS) {
+    const value = item[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      // Heuristic: seconds (< 1e12) vs milliseconds.
+      const ms = value < 1e12 ? value * 1000 : value;
+      const d = new Date(ms);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+    if (typeof value === "string" && value.trim()) {
+      const num = Number(value);
+      if (Number.isFinite(num) && num > 0 && /^\d+(\.\d+)?$/.test(value.trim())) {
+        const ms = num < 1e12 ? num * 1000 : num;
+        const d = new Date(ms);
+        if (!Number.isNaN(d.getTime())) return d.toISOString();
+        continue;
+      }
+      const d = new Date(value);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+  return null;
 }
 
 const ITEM_KEYS = ["items", "results", "posts", "videos", "tweets", "data"];
@@ -150,8 +187,12 @@ function truncateRaw(value: unknown, depth: number): unknown {
 export type IngestResult = {
   assets: number;
   pages: number;
+  skipped: number;
+  duplicates: number;
   costs: unknown[];
 };
+
+export type IngestWindow = { since?: string; until?: string };
 
 const MAX_PAGES = 5;
 
@@ -159,18 +200,24 @@ export async function runIngest(
   source: IngestSource,
   value: string,
   onProgress?: (assets: number) => Promise<void> | void,
+  window?: IngestWindow,
 ): Promise<IngestResult> {
   const def = INGEST_SOURCES[source];
   const apiKey = loadKeys().monid;
   if (!apiKey) throw new Error("save a Monid key in Settings first");
+  const sinceMs = window?.since ? Date.parse(window.since) : Number.NaN;
+  const untilMs = window?.until ? Date.parse(window.until) : Number.NaN;
   const db = getDb();
   const insert = db.prepare(
-    `INSERT INTO assets (id, source, source_url, kind, title, transcript, metadata, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO assets (id, source, source_url, kind, title, transcript, metadata, posted_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const seen = db.prepare(`SELECT 1 FROM assets WHERE source_url = ? LIMIT 1`);
   let cursor: string | null = null;
   let assets = 0;
   let pages = 0;
+  let skipped = 0;
+  let duplicates = 0;
   const costs: unknown[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const body: Record<string, string> =
@@ -188,8 +235,26 @@ export async function runIngest(
     costs.push(result.cost);
     const payload = runPayload(result);
     const items = findItems(payload);
+    let pageDated = 0;
+    let pageOlderThanSince = 0;
     for (const item of items) {
       const asset = itemToAsset(item);
+      if (asset.postedAt) {
+        const ms = Date.parse(asset.postedAt);
+        pageDated++;
+        if (!Number.isNaN(sinceMs) && ms < sinceMs) pageOlderThanSince++;
+        if (
+          (!Number.isNaN(sinceMs) && ms < sinceMs) ||
+          (!Number.isNaN(untilMs) && ms > untilMs)
+        ) {
+          skipped++;
+          continue;
+        }
+      }
+      if (asset.sourceUrl && seen.get(asset.sourceUrl)) {
+        duplicates++;
+        continue;
+      }
       insert.run(
         randomUUID(),
         source,
@@ -198,14 +263,18 @@ export async function runIngest(
         asset.title,
         asset.transcript,
         JSON.stringify({ runId: result.runId, raw: truncateRaw(item, 4) }),
+        asset.postedAt,
         nowIso(),
       );
       assets++;
     }
     pages++;
     if (onProgress) await onProgress(assets);
+    // Handle feeds arrive newest-first: once a whole page predates the
+    // window, deeper pages only cost money.
+    if (!Number.isNaN(sinceMs) && pageDated > 0 && pageOlderThanSince === pageDated) break;
     cursor = def.inputKind === "handle" ? findCursor(payload) : null;
     if (!cursor) break;
   }
-  return { assets, pages, costs };
+  return { assets, pages, skipped, duplicates, costs };
 }

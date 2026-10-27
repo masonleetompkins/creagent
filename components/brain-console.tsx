@@ -66,7 +66,7 @@ export default function BrainConsole(): React.ReactNode {
       {overview.voice ? (
         <p>{overview.voice.body}</p>
       ) : (
-        <p className="muted">No voice profile yet — run Ingest then Analysis.</p>
+        <p className="muted">No voice profile yet — run ingest in Settings.</p>
       )}
       <h2>Vault</h2>
       <p className="muted">
@@ -105,7 +105,7 @@ export default function BrainConsole(): React.ReactNode {
       <h2>Posting strategy</h2>
       {overview.strategy.length === 0 && (
         <p className="muted">
-          No cadence yet — add templates in the <a href="/queue">queue</a>.
+          No cadence yet — open <a href="/queue">calendar</a> → Queue setup.
         </p>
       )}
       {overview.strategy.map((t, i) => (

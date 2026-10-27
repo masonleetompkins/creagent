@@ -1,4 +1,5 @@
 import SettingsForm from "@/components/settings-form";
+import IngestConsole from "@/components/ingest-console";
 import ThemeSettings from "@/components/theme-settings";
 
 export default function SettingsPage(): React.ReactNode {
@@ -10,6 +11,13 @@ export default function SettingsPage(): React.ReactNode {
         They never leave your computer except in direct calls to each provider.
       </p>
       <SettingsForm />
+      <h2>Ingest</h2>
+      <p className="muted">
+        Pull your existing posts in through Monid — pick a back-dated window,
+        or refresh up to the current moment. Ingested posts land on the
+        calendar as history; analysis folds them into the brain.
+      </p>
+      <IngestConsole />
       <ThemeSettings />
     </>
   );

@@ -1,4 +1,5 @@
 import BrainConsole from "@/components/brain-console";
+import PillarsManager from "@/components/pillars-manager";
 
 export default function BrainPage(): React.ReactNode {
   return (
@@ -9,6 +10,12 @@ export default function BrainPage(): React.ReactNode {
         strategy, and the platform playbook it drafts from.
       </p>
       <BrainConsole />
+      <h2>Content pillars</h2>
+      <p className="muted">
+        Discovered by analysis, editable by you. The queue planner assigns one
+        pillar to each posting slot.
+      </p>
+      <PillarsManager />
     </>
   );
 }

@@ -2,13 +2,25 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const SOURCES = [
-  { id: "x_posts", label: "X posts by handle", placeholder: "username (no @)" },
-  { id: "tiktok_videos", label: "TikTok videos by handle", placeholder: "username (no @)" },
-  { id: "instagram_posts", label: "Instagram posts by handle", placeholder: "username (no @)" },
-  { id: "youtube_transcript", label: "YouTube transcript by URL", placeholder: "https://www.youtube.com/watch?v=…" },
-  { id: "instagram_reel", label: "Instagram reel transcript by URL", placeholder: "https://www.instagram.com/reel/…" },
+const PLATFORMS = [
+  { id: "x_posts", label: "X", source: "x_posts" },
+  { id: "tiktok_videos", label: "TikTok", source: "tiktok_videos" },
+  { id: "instagram_posts", label: "Instagram", source: "instagram_posts" },
 ];
+
+const URL_SOURCES = [
+  { id: "youtube_transcript", label: "YouTube transcript by URL" },
+  { id: "instagram_reel", label: "Instagram reel transcript by URL" },
+];
+
+const WINDOWS = [
+  { id: "7", label: "Last 7 days" },
+  { id: "30", label: "Last 30 days" },
+  { id: "90", label: "Last 90 days" },
+  { id: "all", label: "All time" },
+];
+
+const HANDLE_KEY = "creagent.ingest.handles";
 
 type Asset = {
   id: string;
@@ -17,10 +29,9 @@ type Asset = {
   source_url: string | null;
   chars: number;
   analyzed_at: string | null;
+  posted_at: string | null;
   created_at: string;
 };
-
-type JobView = { state: string; detail: string } | null;
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const data = (await res.json()) as Record<string, unknown>;
@@ -28,32 +39,34 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return data;
 }
 
-async function pollJob(jobId: string, onUpdate: (view: JobView) => void): Promise<void> {
+async function pollJob(jobId: string): Promise<Record<string, unknown>> {
   for (;;) {
     const data = await readJson(await fetch(`/api/jobs/${jobId}`));
-    const state = data.state as string;
-    if (state === "completed") {
-      onUpdate({ state, detail: JSON.stringify(data.result ?? {}).slice(0, 300) });
-      return;
-    }
-    if (state === "failed") {
-      onUpdate({ state, detail: (data.failedReason as string) ?? "job failed" });
-      return;
-    }
-    const progress = data.progress as { assets?: number } | null;
-    onUpdate({
-      state,
-      detail: progress?.assets !== undefined ? `${progress.assets} assets so far…` : "working…",
-    });
+    if (data.state === "completed" || data.state === "failed") return data;
     await new Promise((r) => setTimeout(r, 2000));
   }
 }
 
+function loadHandles(): Record<string, string> {
+  try {
+    return (JSON.parse(window.localStorage.getItem(HANDLE_KEY) ?? "{}") as Record<string, string>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
 export default function IngestConsole(): React.ReactNode {
-  const [source, setSource] = useState(SOURCES[0].id);
-  const [value, setValue] = useState("");
+  const [handles, setHandles] = useState<Record<string, string>>({});
+  const [checked, setChecked] = useState<Record<string, boolean>>({
+    x_posts: true,
+    tiktok_videos: false,
+    instagram_posts: false,
+  });
+  const [windowId, setWindowId] = useState("30");
+  const [urlSource, setUrlSource] = useState(URL_SOURCES[0].id);
+  const [urlValue, setUrlValue] = useState("");
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [job, setJob] = useState<JobView>(null);
+  const [phase, setPhase] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,63 +80,192 @@ export default function IngestConsole(): React.ReactNode {
   }, []);
 
   useEffect(() => {
+    setHandles(loadHandles());
     void refreshAssets();
   }, [refreshAssets]);
 
-  async function startIngest(): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      const data = await readJson(
-        await fetch("/api/ingest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ source, value }),
-        }),
-      );
-      await pollJob(data.jobId as string, setJob);
-      await refreshAssets();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  function setHandle(id: string, value: string): void {
+    setHandles((h) => {
+      const next = { ...h, [id]: value };
+      try {
+        window.localStorage.setItem(HANDLE_KEY, JSON.stringify(next));
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
   }
 
-  async function startAnalysis(): Promise<void> {
+  async function runBatch(since: string | undefined, label: string): Promise<void> {
+    const targets = PLATFORMS.filter((p) => checked[p.id] && (handles[p.id] ?? "").trim());
+    if (targets.length === 0) {
+      setError("check at least one platform and enter its handle");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const data = await readJson(
+      let total = 0;
+      for (const t of targets) {
+        setPhase(`${label}: ${t.label}…`);
+        const started = await readJson(
+          await fetch("/api/ingest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              source: t.source,
+              value: (handles[t.id] ?? "").replace(/^@/, "").trim(),
+              since,
+            }),
+          }),
+        );
+        const done = await pollJob(started.jobId as string);
+        if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
+        total += ((done.result ?? {}) as { assets?: number }).assets ?? 0;
+      }
+      setPhase("Analyzing…");
+      const started = await readJson(
         await fetch("/api/analysis/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         }),
       );
-      await pollJob(data.jobId as string, setJob);
+      const done = await pollJob(started.jobId as string);
+      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
+      setPhase(`Done: ${total} new asset${total === 1 ? "" : "s"} ingested and analyzed.`);
       await refreshAssets();
     } catch (e) {
       setError((e as Error).message);
+      setPhase(null);
     } finally {
       setBusy(false);
     }
   }
 
-  const active = SOURCES.find((s) => s.id === source) ?? SOURCES[0];
+  async function ingestAndAnalyze(): Promise<void> {
+    const days = windowId === "all" ? null : Number(windowId);
+    const since =
+      days === null ? undefined : new Date(Date.now() - days * 86400000).toISOString();
+    await runBatch(since, "Ingesting");
+  }
+
+  async function refreshUpToNow(): Promise<void> {
+    const latest = assets
+      .map((a) => a.posted_at ?? a.created_at)
+      .sort()
+      .at(-1);
+    const since =
+      latest ?? new Date(Date.now() - 7 * 86400000).toISOString();
+    await runBatch(since, "Refreshing");
+  }
+
+  async function ingestUrl(): Promise<void> {
+    if (!urlValue.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setPhase("Ingesting URL…");
+      const started = await readJson(
+        await fetch("/api/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source: urlSource, value: urlValue.trim() }),
+        }),
+      );
+      const done = await pollJob(started.jobId as string);
+      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
+      setPhase("URL ingested. Run analysis to fold it into the brain.");
+      setUrlValue("");
+      await refreshAssets();
+    } catch (e) {
+      setError((e as Error).message);
+      setPhase(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function analyzeOnly(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      setPhase("Analyzing…");
+      const started = await readJson(
+        await fetch("/api/analysis/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }),
+      );
+      const done = await pollJob(started.jobId as string);
+      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
+      setPhase("Analysis complete.");
+      await refreshAssets();
+    } catch (e) {
+      setError((e as Error).message);
+      setPhase(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const unanalyzed = assets.filter((a) => !a.analyzed_at).length;
 
   return (
     <>
       <section className="keycard">
-        <h2>Add a source</h2>
+        <h2>Accounts</h2>
+        {PLATFORMS.map((p) => (
+          <div className="checkline" key={p.id}>
+            <input
+              type="checkbox"
+              aria-label={`Include ${p.label}`}
+              checked={checked[p.id] ?? false}
+              onChange={(e) => setChecked((c) => ({ ...c, [p.id]: e.target.checked }))}
+            />
+            <label style={{ minWidth: 74 }}>{p.label}</label>
+            <input
+              type="text"
+              spellCheck={false}
+              aria-label={`${p.label} handle`}
+              placeholder="username (no @)"
+              value={handles[p.id] ?? ""}
+              onChange={(e) => setHandle(p.id, e.target.value)}
+            />
+          </div>
+        ))}
+        <div className="row">
+          <select aria-label="Window" value={windowId} onChange={(e) => setWindowId(e.target.value)}>
+            {WINDOWS.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.label}
+              </option>
+            ))}
+          </select>
+          <button className="primary" disabled={busy} onClick={() => void ingestAndAnalyze()}>
+            {busy ? "Working…" : "Ingest & analyze"}
+          </button>
+          <button disabled={busy} onClick={() => void refreshUpToNow()}>
+            Refresh
+          </button>
+          <button disabled={busy || unanalyzed === 0} onClick={() => void analyzeOnly()}>
+            Analyze unanalyzed ({unanalyzed})
+          </button>
+        </div>
+        {phase ? <p className="note ok">{phase}</p> : null}
+        {error ? <p className="note err">{error}</p> : null}
+      </section>
+
+      <section className="keycard">
+        <h2>Single URL</h2>
         <div className="row">
           <select
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            aria-label="Source type"
+            value={urlSource}
+            onChange={(e) => setUrlSource(e.target.value)}
+            aria-label="URL source type"
           >
-            {SOURCES.map((s) => (
+            {URL_SOURCES.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
@@ -132,31 +274,12 @@ export default function IngestConsole(): React.ReactNode {
           <input
             type="text"
             spellCheck={false}
-            placeholder={active.placeholder}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
+            placeholder="https://…"
+            value={urlValue}
+            onChange={(e) => setUrlValue(e.target.value)}
           />
-          <button className="primary" disabled={busy || !value.trim()} onClick={() => void startIngest()}>
-            {busy ? "Working…" : "Ingest"}
-          </button>
-        </div>
-        {job ? (
-          <p className={`note ${job.state === "completed" ? "ok" : job.state === "failed" ? "err" : ""}`}>
-            {job.state}: {job.detail}
-          </p>
-        ) : null}
-        {error ? <p className="note err">{error}</p> : null}
-      </section>
-
-      <section className="keycard">
-        <h2>Analysis</h2>
-        <p className="muted">
-          {unanalyzed} unanalyzed asset{unanalyzed === 1 ? "" : "s"}. Analysis
-          reads them with Meta and writes the voice profile, vault, and pillars.
-        </p>
-        <div className="row">
-          <button disabled={busy || unanalyzed === 0} onClick={() => void startAnalysis()}>
-            {busy ? "Working…" : "Analyze unanalyzed"}
+          <button disabled={busy || !urlValue.trim()} onClick={() => void ingestUrl()}>
+            Ingest
           </button>
         </div>
       </section>
@@ -165,26 +288,22 @@ export default function IngestConsole(): React.ReactNode {
       {assets.length === 0 ? (
         <p className="muted">Nothing ingested yet.</p>
       ) : (
-        assets.map((a) => (
-          <section className="keycard" key={a.id}>
-            <h2>
-              {a.title}
-              <span className={`status ${a.analyzed_at ? "set" : "unset"}`}>
-                {a.analyzed_at ? "analyzed" : "new"}
-              </span>
-            </h2>
-            <p className="muted">
-              {a.source} · {a.chars} chars
-              {a.source_url ? (
-                <>
-                  {" · "}
-                  <a href={a.source_url} target="_blank" rel="noreferrer">
-                    source
-                  </a>
-                </>
-              ) : null}
-            </p>
-          </section>
+        assets.slice(0, 20).map((a) => (
+          <p key={a.id} className="muted">
+            {a.title.slice(0, 90)}
+            <span className={`status ${a.analyzed_at ? "set" : "unset"}`}>
+              {a.analyzed_at ? "analyzed" : "new"}
+            </span>{" "}
+            · {a.source} · {(a.posted_at ?? a.created_at).slice(0, 10)}
+            {a.source_url ? (
+              <>
+                {" · "}
+                <a href={a.source_url} target="_blank" rel="noreferrer">
+                  source
+                </a>
+              </>
+            ) : null}
+          </p>
         ))
       )}
     </>

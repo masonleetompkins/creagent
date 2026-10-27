@@ -30,16 +30,24 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return { pong: true, at: new Date().toISOString() };
   }
   if (job.name === "ingest") {
-    const { source, value } = data;
+    const { source, value, since, until } = data;
     if (typeof source !== "string" || !isIngestSource(source)) {
       throw new Error(`bad ingest source: ${String(source)}`);
     }
     if (typeof value !== "string" || !value.trim()) {
       throw new Error("ingest input is empty");
     }
-    return runIngest(source, value, (assets) => {
-      updateProgress(job.id, { assets });
-    });
+    return runIngest(
+      source,
+      value,
+      (assets) => {
+        updateProgress(job.id, { assets });
+      },
+      {
+        since: typeof since === "string" ? since : undefined,
+        until: typeof until === "string" ? until : undefined,
+      },
+    );
   }
   if (job.name === "analyze") {
     const { limit } = data;

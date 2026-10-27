@@ -51,7 +51,24 @@ type Template = {
 
 type Pillar = { id: string; name: string };
 
+type HistoryAsset = {
+  id: string;
+  source: string;
+  title: string;
+  source_url: string | null;
+  posted_at: string | null;
+  created_at: string;
+};
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const SOURCE_SHORT: Record<string, string> = {
+  x_posts: "X",
+  tiktok_videos: "TikTok",
+  instagram_posts: "IG",
+  youtube_transcript: "YT",
+  instagram_reel: "Reel",
+};
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const data = (await res.json()) as Record<string, unknown>;
@@ -80,6 +97,7 @@ export default function QueueConsole(): React.ReactNode {
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [history, setHistory] = useState<HistoryAsset[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [pillars, setPillars] = useState<Pillar[]>([]);
   const [selected, setSelected] = useState<(Slot & { drafts?: Draft[] }) | null>(null);
@@ -89,6 +107,7 @@ export default function QueueConsole(): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [form, setForm] = useState({
     weekday: "1",
     time: "09:00",
@@ -117,18 +136,17 @@ export default function QueueConsole(): React.ReactNode {
       const start = view === "week" ? weekStart() : monthGridStart();
       const end = new Date(start);
       end.setDate(end.getDate() + (view === "week" ? 7 : 42));
-      const [slotData, tmplData, pillarData] = await Promise.all([
-        readJson(
-          await fetch(
-            `/api/slots?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`,
-          ),
-        ),
+      const range = `from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`;
+      const [slotData, tmplData, pillarData, assetData] = await Promise.all([
+        readJson(await fetch(`/api/slots?${range}`)),
         readJson(await fetch("/api/templates")),
         readJson(await fetch("/api/pillars")),
+        readJson(await fetch(`/api/assets?${range}&limit=500`)),
       ]);
       setSlots(slotData.slots as Slot[]);
       setTemplates(tmplData.templates as Template[]);
       setPillars((pillarData.pillars as Pillar[]) ?? []);
+      setHistory((assetData.assets as HistoryAsset[]) ?? []);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -376,6 +394,15 @@ export default function QueueConsole(): React.ReactNode {
         t.getDate() === day.getDate()
       );
     });
+  const historyByDay = (day: Date): HistoryAsset[] =>
+    history.filter((a) => {
+      const t = new Date(a.posted_at ?? a.created_at);
+      return (
+        t.getFullYear() === day.getFullYear() &&
+        t.getMonth() === day.getMonth() &&
+        t.getDate() === day.getDate()
+      );
+    });
 
   return (
     <>
@@ -386,6 +413,13 @@ export default function QueueConsole(): React.ReactNode {
           </button>
           <button disabled={busy} onClick={() => void runJob("/api/draft/run", { limit: 10 }, "Drafted")}>
             Draft all red
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => setSetupOpen((o) => !o)}
+            className={setupOpen || templates.length === 0 ? "primary" : ""}
+          >
+            Queue setup
           </button>
           <button disabled={busy} onClick={() => setView("week")} className={view === "week" ? "primary" : ""}>
             Week
@@ -412,7 +446,9 @@ export default function QueueConsole(): React.ReactNode {
       <div className={view === "week" ? "cal" : "cal month"}>
         {days.map((day) => {
           const daySlots = byDay(day);
+          const dayHistory = historyByDay(day);
           const shown = view === "week" ? daySlots : daySlots.slice(0, 3);
+          const shownHistory = view === "week" ? dayHistory : dayHistory.slice(0, 2);
           const dim =
             view === "month" && day.getMonth() !== days[15].getMonth() ? " dim" : "";
           return (
@@ -422,6 +458,30 @@ export default function QueueConsole(): React.ReactNode {
                   ? `${DAYS[day.getDay()]} ${day.getMonth() + 1}/${day.getDate()}`
                   : day.getDate()}
               </div>
+              {shownHistory.map((a) => {
+                const label = `${SOURCE_SHORT[a.source] ?? a.source}: ${a.title}`;
+                return a.source_url ? (
+                  <a
+                    key={a.id}
+                    className="asset-chip"
+                    href={a.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={label}
+                  >
+                    <span className="asrc">{SOURCE_SHORT[a.source] ?? "•"}</span>
+                    {a.title}
+                  </a>
+                ) : (
+                  <span key={a.id} className="asset-chip" title={label}>
+                    <span className="asrc">{SOURCE_SHORT[a.source] ?? "•"}</span>
+                    {a.title}
+                  </span>
+                );
+              })}
+              {view === "month" && dayHistory.length > 2 ? (
+                <span className="muted">+{dayHistory.length - 2} posted</span>
+              ) : null}
               {shown.map((s) => (
                 <button
                   key={s.id}
@@ -581,8 +641,14 @@ export default function QueueConsole(): React.ReactNode {
         </section>
       ) : null}
 
-      <h2>Cadence templates</h2>
-      {templates.map((t) => (
+      {setupOpen || templates.length === 0 ? (
+        <>
+          <h2>Queue setup</h2>
+          <p className="muted">
+            Posting times per day, with a pillar, content type, and platforms
+            for each. The planner materializes these into calendar slots.
+          </p>
+          {templates.map((t) => (
         <section className="keycard" key={t.id}>
           <p>
             <strong>
@@ -650,6 +716,8 @@ export default function QueueConsole(): React.ReactNode {
           <button onClick={() => void addTemplate()}>Add</button>
         </div>
       </section>
+        </>
+      ) : null}
     </>
   );
 }

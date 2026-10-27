@@ -70,6 +70,73 @@ function rows<T>(sql: string, ...params: SQLInputValue[]): T[] {
   return getDb().prepare(sql).all(...params) as T[];
 }
 
+export type VideoProjectRow = ProjectDetail["project"] & { track_count: number };
+
+export function listProjects(): VideoProjectRow[] {
+  return rows<VideoProjectRow>(
+    `SELECT p.*, (SELECT COUNT(*) FROM video_tracks t WHERE t.project_id = p.id) AS track_count
+     FROM video_projects p ORDER BY p.updated_at DESC`,
+  );
+}
+
+export function createProject(input: {
+  title?: string;
+  slot_id?: string | null;
+  width?: number;
+  height?: number;
+  fps?: number;
+}): ProjectDetail["project"] {
+  const ts = nowIso();
+  const project = {
+    id: randomUUID(),
+    slot_id: input.slot_id ?? null,
+    title: input.title?.trim() || "Untitled video",
+    width: input.width ?? 1080,
+    height: input.height ?? 1920,
+    fps: input.fps ?? 30,
+  };
+  withTransaction(() => {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO video_projects (id, slot_id, title, width, height, fps, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      project.id,
+      project.slot_id,
+      project.title,
+      project.width,
+      project.height,
+      project.fps,
+      ts,
+      ts,
+    );
+    // Default track stack: keyed subject over graphics over main video, plus audio.
+    const tracks: Array<[string, string, number]> = [
+      ["video", "Subject (keyed)", 0],
+      ["graphics", "Graphics", 1],
+      ["video", "Main", 2],
+      ["audio", "Audio", 3],
+      ["caption", "Captions", 4],
+      ["review", "Review", 5],
+    ];
+    const insertTrack = db.prepare(
+      `INSERT INTO video_tracks (id, project_id, kind, name, position, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [kind, name, position] of tracks) {
+      insertTrack.run(randomUUID(), project.id, kind, name, position, ts);
+    }
+  });
+  const created = getProject(project.id);
+  if (!created) throw new Error("project insert failed");
+  return created;
+}
+
+export function deleteProject(projectId: string): boolean {
+  const res = getDb().prepare(`DELETE FROM video_projects WHERE id = ?`).run(projectId);
+  return res.changes > 0;
+}
+
 export function getProject(projectId: string): ProjectDetail["project"] | null {
   const p = row<ProjectDetail["project"]>(
     `SELECT id, slot_id, title, width, height, fps, style, updated_at

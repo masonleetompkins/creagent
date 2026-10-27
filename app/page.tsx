@@ -21,10 +21,9 @@ export default function Home(): React.ReactNode {
       <InfraStatus />
       <h2>Workflow</h2>
       <p>
-        <a href="/ingest">Ingest</a> your content, run analysis to build the
-        voice profile and vault, refine <a href="/pillars">pillars</a>, then
-        set your cadence and plan the <a href="/queue">queue</a>. Data
-        dashboard and editors are next.
+        <a href="/settings">Ingest</a> your content, run analysis to build the
+        voice profile and vault, refine <a href="/brain">pillars</a>, then
+        set your cadence and plan the <a href="/queue">calendar</a>.
       </p>
     </>
   );

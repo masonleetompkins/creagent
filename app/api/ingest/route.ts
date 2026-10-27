@@ -11,15 +11,33 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const { source, value } = body as { source?: unknown; value?: unknown };
+  const { source, value, since, until } = body as {
+    source?: unknown;
+    value?: unknown;
+    since?: unknown;
+    until?: unknown;
+  };
   if (typeof source !== "string" || !isIngestSource(source)) {
     return NextResponse.json({ error: "unknown ingest source" }, { status: 400 });
   }
   if (typeof value !== "string" || !value.trim()) {
     return NextResponse.json({ error: "ingest input is empty" }, { status: 400 });
   }
+  for (const [name, v] of [
+    ["since", since],
+    ["until", until],
+  ] as const) {
+    if (v !== undefined && (typeof v !== "string" || Number.isNaN(Date.parse(v)))) {
+      return NextResponse.json({ error: `${name} must be a date string` }, { status: 400 });
+    }
+  }
   try {
-    const jobId = enqueue("ingest", { source, value: value.trim() });
+    const jobId = enqueue("ingest", {
+      source,
+      value: value.trim(),
+      since: typeof since === "string" ? since : undefined,
+      until: typeof until === "string" ? until : undefined,
+    });
     return NextResponse.json({ jobId });
   } catch (error) {
     return NextResponse.json(

@@ -1,14 +1,12 @@
-import CarouselList from "@/components/carousel-list";
+import { redirect } from "next/navigation";
+import { createProject, listProjects } from "@/lib/carousel";
 
-export default function CarouselsPage(): React.ReactNode {
-  return (
-    <>
-      <h1>Carousels</h1>
-      <p className="muted">
-        Brand kit, model-written copy, ingested photos or Muse Image graphics —
-        exported as 1080×1350 PNGs.
-      </p>
-      <CarouselList />
-    </>
-  );
+export const dynamic = "force-dynamic";
+
+export default function CarouselsPage(): never {
+  const projects = listProjects();
+  if (projects.length === 0) {
+    redirect(`/carousels/${createProject({}).id}`);
+  }
+  redirect(`/carousels/${projects[0].id}`);
 }
