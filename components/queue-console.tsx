@@ -125,6 +125,9 @@ export default function QueueConsole(): React.ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentNote, setAgentNote] = useState<string | null>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [form, setForm] = useState({
     weekday: "1",
@@ -363,19 +366,43 @@ export default function QueueConsole(): React.ReactNode {
   }
 
   async function addTemplate(): Promise<void> {
+    const days =
+      form.weekday === "all" ? [0, 1, 2, 3, 4, 5, 6] : [Number(form.weekday)];
+    const plats = form.platforms.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+    let created = 0;
+    let skipped = 0;
     try {
-      await readJson(
-        await fetch("/api/templates", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            weekday: Number(form.weekday),
-            time: form.time,
-            pillar_id: form.pillar_id || null,
-            content_type: form.content_type,
-            platforms: form.platforms.split(",").map((p) => p.trim().toLowerCase()),
+      for (const weekday of days) {
+        if (templates.some(
+          (t) =>
+            t.weekday === weekday &&
+            t.time === form.time &&
+            (t.pillar_id ?? "") === (form.pillar_id || "") &&
+            t.content_type === form.content_type &&
+            JSON.stringify(parsePlatforms(t.platforms).slice().sort()) === JSON.stringify(plats.slice().sort()),
+        )) {
+          skipped++;
+          continue;
+        }
+        await readJson(
+          await fetch("/api/templates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              weekday,
+              time: form.time,
+              pillar_id: form.pillar_id || null,
+              content_type: form.content_type,
+              platforms: plats,
+            }),
           }),
-        }),
+        );
+        created++;
+      }
+      setNote(
+        created === 0
+          ? "Those slots already exist — nothing added."
+          : `Added ${created} slot${created === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} already existed)` : ""}.`,
       );
       await refresh();
     } catch (e) {
@@ -386,6 +413,81 @@ export default function QueueConsole(): React.ReactNode {
   async function removeTemplate(id: string): Promise<void> {
     try {
       await readJson(await fetch(`/api/templates/${id}`, { method: "DELETE" }));
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function agentChatId(): Promise<string> {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem("creagent.activeChat");
+    } catch {
+      /* ignore */
+    }
+    const list = (await readJson(await fetch("/api/agent/chats"))) as { chats: { id: string }[] };
+    if (stored && list.chats.some((c) => c.id === stored)) return stored;
+    if (list.chats[0]) {
+      try {
+        localStorage.setItem("creagent.activeChat", list.chats[0].id);
+      } catch {
+        /* ignore */
+      }
+      return list.chats[0].id;
+    }
+    const created = (await readJson(await fetch("/api/agent/chats", { method: "POST" }))) as { chatId: string };
+    try {
+      localStorage.setItem("creagent.activeChat", created.chatId);
+    } catch {
+      /* ignore */
+    }
+    return created.chatId;
+  }
+
+  async function askAgent(): Promise<void> {
+    const text = agentInput.trim();
+    if (!text || agentBusy) return;
+    setAgentBusy(true);
+    setAgentNote(null);
+    setError(null);
+    try {
+      const id = await agentChatId();
+      const started = (await readJson(
+        await fetch(`/api/agent/chats/${id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: `Set up my posting queue as follows: ${text}\n\nRules: weekdays are 0=Sunday..6=Saturday. First call list_templates to see the current schedule and list_pillars for pillar names. Use add_template for each slot (everyday=true for daily cadences) and delete_template to remove ones I no longer want. When the templates are right, call run_planner once to materialize slots, then reply with a short summary of the schedule.`,
+          }),
+        }),
+      )) as { jobId: string };
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const job = (await readJson(await fetch(`/api/jobs/${started.jobId}`))) as {
+          state: string;
+          failedReason?: string;
+        };
+        if (job.state === "completed") break;
+        if (job.state === "failed") throw new Error(job.failedReason ?? "agent turn failed");
+      }
+      setAgentInput("");
+      setAgentNote("Done — the schedule below is updated. The full conversation is in the agent panel.");
+      window.dispatchEvent(new CustomEvent("creagent:agent-updated"));
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function removeDaily(ids: string[]): Promise<void> {
+    if (!window.confirm(`Delete this daily slot (all ${ids.length} days)?`)) return;
+    try {
+      await Promise.all(
+        ids.map(async (id) => readJson(await fetch(`/api/templates/${id}`, { method: "DELETE" }))),
+      );
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -731,20 +833,68 @@ export default function QueueConsole(): React.ReactNode {
             Posting times per day, with a pillar, content type, and platforms
             for each. The planner materializes these into calendar slots.
           </p>
-          {templates.map((t) => (
-        <section className="keycard" key={t.id}>
-          <p>
-            <strong>
-              {DAYS[t.weekday]} {t.time}
-            </strong>{" "}
-            · {typeLabel(t.content_type)} · {t.pillar_name ?? "no pillar"} ·{" "}
-            {parsePlatforms(t.platforms).join(", ") || "no platforms"}
-          </p>
-          <div className="row">
-            <button className="danger" onClick={() => void removeTemplate(t.id)}>Delete</button>
-          </div>
-        </section>
-      ))}
+          <section className="keycard slim">
+            <div className="row">
+              <input
+                type="text"
+                aria-label="Describe your cadence to the agent"
+                placeholder='e.g. "Post every day at 9am and 2pm, threads on X in the morning"'
+                value={agentInput}
+                onChange={(e) => setAgentInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void askAgent();
+                }}
+              />
+              <button className="primary" disabled={agentBusy || !agentInput.trim()} onClick={() => void askAgent()}>
+                {agentBusy ? "Working…" : "Ask agent"}
+              </button>
+            </div>
+            {agentBusy ? <p className="muted">The agent is setting up your queue…</p> : null}
+            {agentNote ? <p className="note ok">{agentNote}</p> : null}
+          </section>
+          {(() => {
+        const groups = new Map<string, typeof templates>();
+        for (const t of templates) {
+          const key = `${t.time}|${t.pillar_id ?? ""}|${t.content_type}|${parsePlatforms(t.platforms).slice().sort().join(",")}`;
+          const g = groups.get(key) ?? [];
+          g.push(t);
+          groups.set(key, g);
+        }
+        const rows: React.ReactNode[] = [];
+        const card = (
+          key: string,
+          label: string,
+          t: { content_type: string; pillar_name: string | null; platforms: string },
+          onDelete: () => void,
+          deleteLabel: string,
+        ): React.ReactNode => (
+          <section className="keycard" key={key}>
+            <p>
+              <strong>{label}</strong> · {typeLabel(t.content_type)} · {t.pillar_name ?? "no pillar"} ·{" "}
+              {parsePlatforms(t.platforms).join(", ") || "no platforms"}
+            </p>
+            <div className="row">
+              <button className="danger" onClick={() => void onDelete()}>
+                {deleteLabel}
+              </button>
+            </div>
+          </section>
+        );
+        for (const g of [...groups.values()].sort((a, b) => (a[0]?.time ?? "").localeCompare(b[0]?.time ?? ""))) {
+          const first = g[0];
+          if (!first) continue;
+          if (new Set(g.map((t) => t.weekday)).size === 7) {
+            rows.push(
+              card(`daily-${first.id}`, `Every day ${first.time}`, first, () => removeDaily(g.map((t) => t.id)), "Delete all 7"),
+            );
+          } else {
+            for (const t of g.slice().sort((a, b) => a.weekday - b.weekday)) {
+              rows.push(card(t.id, `${DAYS[t.weekday]} ${t.time}`, t, () => removeTemplate(t.id), "Delete"));
+            }
+          }
+        }
+        return rows;
+      })()}
       <section className="keycard">
         <h2>Add a template</h2>
         <div className="row">
@@ -753,6 +903,7 @@ export default function QueueConsole(): React.ReactNode {
             value={form.weekday}
             onChange={(e) => setForm((f) => ({ ...f, weekday: e.target.value }))}
           >
+            <option value="all">Every day</option>
             {DAYS.map((d, i) => (
               <option key={d} value={String(i)}>
                 {d}

@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, nowIso } from "./db";
 import { enqueue, getJob } from "./queue";
 import { brainOverview } from "./brain";
+import { isContentType, PLATFORMS } from "./content";
 import { searchVault } from "./vault";
 import { isIngestSource } from "./ingest";
 
@@ -180,6 +181,122 @@ export const AGENT_TOOLS: ToolDef[] = [
           return { jobId: enqueue("draft_slot", { slotId: uuid(a.slotId, "slotId") }) };
         }
         return { jobId: enqueue("draft_all", { limit: a.limit === undefined ? 10 : num(a.limit, "limit") }) };
+      }),
+  },
+  {
+    name: "list_pillars",
+    description: "Content pillars with ids, names, and confirmed flags.",
+    parameters: objParam({}),
+    run: async () =>
+      safe(async () => {
+        const rows = getDb()
+          .prepare(`SELECT id, name, description, confirmed FROM pillars ORDER BY confirmed DESC, name ASC`)
+          .all() as unknown[];
+        return rows;
+      }),
+  },
+  {
+    name: "list_templates",
+    description: "Weekly queue templates (posting cadence) with pillar names.",
+    parameters: objParam({}),
+    run: async () =>
+      safe(async () => {
+        const rows = getDb()
+          .prepare(
+            `SELECT t.id, t.weekday, t.time, t.pillar_id, p.name AS pillar_name, t.content_type, t.platforms
+             FROM queue_templates t LEFT JOIN pillars p ON p.id = t.pillar_id
+             ORDER BY t.weekday, t.time LIMIT 100`,
+          )
+          .all() as unknown[];
+        return rows;
+      }),
+  },
+  {
+    name: "add_template",
+    description:
+      "Add a posting time to the weekly queue. Weekdays: 0=Sun..6=Sat. Set everyday=true to add the same slot all 7 days. Pillar accepts a name (matched case-insensitively) or id.",
+    parameters: objParam(
+      {
+        weekday: N("0=Sunday .. 6=Saturday (ignored when everyday=true)"),
+        time: S("Posting time HH:MM, 24h"),
+        pillar: S("Pillar name or id (optional)"),
+        content_type: S("short_post|thread|video_trend|video_series|video_yap|carousel|article_blog|article_thread|long_video|clip"),
+        platforms: S("Comma-separated: x,threads,facebook,instagram,tiktok,youtube,linkedin,blog"),
+        everyday: B("Add all 7 days (default false)"),
+      },
+      ["time", "content_type", "platforms"],
+    ),
+    run: async (a) =>
+      safe(async () => {
+        const time = str(a.time, "time");
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("time must be HH:MM (24h)");
+        const contentType = str(a.content_type, "content_type");
+        if (!isContentType(contentType)) throw new Error(`unknown content_type: ${contentType}`);
+        const allowed = new Set<string>([...PLATFORMS]);
+        const plats = str(a.platforms, "platforms")
+          .split(",")
+          .map((p) => p.trim().toLowerCase())
+          .filter(Boolean);
+        if (plats.length === 0 || !plats.every((p) => allowed.has(p as (typeof PLATFORMS)[number]))) {
+          throw new Error(`platforms must be a comma-separated subset of ${[...PLATFORMS].join(",")}`);
+        }
+        let pillarId: string | null = null;
+        if (typeof a.pillar === "string" && a.pillar.trim()) {
+          const want = a.pillar.trim().toLowerCase();
+          const pillars = getDb().prepare(`SELECT id, name FROM pillars`).all() as {
+            id: string;
+            name: string;
+          }[];
+          const hit =
+            pillars.find((p) => p.id === a.pillar) ??
+            pillars.find((p) => p.name.toLowerCase() === want) ??
+            pillars.find((p) => p.name.toLowerCase().includes(want) || want.includes(p.name.toLowerCase()));
+          if (!hit) {
+            throw new Error(
+              `unknown pillar "${a.pillar}". Known: ${pillars.map((p) => p.name).join(", ") || "none"}`,
+            );
+          }
+          pillarId = hit.id;
+        }
+        const days =
+          a.everyday === true
+            ? [0, 1, 2, 3, 4, 5, 6]
+            : (() => {
+                const w = num(a.weekday, "weekday");
+                if (!Number.isInteger(w) || w < 0 || w > 6) throw new Error("weekday must be 0-6");
+                return [w];
+              })();
+        const db = getDb();
+        const dupe = db.prepare(
+          `SELECT 1 FROM queue_templates WHERE weekday = ? AND time = ? AND IFNULL(pillar_id, '') = IFNULL(?, '') AND content_type = ? AND platforms = ? LIMIT 1`,
+        );
+        const insert = db.prepare(
+          `INSERT INTO queue_templates (id, weekday, time, pillar_id, content_type, platforms, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        );
+        const created: string[] = [];
+        let skipped = 0;
+        for (const w of days) {
+          if (dupe.get(w, time, pillarId, contentType, JSON.stringify(plats))) {
+            skipped++;
+            continue;
+          }
+          const id = randomUUID();
+          insert.run(id, w, time, pillarId, contentType, JSON.stringify(plats), nowIso());
+          created.push(id);
+        }
+        return { created: created.length, skipped, ids: created };
+      }),
+  },
+  {
+    name: "delete_template",
+    description: "Delete one weekly queue template by id.",
+    parameters: objParam({ id: S("Template UUID") }, ["id"]),
+    run: async (a) =>
+      safe(async () => {
+        const info = getDb().prepare(`DELETE FROM queue_templates WHERE id = ?`).run(uuid(a.id, "id"));
+        if (Number(info.changes) === 0) throw new Error("template not found");
+        return { deleted: true };
       }),
   },
   {

@@ -68,6 +68,48 @@ describe("agent loop", () => {
   });
 });
 
+describe("queue template tools", () => {
+  it("adds one slot, fans out everyday, and deletes", async () => {
+    const { AGENT_TOOLS } = await import("../lib/agent-tools");
+    const { getDb } = await import("../lib/db");
+    const run = async (name: string, args: Record<string, unknown>) => {
+      const tool = AGENT_TOOLS.find((t) => t.name === name);
+      if (!tool) throw new Error(`missing tool ${name}`);
+      return tool.run(args);
+    };
+    const bad = await run("add_template", { time: "9am", content_type: "short_post", platforms: "x", weekday: 1 });
+    assert.equal(bad.ok, false);
+    const one = await run("add_template", { time: "09:00", content_type: "short_post", platforms: "x,threads", weekday: 1 });
+    assert.equal(one.ok, true);
+    const daily = await run("add_template", {
+      time: "14:00",
+      content_type: "thread",
+      platforms: "x",
+      everyday: true,
+    });
+    assert.equal(daily.ok, true);
+    assert.equal((daily.data as { created: number }).created, 7);
+    const again = await run("add_template", {
+      time: "14:00",
+      content_type: "thread",
+      platforms: "x",
+      everyday: true,
+    });
+    assert.equal((again.data as { created: number; skipped: number }).created, 0);
+    assert.equal((again.data as { created: number; skipped: number }).skipped, 7);
+    const listed = await run("list_templates", {});
+    assert.equal((listed.data as unknown[]).length, 8);
+    const first = (listed.data as { id: string }[])[0];
+    const del = await run("delete_template", { id: first.id });
+    assert.equal(del.ok, true);
+    const db = getDb();
+    const n = (db.prepare(`SELECT COUNT(*) AS n FROM queue_templates`).get() as { n: number }).n;
+    assert.equal(n, 7);
+    const pillars = await run("list_pillars", {});
+    assert.equal(pillars.ok, true);
+  });
+});
+
 describe("agent tool guards", () => {
   it("refuses Posted status and off-domain audio", async () => {
     const { AGENT_TOOLS } = await import("../lib/agent-tools");
