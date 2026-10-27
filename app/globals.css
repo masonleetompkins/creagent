@@ -2749,3 +2749,28 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   gap: 6px;
   padding-right: 2px;
 }
+button.ghosted {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toast {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 95;
+  max-width: min(480px, calc(100vw - 40px));
+  padding: 11px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  cursor: pointer;
+}

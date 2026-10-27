@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CONTENT_TYPES, PLATFORMS } from "@/lib/content";
 
 type Slot = {
@@ -146,6 +146,22 @@ export default function QueueConsole(): React.ReactNode {
   const [agentInput, setAgentInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentNote, setAgentNote] = useState<string | null>(null);
+  const [anyRed, setAnyRed] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [form, setForm] = useState({
     weekday: "1",
@@ -176,13 +192,18 @@ export default function QueueConsole(): React.ReactNode {
       const end = new Date(start);
       end.setDate(end.getDate() + (view === "week" ? 7 : 42));
       const range = `from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`;
-      const [slotData, tmplData, pillarData, assetData] = await Promise.all([
+      const horizonRange = `from=${encodeURIComponent(new Date().toISOString())}&to=${encodeURIComponent(
+        new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+      )}`;
+      const [slotData, tmplData, pillarData, assetData, horizonData] = await Promise.all([
         readJson(await fetch(`/api/slots?${range}`)),
         readJson(await fetch("/api/templates")),
         readJson(await fetch("/api/pillars")),
         readJson(await fetch(`/api/assets?${range}&limit=500`)),
+        readJson(await fetch(`/api/slots?${horizonRange}`)),
       ]);
       setSlots(slotData.slots as Slot[]);
+      setAnyRed(((horizonData.slots as Slot[]) ?? []).some((sl) => sl.status === "red"));
       setTemplates(tmplData.templates as Template[]);
       setPillars((pillarData.pillars as Pillar[]) ?? []);
       setHistory((assetData.assets as HistoryAsset[]) ?? []);
@@ -581,9 +602,29 @@ export default function QueueConsole(): React.ReactNode {
         <button disabled={busy} onClick={() => void runJob("/api/plan/run", { days: 14 }, "Planned")}>
           Plan 14 days
         </button>
-        <button disabled={busy} onClick={() => void runJob("/api/draft/run", { limit: 10 }, "Drafted")}>
+        <button
+          disabled={busy}
+          aria-disabled={!anyRed}
+          className={anyRed ? "" : "ghosted"}
+          onClick={() => {
+            if (anyRed) {
+              void runJob("/api/draft/run", { limit: 10 }, "Drafted");
+              return;
+            }
+            showToast(
+              templates.length === 0
+                ? "No schedule yet — add posting times in Queue setup first."
+                : "Nothing red to draft — hit Plan 14 days first to materialize your schedule.",
+            );
+          }}
+        >
           Draft all red
         </button>
+        {toast ? (
+          <div className="toast" role="status" onClick={() => setToast(null)}>
+            {toast}
+          </div>
+        ) : null}
         <button
           disabled={busy}
           onClick={() => setSetupOpen(true)}
