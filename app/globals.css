@@ -2275,3 +2275,41 @@ button.danger:hover:not(:disabled) {
 .th-sort:hover {
   color: var(--text);
 }
+/* Motion: one quiet 150ms ease system for interactive surfaces. */
+button,
+select,
+input,
+textarea,
+.sidebar nav a,
+.due-row,
+.cmd-list button,
+.chat2-session {
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.content {
+  transition: margin-right 0.18s ease;
+}
+
+body.has-dock .content {
+  margin-right: 424px;
+}
+
+@media (max-width: 1100px) {
+  body.has-dock .content {
+    margin-right: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

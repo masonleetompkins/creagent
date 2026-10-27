@@ -65,13 +65,30 @@ export default function AgentDock(): React.ReactNode {
       }
       setOpen(true);
     };
+    const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null;
+      const typing =
+        t !== null &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if (e.altKey && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "a" && !typing) {
+        e.preventDefault();
+        onToggle();
+      }
+    };
     window.addEventListener("creagent:agent-toggle", onToggle);
     window.addEventListener("creagent:agent-open", onOpen);
+    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("creagent:agent-toggle", onToggle);
       window.removeEventListener("creagent:agent-open", onOpen);
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("has-dock", open);
+    return () => document.body.classList.remove("has-dock");
+  }, [open]);
 
   const loadChats = useCallback(async () => {
     const res = await fetch("/api/agent/chats");
