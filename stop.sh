@@ -9,7 +9,7 @@ if [ -f "$CONFIG_DIR/server.pid" ]; then
     echo "Server stopped."
     stopped=1
   fi
-  rm -f "$CONFIG_DIR/server.pid"
+  rm -f "$CONFIG_DIR/server.pid" "$CONFIG_DIR/server.build"
 fi
 if [ -f "$CONFIG_DIR/worker.pid" ]; then
   if kill "$(cat "$CONFIG_DIR/worker.pid")" 2>/dev/null; then

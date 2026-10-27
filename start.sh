@@ -19,6 +19,17 @@ running_build() {
   curl -sf -m 3 "$URL/api/health" 2>/dev/null | grep -o '"buildId":"[^"]*"' | cut -d'"' -f4
 }
 current_build() { cat "$APP_DIR/.next/BUILD_ID" 2>/dev/null || echo "dev"; }
+# A pid belongs to this app if its command mentions the repo or its cwd is the repo.
+is_creagent_pid() {
+  [ -n "${1:-}" ] || return 1
+  local cmd cwd
+  cmd="$(ps -p "$1" -o command= 2>/dev/null || true)"
+  [ -n "$cmd" ] || return 1
+  case "$cmd" in *creagent*) return 0;; esac
+  command -v lsof >/dev/null 2>&1 || return 1
+  cwd="$(lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
+  [ "$cwd" = "$APP_DIR" ]
+}
 port_busy() {
   if command -v lsof >/dev/null 2>&1; then
     [ -n "$(lsof -ti ":$PORT" 2>/dev/null || true)" ]
@@ -35,22 +46,17 @@ kill_port() {
   for pid in $pids; do
     cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
     echo "holder $pid: $cmd"
-    case "$cmd" in
-      *creagent*) kill "$pid" 2>/dev/null || true ;;
-      *) echo "NOT killing non-Creagent process $pid" ;;
-    esac
+    if is_creagent_pid "$pid"; then kill "$pid" 2>/dev/null || true
+    else echo "NOT killing non-Creagent process $pid"; fi
   done
   sleep 2
   # Escalate: SIGKILL Creagent holders that ignored SIGTERM.
   pids="$(lsof -ti ":$PORT" 2>/dev/null || true)"
   for pid in $pids; do
-    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-    case "$cmd" in
-      *creagent*)
-        echo "holder $pid survived SIGTERM; SIGKILLing"
-        kill -9 "$pid" 2>/dev/null || true
-        ;;
-    esac
+    if is_creagent_pid "$pid"; then
+      echo "holder $pid survived SIGTERM; SIGKILLing"
+      kill -9 "$pid" 2>/dev/null || true
+    fi
   done
   sleep 1
 }
@@ -63,8 +69,21 @@ stop_worker() {
 
 RUNNING="$(running_build || true)"
 CURRENT="$(current_build)"
-echo "running build: ${RUNNING:-none}, current build: $CURRENT"
-if [ -n "$RUNNING" ] && [ "$RUNNING" = "$CURRENT" ]; then
+RECORDED="$(cat "$CONFIG_DIR/server.build" 2>/dev/null || echo "")"
+RECORDED_PID="$(cat "$CONFIG_DIR/server.pid" 2>/dev/null || echo "")"
+echo "running build: ${RUNNING:-none}, started build: ${RECORDED:-none}, current build: $CURRENT"
+# The recorded started-build is authoritative: it proves this launcher
+# started the live pid from the on-disk build. (Health's buildId comes from
+# the running process, so a stale server can no longer impersonate a new one.)
+server_fresh() {
+  [ -n "$RUNNING" ] && [ "$RUNNING" = "$CURRENT" ] || return 1
+  if command -v lsof >/dev/null 2>&1; then
+    [ "$RECORDED" = "$CURRENT" ] && is_creagent_pid "$RECORDED_PID"
+  else
+    return 0
+  fi
+}
+if server_fresh; then
   echo "Server already running on the current build. Opening browser…"
 else
   if [ -n "$RUNNING" ]; then
@@ -75,20 +94,28 @@ else
     echo "Port $PORT is free. Starting fresh…"
   fi
   kill_port
-  rm -f "$CONFIG_DIR/server.pid"
+  rm -f "$CONFIG_DIR/server.pid" "$CONFIG_DIR/server.build"
   stop_worker
   echo "Starting server on port ${PORT}..."
   nohup npx next start -H 127.0.0.1 -p "$PORT" >>"$CONFIG_DIR/server.log" 2>&1 &
   echo $! > "$CONFIG_DIR/server.pid"
+  echo "$CURRENT" > "$CONFIG_DIR/server.build"
   echo "Starting worker..."
   nohup npx tsx worker.ts >>"$CONFIG_DIR/worker.log" 2>&1 &
   echo $! > "$CONFIG_DIR/worker.pid"
   echo "Waiting for server…"
   for _ in $(seq 1 60); do
-    if curl -sf -o /dev/null "$URL/api/health" 2>/dev/null; then break; fi
+    HB="$(running_build || true)"
+    if [ "$HB" = "$CURRENT" ]; then break; fi
     sleep 2
   done
+  HB="$(running_build || true)"
+  if [ "$HB" != "$CURRENT" ]; then
+    echo "ERROR: port $PORT answers with build '${HB:-none}', not $CURRENT. A foreign server may own the port."
+  fi
 fi
-if command -v open >/dev/null 2>&1; then open "$URL" || true;
-elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 & disown;
-else echo "Open $URL in your browser."; fi
+# Cache-buster so the browser never renders a cached page from an older build.
+OPEN_URL="$URL/?v=$CURRENT"
+if command -v open >/dev/null 2>&1; then open "$OPEN_URL" || true;
+elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$OPEN_URL" >/dev/null 2>&1 & disown;
+else echo "Open $OPEN_URL in your browser."; fi

@@ -7,7 +7,7 @@ import { checkQueue } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
 
-function buildId(): string {
+function readBuildId(): string {
   try {
     return readFileSync(join(process.cwd(), ".next", "BUILD_ID"), "utf8").trim();
   } catch {
@@ -15,11 +15,18 @@ function buildId(): string {
   }
 }
 
+// Captured once when the server process loads this module: this is the build
+// the RUNNING code came from. (Reading the file per request would report a
+// newer build that was compiled under a stale server — the exact failure
+// where health claimed "current" while serving old pages.)
+const BOOT_BUILD_ID = readBuildId();
+
 export async function GET(): Promise<NextResponse> {
   const keys = loadKeys();
   return NextResponse.json({
     ok: true,
-    buildId: buildId(),
+    buildId: BOOT_BUILD_ID,
+    diskBuildId: readBuildId(),
     db: checkDb(),
     queue: checkQueue(),
     keys: {
