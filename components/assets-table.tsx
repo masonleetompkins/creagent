@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import DateField from "./date-field";
 
 type Asset = {
   id: string;
@@ -72,22 +73,22 @@ export default function AssetsTable(): React.ReactNode {
           }}
         />
         <span className="range-inline">
-          <input
-            type="date"
-            aria-label="From date"
+          <DateField
+            label="From date"
+            placeholder="From"
             value={from}
-            onChange={(e) => {
-              setFrom(e.target.value);
+            onChange={(v) => {
+              setFrom(v);
               resetPage();
             }}
           />
           <span className="range-arrow" aria-hidden="true">→</span>
-          <input
-            type="date"
-            aria-label="To date"
+          <DateField
+            label="To date"
+            placeholder="To"
             value={to}
-            onChange={(e) => {
-              setTo(e.target.value);
+            onChange={(v) => {
+              setTo(v);
               resetPage();
             }}
           />

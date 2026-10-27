@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import DateField from "./date-field";
 
 const PLATFORMS = [
   { id: "x_posts", label: "X", source: "x_posts" },
@@ -14,7 +15,7 @@ const URL_SOURCES = [
 ];
 
 const HANDLE_KEY = "creagent.ingest.handles";
-const RANGE_KEY = "creagent.ingest.ranges";
+const RANGE_KEY = "creagent.ingest.range";
 
 type Account = { id: string; platform: string; username: string };
 type Range = { from: string; to: string };
@@ -45,12 +46,12 @@ function loadJson(key: string): Record<string, string> {
   }
 }
 
-function loadRanges(): Record<string, Range> {
+function loadRange(): Range {
   try {
-    const raw = JSON.parse(window.localStorage.getItem(RANGE_KEY) ?? "{}") as Record<string, Range>;
-    return raw ?? {};
+    const raw = JSON.parse(window.localStorage.getItem(RANGE_KEY) ?? "{}") as Partial<Range>;
+    return { from: raw.from ?? "", to: raw.to ?? "" };
   } catch {
-    return {};
+    return { from: "", to: "" };
   }
 }
 
@@ -64,7 +65,7 @@ export default function IngestConsole(): React.ReactNode {
   const [accountsNote, setAccountsNote] = useState<string | null>(null);
   const [handles, setHandles] = useState<Record<string, string>>({});
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [ranges, setRanges] = useState<Record<string, Range>>({});
+  const [range, setRange] = useState<Range>({ from: "", to: "" });
   const [deep, setDeep] = useState(false);
   const [urlSource, setUrlSource] = useState(URL_SOURCES[0].id);
   const [urlValue, setUrlValue] = useState("");
@@ -87,7 +88,7 @@ export default function IngestConsole(): React.ReactNode {
 
   useEffect(() => {
     setHandles(loadJson(HANDLE_KEY));
-    setRanges(loadRanges());
+    setRange(loadRange());
     void refreshCounts();
     fetch("/api/zernio/accounts")
       .then(async (res) => {
@@ -118,10 +119,9 @@ export default function IngestConsole(): React.ReactNode {
     });
   }
 
-  function setRange(key: string, patch: Partial<Range>): void {
-    setRanges((r) => {
-      const prev = r[key] ?? { from: "", to: "" };
-      const next = { ...r, [key]: { ...prev, ...patch } };
+  function updateRange(patch: Partial<Range>): void {
+    setRange((r) => {
+      const next = { ...r, ...patch };
       try {
         window.localStorage.setItem(RANGE_KEY, JSON.stringify(next));
       } catch {
@@ -147,15 +147,11 @@ export default function IngestConsole(): React.ReactNode {
     return out;
   }
 
-  const rangeWindow = useCallback(
-    (key: string): { since?: string; until?: string } => {
-      const r = ranges[key];
-      const since = r?.from ? new Date(r.from).toISOString() : undefined;
-      const until = r?.to ? new Date(`${r.to}T23:59:59`).toISOString() : undefined;
-      return { since, until };
-    },
-    [ranges],
-  );
+  const rangeWindow = useCallback((): { since?: string; until?: string } => {
+    const since = range.from ? new Date(range.from).toISOString() : undefined;
+    const until = range.to ? new Date(`${range.to}T23:59:59`).toISOString() : undefined;
+    return { since, until };
+  }, [range]);
 
   async function runTarget(t: Target, label: string): Promise<TargetState> {
     const st: TargetState = {
@@ -169,7 +165,7 @@ export default function IngestConsole(): React.ReactNode {
     };
     setTargets((ts) => ts.map((x) => (x.key === t.key ? st : x)));
     try {
-      const { since, until } = rangeWindow(t.key);
+      const { since, until } = rangeWindow();
       const started = await readJson(
         await fetch(t.kind === "zernio" ? "/api/ingest/zernio" : "/api/ingest", {
           method: "POST",
@@ -346,24 +342,6 @@ export default function IngestConsole(): React.ReactNode {
     }
   }
 
-  const rangeRow = (key: string): React.ReactNode => (
-    <span className="range-inline">
-      <input
-        type="date"
-        aria-label="From date"
-        value={ranges[key]?.from ?? ""}
-        onChange={(e) => setRange(key, { from: e.target.value })}
-      />
-      <span className="range-arrow" aria-hidden="true">→</span>
-      <input
-        type="date"
-        aria-label="To date"
-        value={ranges[key]?.to ?? ""}
-        onChange={(e) => setRange(key, { to: e.target.value })}
-      />
-    </span>
-  );
-
   const failedCount = targets.filter((t) => t.state === "failed").length;
   const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
@@ -388,14 +366,6 @@ export default function IngestConsole(): React.ReactNode {
             </button>
           ))}
         </div>
-        {accounts
-          .filter((a) => accountsOn[a.id])
-          .map((a) => (
-            <div className="target-row" key={a.id}>
-              <span className="muted">{a.platform} · {a.username}</span>
-              {rangeRow(`z:${a.id}`)}
-            </div>
-          ))}
         <h2>Manual handles (Monid)</h2>
         <p className="muted">
           Public scraping by handle: transcripts and captions without connecting anything.
@@ -422,9 +392,27 @@ export default function IngestConsole(): React.ReactNode {
               value={handles[p.id] ?? ""}
               onChange={(e) => setHandle(p.id, e.target.value)}
             />
-            {rangeRow(`m:${p.id}`)}
           </div>
         ))}
+        <div className="target-row">
+          <span className="muted">Date range</span>
+          <span className="range-inline">
+            <DateField
+              label="From date"
+              placeholder="From"
+              value={range.from}
+              onChange={(from) => updateRange({ from })}
+            />
+            <span className="range-arrow" aria-hidden="true">→</span>
+            <DateField
+              label="To date"
+              placeholder="To"
+              value={range.to}
+              onChange={(to) => updateRange({ to })}
+            />
+          </span>
+          <span className="muted">Blank = all time.</span>
+        </div>
         <div className="row">
           <label className="checkline-inline">
             <input
