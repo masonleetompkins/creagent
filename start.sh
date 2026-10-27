@@ -7,6 +7,9 @@ CONFIG_DIR="/Users/masontompkins/.config/creagent"
 # Finder-launched apps get a minimal PATH; restore the Node toolchain.
 export PATH="/usr/local/bin:$PATH:/opt/homebrew/bin:/usr/local/bin"
 mkdir -p "$CONFIG_DIR"
+# Mirror all launcher output to a log (Finder launches show no terminal).
+exec > >(tee -a "$CONFIG_DIR/launcher.log") 2>&1
+echo "=== $(date '+%F %T') launcher start (port $PORT) ==="
 cd "$APP_DIR"
 ("$APP_DIR/scripts/ensure-tools.sh") || echo "WARNING: video tools are incomplete."
 (cd "$APP_DIR" && npx tsx scripts/migrate.ts) || echo "WARNING: migrations did not complete."
@@ -28,14 +31,28 @@ kill_port() {
   command -v lsof >/dev/null 2>&1 || return 0
   local pids pid cmd
   pids="$(lsof -ti ":$PORT" 2>/dev/null || true)"
+  echo "port $PORT holders: ${pids:-none}"
   for pid in $pids; do
     cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    echo "holder $pid: $cmd"
     case "$cmd" in
       *creagent*) kill "$pid" 2>/dev/null || true ;;
-      *) echo "Port $PORT is held by a non-Creagent process ($pid): $cmd" ;;
+      *) echo "NOT killing non-Creagent process $pid" ;;
     esac
   done
   sleep 2
+  # Escalate: SIGKILL Creagent holders that ignored SIGTERM.
+  pids="$(lsof -ti ":$PORT" 2>/dev/null || true)"
+  for pid in $pids; do
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$cmd" in
+      *creagent*)
+        echo "holder $pid survived SIGTERM; SIGKILLing"
+        kill -9 "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+  sleep 1
 }
 stop_worker() {
   if [ -f "$CONFIG_DIR/worker.pid" ]; then
@@ -46,6 +63,7 @@ stop_worker() {
 
 RUNNING="$(running_build || true)"
 CURRENT="$(current_build)"
+echo "running build: ${RUNNING:-none}, current build: $CURRENT"
 if [ -n "$RUNNING" ] && [ "$RUNNING" = "$CURRENT" ]; then
   echo "Server already running on the current build. Opening browser…"
 else
@@ -53,6 +71,8 @@ else
     echo "Server is on an old build ($RUNNING vs $CURRENT). Restarting…"
   elif port_busy; then
     echo "Port $PORT is busy with an unrecognized server. Restarting…"
+  else
+    echo "Port $PORT is free. Starting fresh…"
   fi
   kill_port
   rm -f "$CONFIG_DIR/server.pid"
