@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import SidebarNav from "@/components/sidebar-nav";
 import ContentShell from "@/components/content-shell";
+import BuildStampServer from "@/components/build-stamp-server";
 
 export const metadata: Metadata = {
   title: "Creagent",
@@ -24,7 +25,7 @@ export default function RootLayout({
       </head>
       <body>
         <div className="shell">
-          <SidebarNav />
+          <SidebarNav stamp={<BuildStampServer />} />
           <ContentShell>{children}</ContentShell>
         </div>
       </body>

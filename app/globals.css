@@ -1332,6 +1332,41 @@ input[type="range"].hue {
 
 .sidebar .foot {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.build-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--faint);
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+.build-stamp .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(150 70% 55%);
+  box-shadow: 0 0 8px hsl(150 70% 55% / 0.8);
+}
+
+.build-stamp.stale {
+  color: hsl(35 95% 65%);
+}
+
+.build-stamp.stale .dot {
+  background: hsl(35 95% 55%);
+  box-shadow: 0 0 8px hsl(35 95% 55% / 0.9);
+  animation: stamp-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes stamp-pulse {
+  50% { opacity: 0.35; }
 }
 
 .vtable tbody tr:hover td {

@@ -44,7 +44,7 @@ const ITEMS = [
   { href: "/data", label: "Data", icon: "data" },
 ];
 
-export default function SidebarNav(): React.ReactNode {
+export default function SidebarNav({ stamp }: { stamp?: React.ReactNode }): React.ReactNode {
   const path = usePathname() ?? "/";
   const isOn = (href: string): boolean =>
     href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
@@ -66,6 +66,7 @@ export default function SidebarNav(): React.ReactNode {
           <Ico d={ICONS.settings ?? []} />
           Settings
         </a>
+        {stamp}
       </nav>
     </aside>
   );
