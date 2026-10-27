@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import ReviewCards from "./review-cards";
 
 type Chat = {
   id: string;
@@ -51,7 +52,19 @@ export default function ChatConsole(): React.ReactNode {
 
   const loadChats = useCallback(async () => {
     const res = await fetch("/api/agent/chats");
-    if (res.ok) setChats(((await res.json()) as { chats: Chat[] }).chats);
+    if (!res.ok) return;
+    const list = ((await res.json()) as { chats: Chat[] }).chats;
+    setChats(list);
+    setChatId((cur) => {
+      if (cur && list.some((c) => c.id === cur)) return cur;
+      let stored: string | null = null;
+      try {
+        stored = localStorage.getItem("creagent.activeChat");
+      } catch {
+        /* ignore */
+      }
+      return stored && list.some((c) => c.id === stored) ? stored : (cur ?? null);
+    });
   }, []);
 
   const loadMessages = useCallback(async (id: string) => {
@@ -96,6 +109,11 @@ export default function ChatConsole(): React.ReactNode {
     setDraft(false);
     setChatId(id);
     setError("");
+    try {
+      localStorage.setItem("creagent.activeChat", id);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const send = useCallback(
@@ -121,6 +139,11 @@ export default function ChatConsole(): React.ReactNode {
           id = ((await res.json()) as { chatId: string }).chatId;
           setDraft(false);
           setChatId(id);
+          try {
+            localStorage.setItem("creagent.activeChat", id);
+          } catch {
+            /* ignore */
+          }
           void loadChats();
         }
         const res = await fetch(`/api/agent/chats/${id}`, {
@@ -375,6 +398,7 @@ export default function ChatConsole(): React.ReactNode {
                 </button>
               </p>
             )}
+            <ReviewCards />
             <div className="chat2-thread">
               {messages.map((m) =>
                 m.role === "tool" ? (

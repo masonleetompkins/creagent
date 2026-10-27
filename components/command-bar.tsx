@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type Item = { label: string; hint: string; href: string; keys: string };
+type Item = { label: string; hint: string; href: string; keys: string; action?: "agent" };
 
 const ITEMS: Item[] = [
   { label: "Home — command center", hint: "go", href: "/", keys: "home today dashboard start" },
@@ -14,6 +14,7 @@ const ITEMS: Item[] = [
   { label: "Settings", hint: "go", href: "/settings", keys: "settings keys ingest appearance theme" },
   { label: "Agent chat", hint: "go", href: "/chat", keys: "agent chat talk ask" },
   { label: "New agent session", hint: "agent", href: "/chat#new", keys: "new session start chat fresh" },
+  { label: "Toggle agent panel", hint: "agent", href: "", keys: "dock panel sidebar toggle show hide", action: "agent" },
 ];
 
 export function openCommandBar(): void {
@@ -59,9 +60,13 @@ export default function CommandBar(): React.ReactNode {
   }, [q]);
 
   const go = useCallback(
-    (href: string) => {
+    (item: Item) => {
       setOpen(false);
-      window.location.href = href;
+      if (item.action === "agent") {
+        window.dispatchEvent(new CustomEvent("creagent:agent-toggle"));
+        return;
+      }
+      window.location.href = item.href;
     },
     [],
   );
@@ -86,7 +91,7 @@ export default function CommandBar(): React.ReactNode {
               e.preventDefault();
               setSel((s) => Math.max(s - 1, 0));
             } else if (e.key === "Enter" && hits[sel]) {
-              go((hits[sel] as Item).href);
+              go(hits[sel] as Item);
             }
           }}
         />
@@ -96,7 +101,7 @@ export default function CommandBar(): React.ReactNode {
               key={i.label}
               className={idx === sel ? "on" : ""}
               onMouseEnter={() => setSel(idx)}
-              onClick={() => go(i.href)}
+              onClick={() => go(i)}
             >
               <span>{i.label}</span>
               <span className="cmd-hint">{i.hint}</span>

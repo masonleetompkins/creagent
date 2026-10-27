@@ -1,5 +1,4 @@
 import VideoEditor from "@/components/video-editor";
-import AgentSidebar from "@/components/agent-sidebar";
 import ProjectSwitcher from "@/components/project-switcher";
 
 export default async function VideoPage({
@@ -9,12 +8,9 @@ export default async function VideoPage({
 }): Promise<React.ReactNode> {
   const { id } = await params;
   return (
-    <div className="editor-shell">
-      <div className="editor-main">
-        <ProjectSwitcher kind="video" currentId={id} />
-        <VideoEditor projectId={id} />
-      </div>
-      <AgentSidebar kind="video" entityId={id} />
+    <div className="editor-main">
+      <ProjectSwitcher kind="video" currentId={id} />
+      <VideoEditor projectId={id} />
     </div>
   );
 }

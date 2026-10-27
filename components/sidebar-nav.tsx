@@ -71,6 +71,14 @@ export default function SidebarNav({ stamp }: { stamp?: React.ReactNode }): Reac
         <span>Command…</span>
         <kbd>⌘K</kbd>
       </button>
+      <button
+        className="agent-trigger"
+        onClick={() => window.dispatchEvent(new CustomEvent("creagent:agent-toggle"))}
+        title="Toggle agent panel"
+      >
+        <span className="pulse" aria-hidden="true" />
+        Agent
+      </button>
       <nav className="foot">{stamp}</nav>
     </aside>
   );

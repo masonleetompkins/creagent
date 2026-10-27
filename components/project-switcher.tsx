@@ -65,6 +65,13 @@ export default function ProjectSwitcher({
       </select>
       <button onClick={() => void create()}>New</button>
       <button onClick={() => void remove()}>Delete</button>
+      <button
+        className="primary"
+        onClick={() => window.dispatchEvent(new CustomEvent("creagent:agent-open"))}
+        title="Open the agent panel"
+      >
+        Ask agent
+      </button>
     </div>
   );
 }

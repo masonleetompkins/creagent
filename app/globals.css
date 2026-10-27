@@ -1194,25 +1194,8 @@ code {
   padding: 1px 5px;
   border-radius: 5px;
 }
-.editor-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 344px;
-  gap: 14px;
-  align-items: start;
-}
-
-.editor-shell:has(.agent-col.closed) {
-  grid-template-columns: minmax(0, 1fr) 44px;
-}
-
 .editor-main {
   min-width: 0;
-}
-
-.agent-col {
-  position: sticky;
-  top: 14px;
-  height: calc(100vh - 28px);
 }
 
 .agent-dock {
@@ -1229,42 +1212,6 @@ code {
   -webkit-backdrop-filter: blur(28px) saturate(1.4);
 }
 
-.agent-tab {
-  width: 44px;
-  height: 100%;
-  writing-mode: vertical-rl;
-  padding: 14px 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--glass-strong);
-  color: var(--ink);
-  cursor: pointer;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-}
-
-@media (max-width: 1100px) {
-  .editor-shell,
-  .editor-shell:has(.agent-col.closed) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .agent-col {
-    position: static;
-    height: auto;
-  }
-  .agent-dock {
-    height: auto;
-    max-height: 70vh;
-  }
-  .agent-tab {
-    width: 100%;
-    height: auto;
-    writing-mode: horizontal-tb;
-    padding: 10px;
-  }
-}
 
 .agent-head {
   display: flex;
@@ -2251,4 +2198,65 @@ button.danger:hover:not(:disabled) {
   .home-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+/* Global agent dock: fixed right panel, never covers the canvas. */
+.g-dock {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(400px, calc(100vw - 32px));
+  z-index: 60;
+}
+
+.g-dock .agent-dock {
+  height: 100%;
+  border-radius: 20px;
+}
+
+.agent-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.agent-trigger .pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: hsl(var(--hue) 90% 65%);
+  box-shadow: 0 0 10px hsl(var(--hue) 90% 65% / 0.9);
+}
+
+.review-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40%;
+  overflow-y: auto;
+  flex: 0 0 auto;
+}
+
+.review-card.slim {
+  padding: 9px 11px;
+  margin-bottom: 0;
+  border-radius: 14px;
+}
+
+.review-card.slim .review-body {
+  margin: 5px 0;
+  font-size: 12px;
+}
+
+.review-card.slim .review-actions button {
+  padding: 5px 11px;
+  font-size: 12px;
 }
