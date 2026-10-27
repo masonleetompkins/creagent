@@ -1,34 +1,28 @@
-import InfraStatus from "@/components/infra-status";
+import HomeConsole from "@/components/home-console";
 
 export default function Home(): React.ReactNode {
+  const today = new Date().toLocaleDateString([], {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>Creagent</h1>
-          <div className="sub">
-            Local-first content agent. Ingest your work, learn your voice, keep a
-            two-week queue drafted, and get approvals in one place.
-          </div>
+          <h1>Today</h1>
+          <div className="sub">{today} — what is due, what needs your review, and what the agent did.</div>
+        </div>
+        <div className="actions">
+          <a href="/queue">
+            <button>Calendar</button>
+          </a>
+          <a href="/chat">
+            <button className="primary">Agent chat</button>
+          </a>
         </div>
       </div>
-      <h2>Get started</h2>
-      <ol className="steps">
-        <li>
-          Open <a href="/settings">Settings</a> and save your Meta Model API
-          key.
-        </li>
-        <li>Use Test on the Meta key to confirm the connection.</li>
-        <li>Add Monid, Zernio, and Brave keys as integrations land.</li>
-      </ol>
-      <h2>System status</h2>
-      <InfraStatus />
-      <h2>Workflow</h2>
-      <p>
-        <a href="/settings">Ingest</a> your content, run analysis to build the
-        voice profile and vault, refine <a href="/brain">pillars</a>, then
-        set your cadence and plan the <a href="/queue">calendar</a>.
-      </p>
+      <HomeConsole />
     </>
   );
 }
