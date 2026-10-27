@@ -77,20 +77,20 @@ body::before {
   inset: -20%;
   z-index: -1;
   background:
-    radial-gradient(65% 45% at 50% -5%, hsl(var(--hue) 80% 42% / 0.6), transparent 70%),
-    radial-gradient(60% 55% at 100% 100%, hsl(var(--hue) 85% 30% / 0.55), transparent 72%),
-    radial-gradient(60% 55% at 0% 100%, hsl(var(--hue) 75% 24% / 0.55), transparent 72%),
-    linear-gradient(180deg, hsl(var(--hue) 55% 15%) 0%, hsl(var(--hue) 60% 7%) 100%);
-  filter: blur(40px);
+    radial-gradient(75% 55% at 50% -10%, hsl(var(--hue) 85% 55% / 0.8), transparent 72%),
+    radial-gradient(70% 60% at 105% 105%, hsl(var(--hue) 90% 42% / 0.75), transparent 74%),
+    radial-gradient(70% 60% at -5% 105%, hsl(var(--hue) 80% 34% / 0.75), transparent 74%),
+    linear-gradient(180deg, hsl(var(--hue) 65% 30%) 0%, hsl(var(--hue) 70% 12%) 55%, hsl(var(--hue) 75% 8%) 100%);
+  filter: blur(46px) saturate(1.25);
   animation: aura-drift 70s ease-in-out infinite alternate;
 }
 
 [data-mode="light"] body::before {
   background:
-    radial-gradient(65% 45% at 50% -5%, hsl(var(--hue) 90% 72% / 0.7), transparent 70%),
-    radial-gradient(60% 55% at 100% 100%, hsl(var(--hue) 85% 66% / 0.6), transparent 72%),
-    radial-gradient(60% 55% at 0% 100%, hsl(var(--hue) 80% 62% / 0.6), transparent 72%),
-    linear-gradient(180deg, hsl(var(--hue) 65% 90%) 0%, hsl(var(--hue) 50% 84%) 100%);
+    radial-gradient(75% 55% at 50% -10%, hsl(var(--hue) 95% 74% / 0.85), transparent 72%),
+    radial-gradient(70% 60% at 105% 105%, hsl(var(--hue) 90% 64% / 0.7), transparent 74%),
+    radial-gradient(70% 60% at -5% 105%, hsl(var(--hue) 85% 68% / 0.7), transparent 74%),
+    linear-gradient(180deg, hsl(var(--hue) 70% 88%) 0%, hsl(var(--hue) 55% 80%) 100%);
 }
 
 @keyframes aura-drift {
@@ -155,6 +155,21 @@ body::before {
   transition: background 0.15s, color 0.15s;
 }
 
+.sidebar nav a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.sidebar nav a svg {
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+.sidebar nav a.on {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), var(--shadow-1);
+}
+
 .sidebar nav a:hover {
   color: var(--ink);
   background: var(--hover);
@@ -164,9 +179,15 @@ body::before {
 .content {
   flex: 1;
   min-width: 0;
-  max-width: 1060px;
-  margin: 0 auto;
-  padding: 18px 26px 64px;
+  max-width: 1080px;
+  margin: 12px 12px 12px 0;
+  padding: 20px 26px 56px;
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(26px) saturate(1.45);
+  -webkit-backdrop-filter: blur(26px) saturate(1.45);
 }
 
 @media (max-width: 700px) {
@@ -198,7 +219,7 @@ body::before {
 }
 
 select {
-  padding: 7px 12px;
+  padding: 8px 14px;
   font: inherit;
   font-size: 13px;
   border: 1px solid var(--line);
@@ -573,13 +594,13 @@ ol.steps li {
 
 .keycard {
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  padding: 14px 16px;
+  border-radius: 20px;
+  padding: 16px 18px;
   margin: 10px 0;
   background: var(--glass);
-  backdrop-filter: blur(18px) saturate(1.3);
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
-  box-shadow: var(--shadow-1);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  box-shadow: var(--shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .keycard h2 {
@@ -687,15 +708,26 @@ button.sm {
 }
 
 button.primary {
-  background: linear-gradient(135deg, hsl(var(--hue) 80% 55%) 0%, hsl(var(--hue) 85% 36%) 100%);
-  border-color: rgba(255, 255, 255, 0.22);
+  background: #ffffff;
+  border-color: rgba(255, 255, 255, 0.85);
+  color: hsl(var(--hue) 60% 14%);
+  font-weight: 650;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+[data-mode="light"] button.primary {
+  background: hsl(var(--hue) 70% 22%);
+  border-color: hsl(var(--hue) 70% 22%);
   color: #fff;
-  font-weight: 800;
-  box-shadow: 0 6px 24px hsl(var(--hue) 85% 50% / 0.45);
+  box-shadow: 0 4px 18px hsl(var(--hue) 70% 40% / 0.35);
 }
 
 button.primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, hsl(var(--hue) 85% 60%) 0%, hsl(var(--hue) 85% 42%) 100%);
+  background: hsl(var(--hue) 60% 94%);
+}
+
+[data-mode="light"] button.primary:hover:not(:disabled) {
+  background: hsl(var(--hue) 70% 30%);
 }
 
 button:disabled {
@@ -1480,9 +1512,130 @@ a.asset-chip:hover {
   -webkit-backdrop-filter: blur(12px);
 }
 .chat2-session.on {
-  background: hsl(var(--hue) 80% 55% / 0.14);
-  border-color: var(--line);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: hsl(var(--hue) 80% 55% / 0.16);
+  border-color: hsl(var(--hue) 90% 72% / 0.85);
+  box-shadow:
+    0 0 0 1px hsl(var(--hue) 90% 70% / 0.55),
+    0 0 22px hsl(var(--hue) 85% 55% / 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.chat2-session {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  width: 100%;
+}
+
+.chat2-session .grip {
+  color: var(--faint);
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: none;
+}
+
+.chat2-session.dragging {
+  opacity: 0.5;
+}
+
+.chat2-session .acts {
+  display: none;
+  gap: 2px;
+}
+
+.chat2-session:hover .acts {
+  display: inline-flex;
+}
+
+.chat2-session .acts button {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.rename-input {
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 7px;
+}
+
+.hero {
+  max-width: 680px;
+  margin: 9vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+
+.hero h2 {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.hero .sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hero-box {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  text-align: left;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 10px;
+  box-shadow: var(--shadow-2), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+}
+
+.hero-box textarea {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  resize: none;
+  max-height: 180px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.hero-box textarea:focus-visible {
+  outline: none;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.chip {
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.chip:hover:not(:disabled) {
+  color: var(--text);
+  border-color: hsl(var(--hue) 90% 72% / 0.6);
+}
+
+.hero-box button {
+  flex: 0 0 auto;
+  padding: 10px 20px;
+  font-size: 13.5px;
 }
 .chat2-session .t {
   display: block;

@@ -34,6 +34,7 @@ export type ChatRow = {
   id: string;
   title: string;
   created_at: string;
+  position: number;
   prompt_tokens: number;
   completion_tokens: number;
   last_context_tokens: number;
@@ -45,8 +46,8 @@ export function listChats(): ChatRow[] {
   const model = metaTextModel();
   const rows = getDb()
     .prepare(
-      `SELECT id, title, created_at, prompt_tokens, completion_tokens, last_context_tokens
-       FROM agent_chats ORDER BY created_at DESC LIMIT 50`,
+      `SELECT id, title, created_at, position, prompt_tokens, completion_tokens, last_context_tokens
+       FROM agent_chats ORDER BY position ASC, created_at DESC LIMIT 100`,
     )
     .all() as Omit<ChatRow, "cost_usd" | "ctx_pct">[];
   return rows.map((r) => ({
@@ -54,6 +55,30 @@ export function listChats(): ChatRow[] {
     cost_usd: textCostUsd(model, r.prompt_tokens, r.completion_tokens),
     ctx_pct: Math.round((r.last_context_tokens / META_CONTEXT_TOKENS) * 1000) / 10,
   }));
+}
+
+function chatExists(id: string): boolean {
+  const row = getDb().prepare(`SELECT id FROM agent_chats WHERE id = ?`).get(id);
+  return row != null;
+}
+
+export function renameChat(id: string, title: string): void {
+  const t = title.trim().slice(0, 120);
+  if (!t) throw new Error("Title can't be empty.");
+  const info = getDb().prepare(`UPDATE agent_chats SET title = ? WHERE id = ?`).run(t, id);
+  if (Number(info.changes) === 0) throw new Error("Chat not found.");
+}
+
+export function deleteChat(id: string): void {
+  const info = getDb().prepare(`DELETE FROM agent_chats WHERE id = ?`).run(id);
+  if (Number(info.changes) === 0) throw new Error("Chat not found.");
+}
+
+export function reorderChats(orderedIds: string[]): void {
+  const upd = getDb().prepare(`UPDATE agent_chats SET position = ? WHERE id = ?`);
+  withTransaction(() => {
+    orderedIds.forEach((id, i) => upd.run(i, id));
+  });
 }
 
 export type StoredMsg = AgentMsg & { id: string; created_at: string; compacted: number };
@@ -204,6 +229,15 @@ export async function runAgentTurn(
   client: ChatClient = metaChatClient(),
   maxSteps = 12,
 ): Promise<{ steps: number; stopped: string }> {
+  if (chatExists(chatId)) {
+    const row = getDb().prepare(`SELECT title FROM agent_chats WHERE id = ?`).get(chatId) as
+      | { title: string }
+      | undefined;
+    if (row?.title === "New chat") {
+      const auto = userText.trim().replace(/\s+/g, " ").slice(0, 48);
+      if (auto) getDb().prepare(`UPDATE agent_chats SET title = ? WHERE id = ?`).run(auto, chatId);
+    }
+  }
   saveMessage(chatId, { role: "user", content: userText });
   const history = getMessages(chatId).filter((m) => m.role !== "tool" && !m.compacted);
   const messages: ChatMessage[] = [

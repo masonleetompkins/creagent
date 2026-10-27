@@ -1,6 +1,41 @@
 import { NextResponse } from "next/server";
-import { getMessages } from "@/lib/agent";
+import { deleteChat, getMessages, renameChat } from "@/lib/agent";
 import { enqueue } from "@/lib/queue";
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
+  let title = "";
+  try {
+    const body = (await request.json()) as { title?: unknown };
+    if (typeof body.title === "string") title = body.title;
+  } catch {
+    return NextResponse.json({ error: "title is required" }, { status: 400 });
+  }
+  try {
+    renameChat(id, title);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
+  try {
+    deleteChat(id);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+  }
+}
 
 export const dynamic = "force-dynamic";
 
