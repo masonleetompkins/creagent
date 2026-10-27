@@ -2727,3 +2727,25 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .swatch.mono {
   border: 1px solid var(--line);
 }
+.agent-head .row button {
+  border-radius: 999px;
+}
+
+.agent-head .row button.icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 1;
+  font-size: 15px;
+}
+
+.dock-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
