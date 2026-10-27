@@ -47,14 +47,25 @@ export async function GET(): Promise<NextResponse> {
          WHERE m.role = 'assistant' ORDER BY m.created_at DESC LIMIT 6`,
       )
       .all();
+    const readyToPost = db
+      .prepare(
+        `SELECT s.id, s.scheduled_at, p.name AS pillar_name, s.content_type, s.platforms
+         FROM queue_slots s LEFT JOIN pillars p ON p.id = s.pillar_id
+         WHERE s.status = 'green' AND s.scheduled_at <= ?
+         ORDER BY s.scheduled_at ASC LIMIT 6`,
+      )
+      .all(new Date(Date.now() + 24 * 3600 * 1000).toISOString());
     const assets = db.prepare(`SELECT COUNT(*) AS n FROM assets`).get() as { n: number };
     const pillars = db.prepare(`SELECT COUNT(*) AS n FROM pillars`).get() as { n: number };
+    const templates = db.prepare(`SELECT COUNT(*) AS n FROM queue_templates`).get() as { n: number };
     const keys = loadKeys();
     return NextResponse.json({
       due,
       review,
       genRequests,
+      readyToPost,
       activity,
+      templates: templates.n,
       setup: {
         assets: assets.n,
         pillars: pillars.n,

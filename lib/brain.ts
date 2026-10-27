@@ -1,6 +1,6 @@
 // Brain reads: voice profile, vault browser, posting strategy, playbook.
 // Nothing here writes; analysis owns the data.
-import { CONTENT_TYPES, PLAYBOOK } from "./content";
+import { CONTENT_TYPES, PLATFORM_GUIDES, PLAYBOOK } from "./content";
 import { getDb } from "./db";
 import { vaultCounts } from "./vault";
 
@@ -70,11 +70,26 @@ export function getPlaybook(): { type: string; label: string; hint: string; guid
   }));
 }
 
+export function getPlatformGuides(): { platform: string; label: string; guide: string }[] {
+  return Object.entries(PLATFORM_GUIDES).map(([platform, info]) => ({
+    platform,
+    label: info.label,
+    guide: info.guide,
+  }));
+}
+
 export function brainOverview(): {
   voice: VaultDoc | null;
   counts: Record<string, number>;
   strategy: StrategyTemplate[];
   playbook: { type: string; label: string; hint: string; guide: string }[];
+  guides: { platform: string; label: string; guide: string }[];
 } {
-  return { voice: getVoice(), counts: vaultCounts(), strategy: getStrategy(), playbook: getPlaybook() };
+  return {
+    voice: getVoice(),
+    counts: vaultCounts(),
+    strategy: getStrategy(),
+    playbook: getPlaybook(),
+    guides: getPlatformGuides(),
+  };
 }

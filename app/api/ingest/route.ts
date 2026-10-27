@@ -11,11 +11,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const { source, value, since, until } = body as {
+  const { source, value, since, until, maxPages } = body as {
     source?: unknown;
     value?: unknown;
     since?: unknown;
     until?: unknown;
+    maxPages?: unknown;
   };
   if (typeof source !== "string" || !isIngestSource(source)) {
     return NextResponse.json({ error: "unknown ingest source" }, { status: 400 });
@@ -37,6 +38,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       value: value.trim(),
       since: typeof since === "string" ? since : undefined,
       until: typeof until === "string" ? until : undefined,
+      maxPages: typeof maxPages === "number" ? Math.max(1, Math.min(Math.round(maxPages), 50)) : undefined,
     });
     return NextResponse.json({ jobId });
   } catch (error) {

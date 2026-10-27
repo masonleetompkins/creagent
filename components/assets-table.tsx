@@ -71,24 +71,27 @@ export default function AssetsTable(): React.ReactNode {
             if (e.key === "Enter") void load();
           }}
         />
-        <input
-          type="date"
-          aria-label="From date"
-          value={from}
-          onChange={(e) => {
-            setFrom(e.target.value);
-            resetPage();
-          }}
-        />
-        <input
-          type="date"
-          aria-label="To date"
-          value={to}
-          onChange={(e) => {
-            setTo(e.target.value);
-            resetPage();
-          }}
-        />
+        <span className="range-inline">
+          <input
+            type="date"
+            aria-label="From date"
+            value={from}
+            onChange={(e) => {
+              setFrom(e.target.value);
+              resetPage();
+            }}
+          />
+          <span className="range-arrow" aria-hidden="true">→</span>
+          <input
+            type="date"
+            aria-label="To date"
+            value={to}
+            onChange={(e) => {
+              setTo(e.target.value);
+              resetPage();
+            }}
+          />
+        </span>
         <button onClick={() => void load()}>Search</button>
         <button
           className={showAll ? "primary" : ""}

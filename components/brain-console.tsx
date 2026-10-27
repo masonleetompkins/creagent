@@ -21,6 +21,7 @@ type Overview = {
     platforms: string;
   }[];
   playbook: { type: string; label: string; hint: string; guide: string }[];
+  guides: { platform: string; label: string; guide: string }[];
 };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -270,6 +271,14 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           {DAYS[t.weekday]} {t.time} · {t.pillar_name ?? "no pillar"} · {t.content_type} ·{" "}
           {t.platforms}
         </p>
+      ))}
+      <h2>Platform guides</h2>
+      <p className="muted">Your platform knowledge: hook rules, formats, and ranked leading indicators. The agent drafts from these.</p>
+      {(overview.guides ?? []).map((g) => (
+        <div key={g.platform} className="keycard slim">
+          <strong>{g.label}</strong>
+          <p style={{ marginBottom: 0 }}>{g.guide}</p>
+        </div>
       ))}
       <h2>Platform playbook</h2>
       <p className="muted">The exact instructions the agent drafts from, per content type.</p>

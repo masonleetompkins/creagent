@@ -31,14 +31,24 @@ type GenReq = {
   content_type: string | null;
   pillar_name: string | null;
 };
+type Ready = {
+  id: string;
+  scheduled_at: string;
+  pillar_name: string | null;
+  content_type: string;
+  platforms: string;
+};
 type Act = { content: string; created_at: string; chat_title: string };
 type HomeData = {
   due: Due[];
   review: Review[];
   genRequests: GenReq[];
+  readyToPost: Ready[];
   activity: Act[];
+  templates: number;
   setup: { assets: number; pillars: number; hasMetaKey: boolean };
 };
+type MetricPost = { views: number | null; posted_at: string | null };
 
 function platforms(p: string): string {
   try {
@@ -60,95 +70,96 @@ function when(iso: string): string {
   return `${day} ${time}`;
 }
 
+async function pollJob(jobId: string): Promise<void> {
+  for (let i = 0; i < 90; i++) {
+    const poll = await fetch(`/api/jobs/${jobId}`);
+    if (!poll.ok) return;
+    const job = (await poll.json()) as { state: string };
+    if (job.state === "completed" || job.state === "failed") return;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 export default function HomeConsole(): React.ReactNode {
   const [data, setData] = useState<HomeData | null>(null);
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sentChat, setSentChat] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<MetricPost[] | null>(null);
+  const [busyTask, setBusyTask] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/home");
-    if (res.ok) setData((await res.json()) as HomeData);
+    const [h, m] = await Promise.all([fetch("/api/home"), fetch("/api/metrics")]);
+    if (h.ok) setData((await h.json()) as HomeData);
+    if (m.ok) setMetrics((((await m.json()) as { posts: MetricPost[] }).posts ?? []));
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setSending(true);
+  const act = useCallback(
+    async (taskId: string, fn: () => Promise<Response>) => {
+      setBusyTask(taskId);
+      setError("");
+      try {
+        const res = await fn();
+        if (!res.ok) {
+          const d = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(d.error ?? "action failed");
+        }
+        const d = (await res.json().catch(() => ({}))) as { jobId?: string };
+        if (d.jobId) await pollJob(d.jobId);
+        await load();
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusyTask(null);
+      }
+    },
+    [load],
+  );
+
+  const refreshMetrics = useCallback(async () => {
+    setSyncing(true);
     setError("");
     try {
-      const c = await fetch("/api/agent/chats", { method: "POST" });
-      if (!c.ok) throw new Error("could not create chat");
-      const { chatId } = (await c.json()) as { chatId: string };
-      const m = await fetch(`/api/agent/chats/${chatId}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text }),
-      });
-      if (!m.ok) throw new Error("send failed");
-      setInput("");
-      setSentChat(chatId);
+      const started = await fetch("/api/metrics/sync", { method: "POST" });
+      if (!started.ok) throw new Error("sync failed to start");
+      const { jobId } = (await started.json()) as { jobId: string };
+      await pollJob(jobId);
+      await load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setSending(false);
+      setSyncing(false);
     }
-  }, [input, sending]);
-
-  const approveSlot = useCallback(
-    async (id: string) => {
-      await fetch(`/api/slots/${id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: "green" }),
-      });
-      void load();
-    },
-    [load],
-  );
-
-  const decideGen = useCallback(
-    async (id: string, verdict: "approve" | "reject") => {
-      await fetch(`/api/gen-requests/${id}/${verdict}`, { method: "POST" });
-      void load();
-    },
-    [load],
-  );
+  }, [load]);
 
   if (!data) return <p className="muted">Loading today…</p>;
   const fresh = data.setup.assets === 0;
-  const allQuiet = data.due.length === 0 && data.review.length === 0 && data.genRequests.length === 0;
+  const tasksCount =
+    (data.templates === 0 ? 1 : 0) +
+    data.due.filter((s) => s.status === "red" && s.draft_count === 0).length +
+    data.review.length +
+    data.genRequests.length +
+    data.readyToPost.length;
+  const allQuiet = tasksCount === 0;
+
+  const now = Date.now();
+  const week = 7 * 86400000;
+  const views = (posts: MetricPost[], from: number, to: number): number =>
+    posts.reduce((n, p) => {
+      if (!p.posted_at || p.views === null) return n;
+      const t = Date.parse(p.posted_at);
+      return t >= from && t < to ? n + p.views : n;
+    }, 0);
+  const cur = metrics ? views(metrics, now - week, now) : null;
+  const prev = metrics ? views(metrics, now - 2 * week, now - week) : null;
+  const delta = cur !== null && prev !== null && prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null;
 
   return (
     <div className="home">
       {error !== "" && <p className="note err">{error}</p>}
-      <div className="hero-box home-composer">
-        <textarea
-          rows={2}
-          placeholder="Tell the agent what to do — draft the week, plan a carousel, analyze performance…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <button className="primary" disabled={sending || !input.trim()} onClick={() => void send()}>
-          {sending ? "Sending…" : "Send"}
-        </button>
-      </div>
-      {sentChat && (
-        <p className="muted">
-          Agent is on it. <a href="/chat">Open the conversation →</a>
-        </p>
-      )}
       {fresh ? (
         <div className="keycard">
           <h3 style={{ marginTop: 0 }}>Get started</h3>
@@ -170,81 +181,139 @@ export default function HomeConsole(): React.ReactNode {
             </li>
           </ol>
         </div>
-      ) : allQuiet ? (
-        <div className="keycard">
-          <h3 style={{ marginTop: 0 }}>All quiet.</h3>
-          <p className="muted" style={{ marginBottom: 0 }}>
-            Nothing due, nothing waiting on review. The planner keeps 14 days drafted — check the{" "}
-            <a href="/queue">Calendar</a> to see what is coming.
-          </p>
-        </div>
       ) : (
         <div className="home-grid">
           <section>
-            <h3>Due & overdue</h3>
-            {data.due.length === 0 && <p className="muted">Nothing due in the next day.</p>}
-            {data.due.map((s) => (
-              <a key={s.id} className={`due-row ${s.status}`} href="/queue">
-                <span className="due-dot" aria-hidden="true" />
-                <span className="due-main">
-                  <span className="due-title">
-                    {s.pillar_name ?? "No pillar"} · {s.content_type}
-                  </span>
-                  <span className="muted">
-                    {when(s.scheduled_at)}
-                    {platforms(s.platforms) ? ` · ${platforms(s.platforms)}` : ""}
-                    {s.draft_count > 0 ? ` · ${s.draft_count} draft${s.draft_count > 1 ? "s" : ""}` : " · no drafts"}
-                  </span>
-                </span>
-              </a>
-            ))}
-          </section>
-          <section>
-            <h3>Needs your review</h3>
-            {data.review.length === 0 && data.genRequests.length === 0 && (
-              <p className="muted">Nothing waiting on you.</p>
+            <h3>Tasks ({tasksCount})</h3>
+            {allQuiet && (
+              <div className="keycard">
+                <h3 style={{ marginTop: 0 }}>All quiet.</h3>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  Nothing needs you. The planner keeps 14 days drafted — check the{" "}
+                  <a href="/queue">Calendar</a> to see what is coming.
+                </p>
+              </div>
             )}
-            {data.review.map((r) => (
-              <div key={r.id} className="review-card">
-                <div className="review-head">
-                  <strong>
-                    {r.pillar_name ?? "No pillar"} · {r.content_type}
-                  </strong>
-                  <span className="muted">{when(r.scheduled_at)}</span>
+            {data.templates === 0 && (
+              <div className="task-row cta">
+                <div>
+                  <strong>No posting schedule yet</strong>
+                  <p className="muted">Set your cadence so the planner can keep 14 days drafted.</p>
                 </div>
-                {r.draft_body && <p className="review-body">{r.draft_body.slice(0, 220)}{r.draft_body.length > 220 ? "…" : ""}</p>}
-                <div className="review-actions">
-                  <button className="primary" onClick={() => void approveSlot(r.id)}>
+                <a href="/queue">
+                  <button className="primary">Queue setup</button>
+                </a>
+              </div>
+            )}
+            {data.due
+              .filter((s) => s.status === "red" && s.draft_count === 0)
+              .map((s) => (
+                <div key={s.id} className="task-row">
+                  <div>
+                    <strong>
+                      Draft: {s.pillar_name ?? "No pillar"} · {s.content_type}
+                    </strong>
+                    <p className="muted">{when(s.scheduled_at)}{platforms(s.platforms) ? ` · ${platforms(s.platforms)}` : ""}</p>
+                  </div>
+                  <button
+                    className="primary"
+                    disabled={busyTask === s.id}
+                    onClick={() =>
+                      void act(s.id, () =>
+                        fetch("/api/draft/run", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ slotId: s.id }),
+                        }),
+                      )
+                    }
+                  >
+                    {busyTask === s.id ? "Drafting…" : "Draft now"}
+                  </button>
+                </div>
+              ))}
+            {data.review.map((r) => (
+              <div key={r.id} className="task-row">
+                <div>
+                  <strong>
+                    Review: {r.pillar_name ?? "No pillar"} · {r.content_type}
+                  </strong>
+                  {r.draft_body && <p className="muted">{r.draft_body.slice(0, 140)}{r.draft_body.length > 140 ? "…" : ""}</p>}
+                </div>
+                <span className="task-btns">
+                  <button
+                    className="primary"
+                    disabled={busyTask === r.id}
+                    onClick={() =>
+                      void act(r.id, () =>
+                        fetch(`/api/slots/${r.id}`, {
+                          method: "PATCH",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ status: "green" }),
+                        }),
+                      )
+                    }
+                  >
                     Approve
                   </button>
                   <a href="/queue">
-                    <button>Open in calendar</button>
+                    <button>Open</button>
                   </a>
-                </div>
+                </span>
               </div>
             ))}
             {data.genRequests.map((g) => (
-              <div key={g.id} className="review-card">
-                <div className="review-head">
+              <div key={g.id} className="task-row">
+                <div>
                   <strong>Image request{g.pillar_name ? ` · ${g.pillar_name}` : ""}</strong>
-                  <span className="muted">{new Date(g.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                  <p className="muted">{g.prompt.slice(0, 140)}{g.prompt.length > 140 ? "…" : ""}</p>
                 </div>
-                <p className="review-body">{g.prompt.slice(0, 220)}{g.prompt.length > 220 ? "…" : ""}</p>
-                <div className="review-actions">
-                  <button className="primary" onClick={() => void decideGen(g.id, "approve")}>
-                    Approve & generate
+                <span className="task-btns">
+                  <button
+                    className="primary"
+                    disabled={busyTask === g.id}
+                    onClick={() => void act(g.id, () => fetch(`/api/gen-requests/${g.id}/approve`, { method: "POST" }))}
+                  >
+                    Approve
                   </button>
-                  <button onClick={() => void decideGen(g.id, "reject")}>Reject</button>
-                  {g.project_id && (
-                    <a href={`/carousels/${g.project_id}`}>
-                      <button>Open carousel</button>
-                    </a>
-                  )}
+                  <button
+                    disabled={busyTask === g.id}
+                    onClick={() => void act(g.id, () => fetch(`/api/gen-requests/${g.id}/reject`, { method: "POST" }))}
+                  >
+                    Reject
+                  </button>
+                </span>
+              </div>
+            ))}
+            {data.readyToPost.map((r) => (
+              <div key={r.id} className="task-row">
+                <div>
+                  <strong>
+                    Post: {r.pillar_name ?? "No pillar"} · {r.content_type}
+                  </strong>
+                  <p className="muted">{when(r.scheduled_at)}{platforms(r.platforms) ? ` · ${platforms(r.platforms)}` : ""}</p>
                 </div>
+                <button
+                  disabled={busyTask === r.id}
+                  onClick={() => void act(r.id, () => fetch(`/api/slots/${r.id}/post`, { method: "POST" }))}
+                >
+                  Mark posted
+                </button>
               </div>
             ))}
           </section>
           <section>
+            <h3>Last 7 days</h3>
+            <div className="metric-hero">
+              <div className="big">{cur === null ? "…" : cur.toLocaleString()}</div>
+              <div className="muted">views across platforms</div>
+              <div className={`delta${delta !== null && delta < 0 ? " down" : ""}`}>
+                {delta === null ? "no prior week to compare" : `${delta >= 0 ? "+" : ""}${delta}% vs prior 7d`}
+              </div>
+              <button disabled={syncing} onClick={() => void refreshMetrics()}>
+                {syncing ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
             <h3>Agent activity</h3>
             {data.activity.length === 0 && <p className="muted">No agent turns yet.</p>}
             {data.activity.map((a, i) => (

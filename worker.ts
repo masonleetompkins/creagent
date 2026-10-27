@@ -30,7 +30,7 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return { pong: true, at: new Date().toISOString() };
   }
   if (job.name === "ingest") {
-    const { source, value, since, until } = data;
+    const { source, value, since, until, maxPages } = data;
     if (typeof source !== "string" || !isIngestSource(source)) {
       throw new Error(`bad ingest source: ${String(source)}`);
     }
@@ -47,6 +47,7 @@ async function dispatch(job: JobRow): Promise<unknown> {
         since: typeof since === "string" ? since : undefined,
         until: typeof until === "string" ? until : undefined,
       },
+      typeof maxPages === "number" ? maxPages : undefined,
     );
   }
   if (job.name === "ingest_zernio") {

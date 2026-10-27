@@ -42,7 +42,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       .prepare(
         `SELECT id, source, title, source_url,
                 length(transcript) AS chars,
-                analyzed_at, posted_at, created_at
+                analyzed_at, posted_at, created_at, is_reply
          FROM assets ${whereSql}
          ORDER BY COALESCE(posted_at, created_at) DESC LIMIT ? OFFSET ?`,
       )

@@ -70,7 +70,6 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   const [kit, setKit] = useState({ title: "", primary: "#0b5fff", secondary: "#111111", background: "#ffffff", heading: "system-black", body: "system" });
   const [draft, setDraft] = useState({ layout: "content", heading: "", body: "" });
   const [brief, setBrief] = useState("");
-  const [numSlides, setNumSlides] = useState("7");
   const [count, setCount] = useState("");
   const [imgPrompt, setImgPrompt] = useState("");
   const [imgTick, setImgTick] = useState(0);
@@ -128,7 +127,23 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   // Live preview render.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !current) return;
+    if (!canvas) return;
+    if (!current) {
+      canvas.width = 1080;
+      canvas.height = 1350;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = kit.background || "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = kit.secondary || "#111111";
+        ctx.globalAlpha = 0.55;
+        ctx.font = "600 44px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Add a slide to start", canvas.width / 2, canvas.height / 2);
+        ctx.globalAlpha = 1;
+      }
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -237,7 +252,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         await fetch(`/api/carousels/${projectId}/generate-copy`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ numSlides: Number(numSlides) || 7, brief, replace }),
+          body: JSON.stringify({ numSlides: slides.length || 7, brief, replace }),
         }),
       );
       const done = await pollJob(started.jobId as string);
@@ -455,12 +470,22 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         </button>
         <span className="spacer" />
         <button onClick={() => void addSlide()}>+ Slide</button>
-        <input type="text" aria-label="Set count" placeholder="Count" value={count} onChange={(e) => setCount(e.target.value)} style={{ flex: "0 1 64px" }} />
+        <label className="steplabel">
+          Slides
+          <input
+            type="number"
+            aria-label="Slide count"
+            min={1}
+            max={15}
+            placeholder={String(slides.length || 7)}
+            value={count}
+            onChange={(e) => setCount(e.target.value)}
+          />
+        </label>
         <button onClick={() => void applyCount()}>Apply</button>
       </div>
       <div className="row">
         <input type="text" aria-label="Brief" placeholder="Brief for the model (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
-        <input type="text" aria-label="Slides" placeholder="# slides" value={numSlides} onChange={(e) => setNumSlides(e.target.value)} style={{ flex: "0 1 80px" }} />
       </div>
 
       <div className="edgrid work">
@@ -487,9 +512,10 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
           </div>
         </div>
         <div>
-          {current ? (
             <section className="keycard" style={{ marginTop: 0 }}>
               <canvas ref={canvasRef} className="preview" />
+              {current ? (
+              <>
               <div className="row">
                 <button disabled={busy} onClick={() => void exportCurrent()}>Export PNG</button>
                 <button disabled={busy || slides.length === 0} onClick={() => void exportAll()}>Export all</button>
@@ -511,10 +537,9 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               <div className="row">
                 <button className="primary" onClick={() => void saveSlide()}>Save slide</button>
               </div>
+              </>
+              ) : null}
             </section>
-          ) : (
-            <p className="muted">Add a slide to start.</p>
-          )}
           {current ? (
             <section className="keycard">
               {(() => {

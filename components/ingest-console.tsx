@@ -13,16 +13,23 @@ const URL_SOURCES = [
   { id: "instagram_reel", label: "Instagram reel transcript by URL" },
 ];
 
-const WINDOWS = [
-  { id: "7", label: "Last 7 days" },
-  { id: "30", label: "Last 30 days" },
-  { id: "90", label: "Last 90 days" },
-  { id: "all", label: "All time" },
-];
-
 const HANDLE_KEY = "creagent.ingest.handles";
+const RANGE_KEY = "creagent.ingest.ranges";
 
 type Account = { id: string; platform: string; username: string };
+type Range = { from: string; to: string };
+type Target =
+  | { kind: "zernio"; key: string; label: string; accountId: string }
+  | { kind: "monid"; key: string; label: string; source: string; handle: string };
+type TargetState = {
+  key: string;
+  label: string;
+  state: "pending" | "running" | "done" | "failed";
+  assets: number;
+  attempts: number;
+  error: string | null;
+  rateLimited: boolean;
+};
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const data = (await res.json()) as Record<string, unknown>;
@@ -30,20 +37,25 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return data;
 }
 
-async function pollJob(jobId: string): Promise<Record<string, unknown>> {
-  for (;;) {
-    const data = await readJson(await fetch(`/api/jobs/${jobId}`));
-    if (data.state === "completed" || data.state === "failed") return data;
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-}
-
-function loadHandles(): Record<string, string> {
+function loadJson(key: string): Record<string, string> {
   try {
-    return (JSON.parse(window.localStorage.getItem(HANDLE_KEY) ?? "{}") as Record<string, string>) ?? {};
+    return (JSON.parse(window.localStorage.getItem(key) ?? "{}") as Record<string, string>) ?? {};
   } catch {
     return {};
   }
+}
+
+function loadRanges(): Record<string, Range> {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(RANGE_KEY) ?? "{}") as Record<string, Range>;
+    return raw ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function rateLimited(message: string): boolean {
+  return /http 429|rate.?limit|too many requests/i.test(message);
 }
 
 export default function IngestConsole(): React.ReactNode {
@@ -52,13 +64,16 @@ export default function IngestConsole(): React.ReactNode {
   const [accountsNote, setAccountsNote] = useState<string | null>(null);
   const [handles, setHandles] = useState<Record<string, string>>({});
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [windowId, setWindowId] = useState("30");
+  const [ranges, setRanges] = useState<Record<string, Range>>({});
+  const [deep, setDeep] = useState(false);
   const [urlSource, setUrlSource] = useState(URL_SOURCES[0].id);
   const [urlValue, setUrlValue] = useState("");
   const [unanalyzed, setUnanalyzed] = useState(0);
   const [phase, setPhase] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [targets, setTargets] = useState<TargetState[]>([]);
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
 
   const refreshCounts = useCallback(async () => {
     try {
@@ -71,7 +86,8 @@ export default function IngestConsole(): React.ReactNode {
   }, []);
 
   useEffect(() => {
-    setHandles(loadHandles());
+    setHandles(loadJson(HANDLE_KEY));
+    setRanges(loadRanges());
     void refreshCounts();
     fetch("/api/zernio/accounts")
       .then(async (res) => {
@@ -102,83 +118,170 @@ export default function IngestConsole(): React.ReactNode {
     });
   }
 
-  async function runBatch(since: string | undefined, label: string): Promise<void> {
-    const zTargets = accounts.filter((a) => accountsOn[a.id]);
-    const mTargets = PLATFORMS.filter((p) => checked[p.id] && (handles[p.id] ?? "").trim());
-    if (zTargets.length === 0 && mTargets.length === 0) {
-      setError("check at least one Zernio account or manual handle");
+  function setRange(key: string, patch: Partial<Range>): void {
+    setRanges((r) => {
+      const prev = r[key] ?? { from: "", to: "" };
+      const next = { ...r, [key]: { ...prev, ...patch } };
+      try {
+        window.localStorage.setItem(RANGE_KEY, JSON.stringify(next));
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  }
+
+  function selectedTargets(): Target[] {
+    const out: Target[] = [];
+    for (const a of accounts) {
+      if (accountsOn[a.id]) {
+        out.push({ kind: "zernio", key: `z:${a.id}`, label: `${a.platform} · ${a.username}`, accountId: a.id });
+      }
+    }
+    for (const p of PLATFORMS) {
+      const handle = (handles[p.id] ?? "").replace(/^@/, "").trim();
+      if (checked[p.id] && handle) {
+        out.push({ kind: "monid", key: `m:${p.id}`, label: `${p.label} @${handle}`, source: p.source, handle });
+      }
+    }
+    return out;
+  }
+
+  const rangeWindow = useCallback(
+    (key: string): { since?: string; until?: string } => {
+      const r = ranges[key];
+      const since = r?.from ? new Date(r.from).toISOString() : undefined;
+      const until = r?.to ? new Date(`${r.to}T23:59:59`).toISOString() : undefined;
+      return { since, until };
+    },
+    [ranges],
+  );
+
+  async function runTarget(t: Target, label: string): Promise<TargetState> {
+    const st: TargetState = {
+      key: t.key,
+      label: t.label,
+      state: "running",
+      assets: 0,
+      attempts: 0,
+      error: null,
+      rateLimited: false,
+    };
+    setTargets((ts) => ts.map((x) => (x.key === t.key ? st : x)));
+    try {
+      const { since, until } = rangeWindow(t.key);
+      const started = await readJson(
+        await fetch(t.kind === "zernio" ? "/api/ingest/zernio" : "/api/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            t.kind === "zernio"
+              ? { accountIds: [(t as { accountId: string }).accountId], since, until }
+              : {
+                  source: (t as { source: string }).source,
+                  value: (t as { handle: string }).handle,
+                  since,
+                  until,
+                  maxPages: deep ? 20 : 5,
+                },
+          ),
+        }),
+      );
+      const jobId = started.jobId as string;
+      for (;;) {
+        const data = await readJson(await fetch(`/api/jobs/${jobId}`));
+        const prog = (data.progress ?? {}) as { assets?: number };
+        st.attempts = typeof data.attempts === "number" ? data.attempts : 0;
+        if (typeof prog.assets === "number") st.assets = prog.assets;
+        setTargets((ts) => ts.map((x) => (x.key === t.key ? { ...st } : x)));
+        if (data.state === "completed" || data.state === "failed") {
+          if (data.state === "failed") throw new Error((data.failedReason as string) ?? `${label} failed`);
+          const res = (data.result ?? {}) as { assets?: number; duplicates?: number };
+          if (typeof res.assets === "number") st.assets = res.assets;
+          st.state = "done";
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch (e) {
+      st.state = "failed";
+      st.error = (e as Error).message;
+      st.rateLimited = rateLimited(st.error);
+    }
+    setTargets((ts) => ts.map((x) => (x.key === t.key ? { ...st } : x)));
+    return st;
+  }
+
+  async function runBatch(batch: Target[], label: string): Promise<void> {
+    if (batch.length === 0) {
+      setError("select at least one Zernio account or manual handle");
       return;
     }
     setBusy(true);
     setError(null);
+    setTargets(
+      batch.map((t) => ({
+        key: t.key,
+        label: t.label,
+        state: "pending" as const,
+        assets: 0,
+        attempts: 0,
+        error: null,
+        rateLimited: false,
+      })),
+    );
+    setProgress({ done: 0, total: batch.length, current: "" });
     try {
       let total = 0;
-      if (zTargets.length > 0) {
-        setPhase(`${label}: Zernio (${zTargets.length} accounts)…`);
+      let failed = 0;
+      for (const t of batch) {
+        setProgress((p) => (p ? { ...p, current: `${label}: ${t.label}…` } : p));
+        const st = await runTarget(t, label);
+        total += st.assets;
+        if (st.state === "failed") failed++;
+        setProgress((p) => (p ? { ...p, done: p.done + 1, current: "" } : p));
+      }
+      if (total > 0) {
+        setPhase("Analyzing new assets…");
         const started = await readJson(
-          await fetch("/api/ingest/zernio", {
+          await fetch("/api/analysis/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accountIds: zTargets.map((a) => a.id), since }),
+            body: JSON.stringify({}),
           }),
         );
-        const done = await pollJob(started.jobId as string);
-        if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
-        total += ((done.result ?? {}) as { assets?: number }).assets ?? 0;
+        for (;;) {
+          const done = await readJson(await fetch(`/api/jobs/${started.jobId as string}`));
+          if (done.state === "completed" || done.state === "failed") {
+            if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 2000));
+        }
       }
-      for (const t of mTargets) {
-        setPhase(`${label}: ${t.label}…`);
-        const started = await readJson(
-          await fetch("/api/ingest", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              source: t.source,
-              value: (handles[t.id] ?? "").replace(/^@/, "").trim(),
-              since,
-            }),
-          }),
-        );
-        const done = await pollJob(started.jobId as string);
-        if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
-        total += ((done.result ?? {}) as { assets?: number }).assets ?? 0;
-      }
-      setPhase("Analyzing…");
-      const started = await readJson(
-        await fetch("/api/analysis/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        }),
+      setPhase(
+        failed === 0
+          ? `Done: ${total} new asset${total === 1 ? "" : "s"} ingested${total > 0 ? " and analyzed" : ""}.`
+          : `Finished with ${failed} failed target${failed === 1 ? "" : "s"} — fix and retry below.`,
       );
-      const done = await pollJob(started.jobId as string);
-      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
-      setPhase(`Done: ${total} new asset${total === 1 ? "" : "s"} ingested and analyzed.`);
       await refreshCounts();
     } catch (e) {
       setError((e as Error).message);
       setPhase(null);
     } finally {
       setBusy(false);
+      setProgress((p) => (p ? { ...p, current: "" } : p));
     }
   }
 
   async function ingestAndAnalyze(): Promise<void> {
-    const days = windowId === "all" ? null : Number(windowId);
-    const since = days === null ? undefined : new Date(Date.now() - days * 86400000).toISOString();
-    await runBatch(since, "Ingesting");
+    await runBatch(selectedTargets(), "Ingesting");
   }
 
-  async function refreshUpToNow(): Promise<void> {
-    let since: string | undefined;
-    try {
-      const data = await readJson(await fetch("/api/assets?limit=1"));
-      const assets = data.assets as { posted_at: string | null; created_at: string }[];
-      since = assets[0]?.posted_at ?? assets[0]?.created_at;
-    } catch {
-      /* fall through to default window */
-    }
-    await runBatch(since ?? new Date(Date.now() - 7 * 86400000).toISOString(), "Refreshing");
+  async function retryFailed(): Promise<void> {
+    const failedKeys = new Set(targets.filter((t) => t.state === "failed").map((t) => t.key));
+    if (failedKeys.size === 0) return;
+    await runBatch(selectedTargets().filter((t) => failedKeys.has(t.key)), "Retrying");
   }
 
   async function ingestUrl(): Promise<void> {
@@ -194,8 +297,14 @@ export default function IngestConsole(): React.ReactNode {
           body: JSON.stringify({ source: urlSource, value: urlValue.trim() }),
         }),
       );
-      const done = await pollJob(started.jobId as string);
-      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
+      for (;;) {
+        const done = await readJson(await fetch(`/api/jobs/${started.jobId as string}`));
+        if (done.state === "completed" || done.state === "failed") {
+          if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
       setPhase("URL ingested. Run analysis to fold it into the brain.");
       setUrlValue("");
       await refreshCounts();
@@ -219,8 +328,14 @@ export default function IngestConsole(): React.ReactNode {
           body: JSON.stringify({}),
         }),
       );
-      const done = await pollJob(started.jobId as string);
-      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
+      for (;;) {
+        const done = await readJson(await fetch(`/api/jobs/${started.jobId as string}`));
+        if (done.state === "completed" || done.state === "failed") {
+          if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
       setPhase("Analysis complete.");
       await refreshCounts();
     } catch (e) {
@@ -231,62 +346,132 @@ export default function IngestConsole(): React.ReactNode {
     }
   }
 
+  const rangeRow = (key: string): React.ReactNode => (
+    <span className="range-inline">
+      <input
+        type="date"
+        aria-label="From date"
+        value={ranges[key]?.from ?? ""}
+        onChange={(e) => setRange(key, { from: e.target.value })}
+      />
+      <span className="range-arrow" aria-hidden="true">→</span>
+      <input
+        type="date"
+        aria-label="To date"
+        value={ranges[key]?.to ?? ""}
+        onChange={(e) => setRange(key, { to: e.target.value })}
+      />
+    </span>
+  );
+
+  const failedCount = targets.filter((t) => t.state === "failed").length;
+  const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
   return (
     <>
       <section className="keycard">
         <h2>Connected accounts (Zernio, auto-detected)</h2>
+        <p className="muted">
+          Your connected accounts: posts plus engagement, free. Best for history and analytics.
+          Duplicates with Monid are merged into one entry.
+        </p>
         {accountsNote ? <p className="muted">{accountsNote}</p> : null}
-        {accounts.map((a) => (
-          <div className="checkline" key={a.id}>
-            <input
-              type="checkbox"
-              aria-label={`Include ${a.platform} ${a.username}`}
-              checked={accountsOn[a.id] ?? false}
-              onChange={(e) => setAccountsOn((c) => ({ ...c, [a.id]: e.target.checked }))}
-            />
-            <label>
+        <div className="ppills">
+          {accounts.map((a) => (
+            <button
+              key={a.id}
+              className={accountsOn[a.id] ? "on" : ""}
+              title={`${a.platform} · ${a.username}`}
+              onClick={() => setAccountsOn((c) => ({ ...c, [a.id]: !c[a.id] }))}
+            >
               {a.platform} · {a.username}
-            </label>
-          </div>
-        ))}
+            </button>
+          ))}
+        </div>
+        {accounts
+          .filter((a) => accountsOn[a.id])
+          .map((a) => (
+            <div className="target-row" key={a.id}>
+              <span className="muted">{a.platform} · {a.username}</span>
+              {rangeRow(`z:${a.id}`)}
+            </div>
+          ))}
         <h2>Manual handles (Monid)</h2>
-        {PLATFORMS.map((p) => (
-          <div className="checkline" key={p.id}>
-            <input
-              type="checkbox"
-              aria-label={`Include ${p.label}`}
-              checked={checked[p.id] ?? false}
-              onChange={(e) => setChecked((c) => ({ ...c, [p.id]: e.target.checked }))}
-            />
-            <label style={{ minWidth: 74 }}>{p.label}</label>
+        <p className="muted">
+          Public scraping by handle: transcripts and captions without connecting anything.
+          Costs credits per run. Use it for accounts you cannot connect.
+        </p>
+        <div className="ppills">
+          {PLATFORMS.map((p) => (
+            <button
+              key={p.id}
+              className={checked[p.id] ? "on" : ""}
+              onClick={() => setChecked((c) => ({ ...c, [p.id]: !c[p.id] }))}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {PLATFORMS.filter((p) => checked[p.id]).map((p) => (
+          <div className="target-row" key={p.id}>
             <input
               type="text"
               spellCheck={false}
               aria-label={`${p.label} handle`}
-              placeholder="username (no @)"
+              placeholder={`${p.label} username (no @)`}
               value={handles[p.id] ?? ""}
               onChange={(e) => setHandle(p.id, e.target.value)}
             />
+            {rangeRow(`m:${p.id}`)}
           </div>
         ))}
         <div className="row">
-          <select aria-label="Window" value={windowId} onChange={(e) => setWindowId(e.target.value)}>
-            {WINDOWS.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.label}
-              </option>
-            ))}
-          </select>
+          <label className="checkline-inline">
+            <input
+              type="checkbox"
+              checked={deep}
+              onChange={(e) => setDeep(e.target.checked)}
+            />
+            Deep pull (Monid: 20 pages instead of 5)
+          </label>
+        </div>
+        <div className="row">
           <button className="primary" disabled={busy} onClick={() => void ingestAndAnalyze()}>
             {busy ? "Working…" : "Ingest & analyze"}
           </button>
-          <button disabled={busy} onClick={() => void refreshUpToNow()}>
-            Refresh
+          <button disabled={busy || failedCount === 0} onClick={() => void retryFailed()}>
+            Retry failed ({failedCount})
           </button>
           <button disabled={busy || unanalyzed === 0} onClick={() => void analyzeOnly()}>
             Analyze unanalyzed ({unanalyzed})
           </button>
         </div>
+        {progress && (
+          <div className="progress-wrap">
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${pct}%` }} />
+            </div>
+            <p className="muted">
+              {progress.done}/{progress.total} targets{progress.current ? ` · ${progress.current}` : ""}
+            </p>
+          </div>
+        )}
+        {targets.length > 0 && (
+          <div className="target-results">
+            {targets.map((t) => (
+              <div key={t.key} className={`target-result ${t.state}`}>
+                <span className="t-dot" aria-hidden="true" />
+                <span className="t-label">{t.label}</span>
+                <span className="muted">
+                  {t.state === "done" && `${t.assets} new`}
+                  {t.state === "running" && `${t.assets} so far${t.attempts > 0 ? ` · retry ${t.attempts}` : ""}`}
+                  {t.state === "pending" && "waiting"}
+                  {t.state === "failed" && (t.rateLimited ? "rate limited — retry" : t.error)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {phase ? <p className="note ok">{phase}</p> : null}
         {error ? <p className="note err">{error}</p> : null}
       </section>

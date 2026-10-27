@@ -124,6 +124,7 @@ export default function QueueConsole(): React.ReactNode {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [form, setForm] = useState({
     weekday: "1",
@@ -164,6 +165,7 @@ export default function QueueConsole(): React.ReactNode {
       setTemplates(tmplData.templates as Template[]);
       setPillars((pillarData.pillars as Pillar[]) ?? []);
       setHistory((assetData.assets as HistoryAsset[]) ?? []);
+      setTemplatesLoaded(true);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -173,6 +175,19 @@ export default function QueueConsole(): React.ReactNode {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (templatesLoaded && templates.length === 0) setSetupOpen(true);
+  }, [templatesLoaded, templates.length]);
+
+  useEffect(() => {
+    if (!setupOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setSetupOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setupOpen]);
 
   async function runJob(url: string, body: unknown, label: string): Promise<void> {
     setBusy(true);
@@ -432,8 +447,8 @@ export default function QueueConsole(): React.ReactNode {
         </button>
         <button
           disabled={busy}
-          onClick={() => setSetupOpen((o) => !o)}
-          className={setupOpen || templates.length === 0 ? "primary" : ""}
+          onClick={() => setSetupOpen(true)}
+          className={setupOpen ? "primary" : ""}
         >
           Queue setup
         </button>
@@ -468,7 +483,7 @@ export default function QueueConsole(): React.ReactNode {
       {note ? <p className="note ok">{note}</p> : null}
       {error ? <p className="note err">{error}</p> : null}
 
-      {templates.length === 0 && !setupOpen ? (
+      {templatesLoaded && templates.length === 0 && !setupOpen ? (
         <div className="empty">
           <p>No posting schedule yet — the calendar is blank until Queue setup adds posting times.</p>
           <button className="primary" onClick={() => setSetupOpen(true)}>
@@ -703,9 +718,15 @@ export default function QueueConsole(): React.ReactNode {
       ) : null}
 
       </div>
-      {setupOpen || templates.length === 0 ? (
-        <>
-          <h2>Queue setup</h2>
+      {setupOpen ? (
+        <div className="modal-backdrop" onClick={() => setSetupOpen(false)}>
+          <div className="modal" role="dialog" aria-label="Queue setup" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-head">
+            <h2>Queue setup</h2>
+            <button onClick={() => setSetupOpen(false)} aria-label="Close">
+              ×
+            </button>
+          </div>
           <p className="muted">
             Posting times per day, with a pillar, content type, and platforms
             for each. The planner materializes these into calendar slots.
@@ -767,7 +788,7 @@ export default function QueueConsole(): React.ReactNode {
               </option>
             ))}
           </select>
-          <div className="vtab" role="group" aria-label="Platforms">
+          <div className="ppills" role="group" aria-label="Platforms">
             {PLATFORMS.map((pl) => {
               const on = form.platforms.split(",").map((x) => x.trim()).includes(pl);
               return (
@@ -785,11 +806,14 @@ export default function QueueConsole(): React.ReactNode {
                 </button>
               );
             })}
+            <button className="on solid" onClick={() => void addTemplate()}>
+              + Add
+            </button>
           </div>
-          <button className="primary" onClick={() => void addTemplate()}>Add</button>
         </div>
       </section>
-        </>
+          </div>
+        </div>
       ) : null}
     </>
   );

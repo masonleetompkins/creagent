@@ -17,9 +17,6 @@ export default function Home(): React.ReactNode {
           <a href="/queue">
             <button>Calendar</button>
           </a>
-          <a href="/chat">
-            <button className="primary">Agent chat</button>
-          </a>
         </div>
       </div>
       <HomeConsole />

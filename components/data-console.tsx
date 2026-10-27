@@ -20,6 +20,7 @@ type ScoredPost = {
   views: number | null;
   posted_at: string | null;
   collected_at: string;
+  is_reply: number;
   multipliers: Averages;
 };
 
@@ -183,7 +184,10 @@ export default function DataConsole(): React.ReactNode {
             {sorted.map((p) => (
               <tr key={p.id}>
                 <td className="nowrap muted">{(p.posted_at ?? p.collected_at).slice(0, 10)}</td>
-                <td className="nowrap">{p.platform}</td>
+                <td className="nowrap">
+                  {p.platform}
+                  {p.is_reply ? <span className="reply-tag" title="Reply, not an original post"> ↩ reply</span> : null}
+                </td>
                 <td className="nowrap"><Metric value={p.likes} mult={p.multipliers.likes} /></td>
                 <td className="nowrap"><Metric value={p.comments} mult={p.multipliers.comments} /></td>
                 <td className="nowrap"><Metric value={p.shares} mult={p.multipliers.shares} /></td>

@@ -110,66 +110,83 @@ export default function PillarsManager(): React.ReactNode {
 
   if (!loaded) return <p className="muted">Loading pillars…</p>;
 
-  const confirmedCount = pillars.filter((p) => p.confirmed).length;
-  const ordered = [...pillars].sort((a, b) => b.confirmed - a.confirmed);
+  const confirmed = pillars.filter((p) => p.confirmed);
+  const suggested = pillars.filter((p) => !p.confirmed);
+  const emptySlots = Math.max(0, 5 - confirmed.length);
+
+  const cell = (p: Pillar): React.ReactNode => (
+    <div className={`pillar-cell${p.confirmed ? " yes" : ""}`} key={p.id}>
+      <input
+        type="text"
+        aria-label="Pillar name"
+        className="pillar-name"
+        value={drafts[p.id]?.name ?? ""}
+        onChange={(e) =>
+          setDrafts((d) => ({ ...d, [p.id]: { name: e.target.value, description: d[p.id]?.description ?? "" } }))
+        }
+      />
+      <textarea
+        aria-label="Pillar description"
+        rows={3}
+        placeholder="What this pillar covers"
+        value={drafts[p.id]?.description ?? ""}
+        onChange={(e) =>
+          setDrafts((d) => ({ ...d, [p.id]: { name: d[p.id]?.name ?? "", description: e.target.value } }))
+        }
+      />
+      <div className="pillar-btns">
+        <button onClick={() => void save(p.id)} title="Save edits">
+          Save
+        </button>
+        {p.confirmed ? (
+          <button onClick={() => void setConfirmed(p.id, false)} title="Release this slot">
+            Unconfirm
+          </button>
+        ) : (
+          <button
+            className="primary"
+            disabled={confirmed.length >= 5}
+            onClick={() => void setConfirmed(p.id, true)}
+            title="Confirm into a pillar slot"
+          >
+            Confirm
+          </button>
+        )}
+        <button onClick={() => void remove(p.id, p.name)} title="Delete pillar">
+          ×
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <>
       {error ? <p className="note err">{error}</p> : null}
       <p className="muted">
-        {confirmedCount} of 5 pillars confirmed. Confirmed pillars drive the queue planner.
+        {confirmed.length} of 5 pillars confirmed. Confirmed pillars drive the queue planner.
       </p>
-      {ordered.map((p) => (
-        <section className="keycard" key={p.id}>
-          <div>
-            <strong>{p.name}</strong>
-            <span className={`pill-conf${p.confirmed ? " yes" : ""}`}>
-              {p.confirmed ? "confirmed" : "unconfirmed"}
-            </span>
+      <div className="pillar-grid">
+        {confirmed.map(cell)}
+        {Array.from({ length: emptySlots }).map((_, i) => (
+          <div className="pillar-cell empty" key={`empty-${i}`}>
+            <span className="muted">Empty slot — confirm a suggestion below.</span>
           </div>
-          <div className="row">
-            <input
-              type="text"
-              aria-label="Pillar name"
-              value={drafts[p.id]?.name ?? ""}
-              onChange={(e) =>
-                setDrafts((d) => ({ ...d, [p.id]: { ...d[p.id], name: e.target.value } }))
-              }
-            />
+        ))}
+      </div>
+      {suggested.length > 0 && (
+        <>
+          <h3 className="subhead">Suggestions from analysis</h3>
+          <div className="pillar-grid">
+            {suggested.map(cell)}
           </div>
-          <div className="row">
-            <input
-              type="text"
-              aria-label="Pillar description"
-              placeholder="What this pillar covers"
-              value={drafts[p.id]?.description ?? ""}
-              onChange={(e) =>
-                setDrafts((d) => ({ ...d, [p.id]: { ...d[p.id], description: e.target.value } }))
-              }
-            />
-          </div>
-          <div className="row">
-            <button className="primary" onClick={() => void save(p.id)}>
-              Save
-            </button>
-            {p.confirmed ? (
-              <button onClick={() => void setConfirmed(p.id, false)}>Unconfirm</button>
-            ) : (
-              <button disabled={confirmedCount >= 5} onClick={() => void setConfirmed(p.id, true)}>
-                Confirm
-              </button>
-            )}
-            <button onClick={() => void remove(p.id, p.name)}>Delete</button>
-          </div>
-        </section>
-      ))}
-      <section className="keycard">
-        <h2>Add a pillar</h2>
+        </>
+      )}
+      <section className="keycard slim">
         <div className="row">
           <input
             type="text"
             aria-label="New pillar name"
-            placeholder="Name"
+            placeholder="New pillar name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
           />

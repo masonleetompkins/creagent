@@ -1,5 +1,6 @@
 // Content ingest: Monid endpoint registry, response normalization, asset writes.
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { getDb, nowIso } from "./db";
 import { loadKeys } from "./keys";
 import { monidRunAndWait } from "./monid";
@@ -51,6 +52,60 @@ export function isIngestSource(value: string): value is IngestSource {
 
 function isObj(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Canonical post URL for cross-source dedupe: Monid and Zernio often report
+// the same post with different wrappers (http/https, query params, m. host).
+export function normalizeUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed.toLowerCase();
+  try {
+    const parsed = new URL(trimmed);
+    let host = parsed.hostname.toLowerCase().replace(/^(m|mobile|www)\./, "");
+    if (host === "twitter.com") host = "x.com";
+    const path = parsed.pathname.replace(/\/+$/, "");
+    return `${host}${path}`;
+  } catch {
+    return trimmed
+      .toLowerCase()
+      .replace(/^[a-z]+:\/\/(m|mobile|www)\./, "")
+      .replace(/[?#].*$/, "")
+      .replace(/\/+$/, "");
+  }
+}
+
+// Reply detection for X/Threads (and any source using the same markers):
+// referenced_tweets with replied_to, in_reply_to_*/parent_* ids, or an
+// explicit reply post type.
+export function detectReply(item: Record<string, unknown>): boolean {
+  const refs = item["referenced_tweets"];
+  if (
+    Array.isArray(refs) &&
+    refs.some(
+      (r) => isObj(r) && /reply|replied/i.test(String(r["type"] ?? "")),
+    )
+  ) {
+    return true;
+  }
+  for (const key of [
+    "in_reply_to_status_id",
+    "in_reply_to_status_id_str",
+    "in_reply_to_id",
+    "in_reply_to",
+    "parent_id",
+    "parent_post_id",
+    "reply_to",
+  ]) {
+    const v = item[key];
+    if (v === null || v === undefined) continue;
+    const s = String(v).trim();
+    if (s !== "" && s !== "0") return true;
+  }
+  const t = String(
+    item["post_type"] ?? item["type"] ?? item["kind"] ?? "",
+  ).toLowerCase();
+  return t === "reply" || t === "comment" || t === "response";
 }
 
 function pick(item: Record<string, unknown>, ...keys: string[]): string {
@@ -203,6 +258,86 @@ export type IngestResult = {
   costs: unknown[];
 };
 
+type AssetInput = {
+  source: string;
+  sourceUrl: string | null;
+  title: string;
+  transcript: string;
+  metadata: Record<string, unknown>;
+  postedAt: string | null;
+  isReply: boolean;
+};
+
+// Insert or combine: when the same post arrives from a second provider (or a
+// second run), fold the new fields into the one existing entry instead of
+// duplicating it. Returns "inserted" or "merged".
+export function storeAsset(db: DatabaseSync, row: AssetInput): "inserted" | "merged" {
+  const norm = row.sourceUrl ? normalizeUrl(row.sourceUrl) : "";
+  type Existing = {
+    id: string;
+    title: string;
+    transcript: string;
+    posted_at: string | null;
+    metadata: string;
+    is_reply: number;
+  };
+  const existing = (
+    row.sourceUrl
+      ? db
+          .prepare(
+            `SELECT id, title, transcript, posted_at, metadata, is_reply FROM assets
+             WHERE source_url = ? OR url_norm = ? LIMIT 1`,
+          )
+          .get(row.sourceUrl, norm || "\0")
+      : undefined
+  ) as Existing | undefined;
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO assets (id, source, source_url, url_norm, kind, title, transcript, metadata, posted_at, is_reply, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      row.source,
+      row.sourceUrl,
+      norm || null,
+      row.source,
+      row.title,
+      row.transcript,
+      JSON.stringify({ ...row.metadata, sources: [row.source] }),
+      row.postedAt,
+      row.isReply ? 1 : 0,
+      nowIso(),
+    );
+    return "inserted";
+  }
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(existing.metadata) as Record<string, unknown>;
+  } catch {
+    /* keep incoming */
+  }
+  const sources = new Set<string>([
+    ...((meta["sources"] as string[] | undefined) ?? []),
+    row.source,
+  ]);
+  const mergedMeta: Record<string, unknown> = {
+    ...meta,
+    sources: [...sources],
+    [`raw_${row.source}`]: row.metadata["raw"],
+  };
+  db.prepare(
+    `UPDATE assets SET title = ?, transcript = ?, posted_at = ?, metadata = ?, is_reply = ? WHERE id = ?`,
+  ).run(
+    existing.title || row.title,
+    existing.transcript || row.transcript,
+    existing.posted_at ?? row.postedAt,
+    JSON.stringify(mergedMeta),
+    existing.is_reply || row.isReply ? 1 : 0,
+    existing.id,
+  );
+  return "merged";
+}
+
 export type IngestWindow = { since?: string; until?: string };
 
 const MAX_PAGES = 5;
@@ -212,6 +347,7 @@ export async function runIngest(
   value: string,
   onProgress?: (assets: number) => Promise<void> | void,
   window?: IngestWindow,
+  maxPages = MAX_PAGES,
 ): Promise<IngestResult> {
   const def = INGEST_SOURCES[source];
   const apiKey = loadKeys().monid;
@@ -219,18 +355,13 @@ export async function runIngest(
   const sinceMs = window?.since ? Date.parse(window.since) : Number.NaN;
   const untilMs = window?.until ? Date.parse(window.until) : Number.NaN;
   const db = getDb();
-  const insert = db.prepare(
-    `INSERT INTO assets (id, source, source_url, kind, title, transcript, metadata, posted_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const seen = db.prepare(`SELECT 1 FROM assets WHERE source_url = ? LIMIT 1`);
   let cursor: string | null = null;
   let assets = 0;
   let pages = 0;
   let skipped = 0;
   let duplicates = 0;
   const costs: unknown[] = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < Math.max(1, Math.min(maxPages, 50)); page++) {
     const body: Record<string, string> =
       def.inputKind === "handle"
         ? { handle: value.replace(/^@/, "").trim() }
@@ -262,22 +393,17 @@ export async function runIngest(
           continue;
         }
       }
-      if (asset.sourceUrl && seen.get(asset.sourceUrl)) {
-        duplicates++;
-        continue;
-      }
-      insert.run(
-        randomUUID(),
+      const stored = storeAsset(db, {
         source,
-        asset.sourceUrl,
-        source,
-        asset.title,
-        asset.transcript,
-        JSON.stringify({ runId: result.runId, raw: truncateRaw(item, 4) }),
-        asset.postedAt,
-        nowIso(),
-      );
-      assets++;
+        sourceUrl: asset.sourceUrl,
+        title: asset.title,
+        transcript: asset.transcript,
+        metadata: { runId: result.runId, raw: truncateRaw(item, 4) },
+        postedAt: asset.postedAt,
+        isReply: detectReply(item),
+      });
+      if (stored === "merged") duplicates++;
+      else assets++;
     }
     pages++;
     if (onProgress) await onProgress(assets);
@@ -312,11 +438,6 @@ export async function runZernioIngest(
   const accounts = await zernioAccounts(apiKey);
   const byId = new Map(accounts.map((a) => [a.id, a]));
   const db = getDb();
-  const insert = db.prepare(
-    `INSERT INTO assets (id, source, source_url, kind, title, transcript, metadata, posted_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const seen = db.prepare(`SELECT 1 FROM assets WHERE source_url = ? LIMIT 1`);
   let assets = 0;
   let skipped = 0;
   let duplicates = 0;
@@ -348,22 +469,17 @@ export async function runZernioIngest(
           continue;
         }
       }
-      if (url && seen.get(url)) {
-        duplicates++;
-        continue;
-      }
-      insert.run(
-        randomUUID(),
+      const stored = storeAsset(db, {
         source,
-        url || null,
-        source,
+        sourceUrl: url || null,
         title,
-        text.slice(0, 20000),
-        JSON.stringify({ accountId, platform: account.platform, raw: truncateRaw(post, 4) }),
+        transcript: text.slice(0, 20000),
+        metadata: { accountId, platform: account.platform, raw: truncateRaw(post, 4) },
         postedAt,
-        nowIso(),
-      );
-      assets++;
+        isReply: detectReply(post),
+      });
+      if (stored === "merged") duplicates++;
+      else assets++;
     }
     done++;
     if (onProgress) await onProgress(assets);

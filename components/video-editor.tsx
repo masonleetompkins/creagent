@@ -1438,7 +1438,8 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
           )}
         </div>
         <div className="ved-side">
-          <div className="seg" role="tablist" aria-label="Editor panels">
+          <div className="ved-panels">
+          <div className="ved-rail" role="tablist" aria-label="Editor panels">
             <button role="tab" aria-selected={tab === "media"} className={tab === "media" ? "on" : ""} onClick={() => setTab("media")}>
               Media ({media.length})
             </button>
@@ -1458,6 +1459,7 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
               Graphics
             </button>
           </div>
+          <div className="ved-pane">
           {tab === "media" && (
             <div className="ved-bin">
               <div className="row">
@@ -2101,6 +2103,8 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
               )}
             </div>
           )}
+          </div>
+          </div>
         </div>
       </div>
       <div className="ved-timeline">

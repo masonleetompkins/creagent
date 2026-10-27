@@ -21,7 +21,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=JSON.parse(localStorage.getItem("creagent.theme")||"{}");var h=typeof t.hue==="number"?Math.max(0,Math.min(360,Math.round(t.hue))):217;document.documentElement.style.setProperty("--hue",h);document.documentElement.dataset.mode=t.mode==="light"?"light":"dark";}catch(e){}})();`,
+            __html: `(function(){try{var t=JSON.parse(localStorage.getItem("creagent.theme")||"{}");var h=typeof t.hue==="number"?Math.max(0,Math.min(360,Math.round(t.hue))):217;document.documentElement.style.setProperty("--hue",h);document.documentElement.dataset.mode=t.mode==="light"?"light":"dark";if(t.flat==="black"||t.flat==="white")document.documentElement.dataset.flat=t.flat;}catch(e){}})();`,
           }}
         />
       </head>

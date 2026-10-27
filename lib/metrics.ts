@@ -23,6 +23,7 @@ export type MetricPost = {
   views: number | null;
   posted_at: string | null;
   collected_at: string;
+  is_reply: number;
 };
 
 export type Averages = {
@@ -301,19 +302,16 @@ async function syncFromZernioAsync(apiKey: string): Promise<number> {
 
 export function listMetrics(platform?: string): MetricPost[] {
   const db = getDb();
+  const cols = `m.id, m.platform, m.post_url, m.likes, m.comments, m.shares, m.views,
+       m.posted_at, m.collected_at, COALESCE(a.is_reply, 0) AS is_reply
+       FROM post_metrics m LEFT JOIN assets a ON a.id = m.asset_id`;
   if (platform) {
     return db
-      .prepare(
-        `SELECT id, platform, post_url, likes, comments, shares, views, posted_at, collected_at
-         FROM post_metrics WHERE platform = ? ORDER BY collected_at DESC LIMIT 500`,
-      )
+      .prepare(`SELECT ${cols} WHERE m.platform = ? ORDER BY m.collected_at DESC LIMIT 500`)
       .all(platform) as MetricPost[];
   }
   return db
-    .prepare(
-      `SELECT id, platform, post_url, likes, comments, shares, views, posted_at, collected_at
-       FROM post_metrics ORDER BY collected_at DESC LIMIT 500`,
-    )
+    .prepare(`SELECT ${cols} ORDER BY m.collected_at DESC LIMIT 500`)
     .all() as MetricPost[];
 }
 

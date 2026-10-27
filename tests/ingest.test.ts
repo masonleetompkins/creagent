@@ -29,6 +29,54 @@ describe("parsePostedAt", () => {
   });
 });
 
+describe("normalizeUrl + detectReply + storeAsset", () => {
+  it("canonicalizes urls, spots replies, and merges cross-source dupes", async () => {
+    const { normalizeUrl, detectReply, storeAsset } = await import("../lib/ingest");
+    const { getDb } = await import("../lib/db");
+    assert.equal(normalizeUrl("https://x.com/u/status/1?s=20"), "x.com/u/status/1");
+    assert.equal(normalizeUrl("https://twitter.com/u/status/1/"), "x.com/u/status/1");
+    assert.equal(normalizeUrl("https://m.facebook.com/x/?a=b"), "facebook.com/x");
+    assert.equal(normalizeUrl("zernio:x:9"), "zernio:x:9");
+    assert.equal(normalizeUrl(""), "");
+    assert.equal(detectReply({ referenced_tweets: [{ type: "replied_to" }] }), true);
+    assert.equal(detectReply({ in_reply_to_status_id: "123" }), true);
+    assert.equal(detectReply({ post_type: "reply" }), true);
+    assert.equal(detectReply({ text: "hello", in_reply_to_status_id: null }), false);
+    assert.equal(detectReply({ text: "hello" }), false);
+    const db = getDb();
+    const first = storeAsset(db, {
+      source: "x_posts",
+      sourceUrl: "https://x.com/u/status/1?s=20",
+      title: "hello",
+      transcript: "",
+      metadata: { runId: "a" },
+      postedAt: "2026-01-01T00:00:00.000Z",
+      isReply: false,
+    });
+    assert.equal(first, "inserted");
+    const second = storeAsset(db, {
+      source: "zernio_x",
+      sourceUrl: "https://twitter.com/u/status/1/",
+      title: "",
+      transcript: "hello world",
+      metadata: { accountId: "b" },
+      postedAt: null,
+      isReply: false,
+    });
+    assert.equal(second, "merged");
+    const rows = db.prepare(`SELECT title, transcript, metadata FROM assets`).all() as {
+      title: string;
+      transcript: string;
+      metadata: string;
+    }[];
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].title, "hello");
+    assert.equal(rows[0].transcript, "hello world");
+    const meta = JSON.parse(rows[0].metadata) as { sources: string[] };
+    assert.deepEqual([...meta.sources].sort(), ["x_posts", "zernio_x"]);
+  });
+});
+
 describe("video project lib", () => {
   it("creates with the default track stack, lists, and deletes", async () => {
     const video = await import("../lib/video");
