@@ -3,11 +3,15 @@ import InfraStatus from "@/components/infra-status";
 export default function Home(): React.ReactNode {
   return (
     <>
-      <h1>Creagent</h1>
-      <p className="muted">
-        Local-first content agent. Ingest your work, learn your voice, keep a
-        two-week queue drafted, and get approvals in one place.
-      </p>
+      <div className="page-head">
+        <div>
+          <h1>Creagent</h1>
+          <div className="sub">
+            Local-first content agent. Ingest your work, learn your voice, keep a
+            two-week queue drafted, and get approvals in one place.
+          </div>
+        </div>
+      </div>
       <h2>Get started</h2>
       <ol className="steps">
         <li>

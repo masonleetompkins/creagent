@@ -413,42 +413,43 @@ export default function QueueConsole(): React.ReactNode {
 
   return (
     <>
-      <section className="keycard">
-        <div className="row">
-          <button disabled={busy} onClick={() => void runJob("/api/plan/run", { days: 14 }, "Planned")}>
-            Plan 14 days
-          </button>
-          <button disabled={busy} onClick={() => void runJob("/api/draft/run", { limit: 10 }, "Drafted")}>
-            Draft all red
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => setSetupOpen((o) => !o)}
-            className={setupOpen || templates.length === 0 ? "primary" : ""}
-          >
-            Queue setup
-          </button>
-          <button disabled={busy} onClick={() => setView("week")} className={view === "week" ? "primary" : ""}>
+      <div className="toolbar">
+        <button disabled={busy} onClick={() => void runJob("/api/plan/run", { days: 14 }, "Planned")}>
+          Plan 14 days
+        </button>
+        <button disabled={busy} onClick={() => void runJob("/api/draft/run", { limit: 10 }, "Drafted")}>
+          Draft all red
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => setSetupOpen((o) => !o)}
+          className={setupOpen || templates.length === 0 ? "primary" : ""}
+        >
+          Queue setup
+        </button>
+        <span className="spacer" />
+        <div className="seg">
+          <button disabled={busy} onClick={() => setView("week")} className={view === "week" ? "on" : ""}>
             Week
           </button>
-          <button disabled={busy} onClick={() => setView("month")} className={view === "month" ? "primary" : ""}>
+          <button disabled={busy} onClick={() => setView("month")} className={view === "month" ? "on" : ""}>
             Month
           </button>
-          <button disabled={busy} onClick={goPrev}>
-            ← Prev
-          </button>
-          <button disabled={busy} onClick={goToday}>
-            Today
-          </button>
-          <button disabled={busy} onClick={goNext}>
-            Next →
-          </button>
-          {view === "month" ? <span className="muted">{monthLabel}</span> : null}
         </div>
-        {busy ? <p className="muted">Working…</p> : null}
-        {note ? <p className="note ok">{note}</p> : null}
-        {error ? <p className="note err">{error}</p> : null}
-      </section>
+        <button disabled={busy} onClick={goPrev}>
+          ←
+        </button>
+        <button disabled={busy} onClick={goToday}>
+          Today
+        </button>
+        <button disabled={busy} onClick={goNext}>
+          →
+        </button>
+        {view === "month" ? <strong>{monthLabel}</strong> : null}
+      </div>
+      {busy ? <p className="muted">Working…</p> : null}
+      {note ? <p className="note ok">{note}</p> : null}
+      {error ? <p className="note err">{error}</p> : null}
 
       <div className={view === "week" ? "cal" : "cal month"}>
         {days.map((day) => {
@@ -456,10 +457,15 @@ export default function QueueConsole(): React.ReactNode {
           const dayHistory = historyByDay(day);
           const shown = view === "week" ? daySlots : daySlots.slice(0, 3);
           const shownHistory = view === "week" ? dayHistory : dayHistory.slice(0, 2);
+          const now = new Date();
+          const isToday =
+            day.getFullYear() === now.getFullYear() &&
+            day.getMonth() === now.getMonth() &&
+            day.getDate() === now.getDate();
           const dim =
             view === "month" && day.getMonth() !== days[15].getMonth() ? " dim" : "";
           return (
-            <div className={`day${dim}`} key={day.toISOString()}>
+            <div className={`day${dim}${isToday ? " today" : ""}`} key={day.toISOString()}>
               <div className="dayhead">
                 {view === "week"
                   ? `${DAYS[day.getDay()]} ${day.getMonth() + 1}/${day.getDate()}`

@@ -48,7 +48,7 @@ export default function ProjectSwitcher({
   }
 
   return (
-    <div className="switcher">
+    <div className="toolbar switcher">
       <select
         aria-label={`Switch ${label}`}
         value={currentId}

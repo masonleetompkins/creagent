@@ -104,63 +104,78 @@ export default function DataConsole(): React.ReactNode {
 
   return (
     <>
-      <section className="keycard">
-        <div className="row">
-          <select aria-label="Platform filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option value="">All platforms</option>
-            {platforms.map((p) => (
-              <option key={p.platform} value={p.platform}>
-                {p.platform}
-              </option>
-            ))}
-          </select>
-          <button className="primary" disabled={busy} onClick={() => void sync()}>
-            {busy ? "Syncing…" : "Sync metrics"}
-          </button>
-        </div>
-        {note ? <p className="note ok">{note}</p> : null}
-        {error ? <p className="note err">{error}</p> : null}
-      </section>
+      <div className="toolbar">
+        <select aria-label="Platform filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="">All platforms</option>
+          {platforms.map((p) => (
+            <option key={p.platform} value={p.platform}>
+              {p.platform}
+            </option>
+          ))}
+        </select>
+        <span className="spacer" />
+        <button className="primary" disabled={busy} onClick={() => void sync()}>
+          {busy ? "Syncing…" : "Sync metrics"}
+        </button>
+      </div>
+      {note ? <p className="note ok">{note}</p> : null}
+      {error ? <p className="note err">{error}</p> : null}
 
       <h2>Averages</h2>
       {platforms.length === 0 ? (
-        <p className="muted">No metrics yet — sync to pull them in.</p>
+        <div className="empty">No metrics yet — sync to pull them in.</div>
       ) : (
-        platforms.map((p) => (
-          <section className="keycard" key={p.platform}>
-            <h2>
-              {p.platform} <span className="status unset">{p.averages.count} posts</span>
-            </h2>
-            <p className="muted">
-              likes {fmtAvg(p.averages.likes)} · comments {fmtAvg(p.averages.comments)} ·
-              shares {fmtAvg(p.averages.shares)} · views {fmtAvg(p.averages.views)}
-            </p>
-          </section>
-        ))
+        <div className="tiles">
+          {platforms.map((p) => (
+            <div className="tile" key={p.platform}>
+              <div className="t">{p.platform}</div>
+              <div className="big">{fmtAvg(p.averages.likes)} likes</div>
+              <div className="d">
+                from {p.averages.count} posts · comments {fmtAvg(p.averages.comments)} ·
+                shares {fmtAvg(p.averages.shares)} · views {fmtAvg(p.averages.views)}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       <h2>Posts ({posts.length})</h2>
-      {posts.map((p) => (
-        <section className="keycard" key={p.id}>
-          <p>
-            <strong>{p.platform}</strong>
-            {p.post_url ? (
-              <>
-                {" · "}
-                <a href={p.post_url} target="_blank" rel="noreferrer">
-                  open
-                </a>
-              </>
-            ) : null}
-          </p>
-          <p className="muted">
-            likes <Metric value={p.likes} mult={p.multipliers.likes} /> · comments{" "}
-            <Metric value={p.comments} mult={p.multipliers.comments} /> · shares{" "}
-            <Metric value={p.shares} mult={p.multipliers.shares} /> · views{" "}
-            <Metric value={p.views} mult={p.multipliers.views} />
-          </p>
-        </section>
-      ))}
+      {posts.length === 0 ? (
+        <div className="empty">Nothing scored yet.</div>
+      ) : (
+        <table className="vtable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Platform</th>
+              <th>Likes</th>
+              <th>Comments</th>
+              <th>Shares</th>
+              <th>Views</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {posts.map((p) => (
+              <tr key={p.id}>
+                <td className="nowrap muted">{(p.posted_at ?? p.collected_at).slice(0, 10)}</td>
+                <td className="nowrap">{p.platform}</td>
+                <td className="nowrap"><Metric value={p.likes} mult={p.multipliers.likes} /></td>
+                <td className="nowrap"><Metric value={p.comments} mult={p.multipliers.comments} /></td>
+                <td className="nowrap"><Metric value={p.shares} mult={p.multipliers.shares} /></td>
+                <td className="nowrap"><Metric value={p.views} mult={p.multipliers.views} /></td>
+                <td className="nowrap">
+                  {p.post_url ? (
+                    <a href={p.post_url} target="_blank" rel="noreferrer">
+                      open
+                    </a>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </>
   );
 }
