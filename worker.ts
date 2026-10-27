@@ -76,7 +76,9 @@ async function dispatch(job: JobRow): Promise<unknown> {
   }
   if (job.name === "draft_all") {
     const { limit } = data;
-    return runDraftAll(typeof limit === "number" ? limit : 10);
+    return runDraftAll(typeof limit === "number" ? limit : 10, (done, total) =>
+      updateProgress(job.id, { done, total }),
+    );
   }
   if (job.name === "draft_slot") {
     const { slotId } = data;

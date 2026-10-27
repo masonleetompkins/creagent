@@ -32,6 +32,20 @@ if command -v lsof >/dev/null 2>&1; then
     esac
   done
 fi
+# Sweep leaked workers: the tsx child outlives the npx parent, so it
+# never appears in worker.pid. Match by command + repo path only.
+for pid in $(ps aux 2>/dev/null | grep "[w]orker.ts" | awk '{print $2}'); do
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  case "$cmd" in *node*|*tsx*|*deno*|*bun*) ;; *) continue ;; esac
+  case "$cmd" in
+    *creagent*)
+      if kill -9 "$pid" 2>/dev/null; then
+        echo "Worker stopped (leaked process $pid)."
+        stopped=1
+      fi
+      ;;
+  esac
+done
 if [ "$stopped" = "0" ]; then
   echo "Server was not running."
 fi

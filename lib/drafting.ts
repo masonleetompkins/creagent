@@ -94,7 +94,10 @@ export async function runDraftSlot(slotId: string): Promise<void> {
   await draftOne(slot);
 }
 
-export async function runDraftAll(limit = 10): Promise<DraftResult> {
+export async function runDraftAll(
+  limit = 10,
+  onProgress?: (done: number, total: number) => void,
+): Promise<DraftResult> {
   const horizon = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
   const slots = getDb()
     .prepare(
@@ -106,20 +109,23 @@ export async function runDraftAll(limit = 10): Promise<DraftResult> {
     )
     .all(horizon, Math.max(1, Math.min(limit, 25))) as SlotRow[];
   const out: DraftResult = { drafted: 0, skipped: 0, failures: [] };
+  let done = 0;
   for (const slot of slots) {
     if (hasDrafts(slot.id)) {
       out.skipped++;
-      continue;
+    } else {
+      try {
+        await draftOne(slot);
+        out.drafted++;
+      } catch (error) {
+        out.failures.push({
+          slot: slot.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
-    try {
-      await draftOne(slot);
-      out.drafted++;
-    } catch (error) {
-      out.failures.push({
-        slot: slot.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    done++;
+    if (onProgress) onProgress(done, slots.length);
   }
   return out;
 }

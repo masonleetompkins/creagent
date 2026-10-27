@@ -83,9 +83,13 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return data;
 }
 
-async function pollJob(jobId: string): Promise<Record<string, unknown>> {
+async function pollJob(
+  jobId: string,
+  onTick?: (data: Record<string, unknown>) => void,
+): Promise<Record<string, unknown>> {
   for (;;) {
     const data = await readJson(await fetch(`/api/jobs/${jobId}`));
+    if (onTick) onTick(data);
     if (data.state === "completed" || data.state === "failed") return data;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -147,6 +151,7 @@ export default function QueueConsole(): React.ReactNode {
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentNote, setAgentNote] = useState<string | null>(null);
   const [anyRed, setAnyRed] = useState(true);
+  const [jobProgress, setJobProgress] = useState<{ done: number; total: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -243,16 +248,40 @@ export default function QueueConsole(): React.ReactNode {
           body: JSON.stringify(body),
         }),
       );
-      const done = await pollJob(started.jobId as string);
+      const done = await pollJob(started.jobId as string, (d) => {
+        const prog = (d.progress ?? {}) as { done?: unknown; total?: unknown };
+        if (typeof prog.done === "number" && typeof prog.total === "number" && prog.total > 0) {
+          setJobProgress({ done: prog.done, total: prog.total });
+        }
+      });
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
-      setNote(`${label}: ${summarizeResult(done.result)}`);
+      reportResult(label, done.result);
       await refresh();
       setSelected(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+      setJobProgress(null);
     }
+  }
+
+  function reportResult(label: string, result: unknown): void {
+    const summary = summarizeResult(result);
+    const r = (typeof result === "object" && result !== null ? result : {}) as Record<string, unknown>;
+    const failures = Array.isArray(r.failures) ? (r.failures as { error?: unknown }[]) : [];
+    const drafted = typeof r.drafted === "number" ? r.drafted : -1;
+    if (failures.length > 0 && drafted === 0) {
+      const first = typeof failures[0]?.error === "string" ? (failures[0].error as string) : "unknown error";
+      setError(`${label}: all ${failures.length} failed. First error: ${first.slice(0, 220)}`);
+      return;
+    }
+    if (failures.length > 0) {
+      const first = typeof failures[0]?.error === "string" ? (failures[0].error as string) : "unknown error";
+      setNote(`${label}: ${summary} First error: ${first.slice(0, 160)}`);
+      return;
+    }
+    setNote(`${label}: ${summary}`);
   }
 
   async function openSlot(id: string): Promise<void> {
@@ -659,7 +688,23 @@ export default function QueueConsole(): React.ReactNode {
           </strong>
         )}
       </div>
-      {busy ? <p className="muted">Working…</p> : null}
+      {busy ? (
+        jobProgress ? (
+          <div className="progress-wrap">
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{ width: `${Math.round((jobProgress.done / jobProgress.total) * 100)}%` }}
+              />
+            </div>
+            <p className="muted">
+              {jobProgress.done}/{jobProgress.total} slots…
+            </p>
+          </div>
+        ) : (
+          <p className="muted">Working…</p>
+        )
+      ) : null}
       {note ? <p className="note ok">{note}</p> : null}
       {error ? <p className="note err">{error}</p> : null}
 

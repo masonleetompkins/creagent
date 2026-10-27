@@ -65,6 +65,21 @@ stop_worker() {
     kill "$(cat "$CONFIG_DIR/worker.pid")" 2>/dev/null || true
     rm -f "$CONFIG_DIR/worker.pid"
   fi
+  sleep 1
+  # Sweep survivors: the tsx child outlives the npx parent, so pidfile kills
+  # leak workers that keep polling with old code. Kill all survivors by cwd.
+  local pid cmd
+  for pid in $(ps aux 2>/dev/null | grep "[w]orker.ts" | awk '{print $2}'); do
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$cmd" in *node*|*tsx*|*deno*|*bun*) ;; *) continue ;; esac
+    if is_creagent_pid "$pid"; then kill "$pid" 2>/dev/null || true; fi
+  done
+  sleep 2
+  for pid in $(ps aux 2>/dev/null | grep "[w]orker.ts" | awk '{print $2}'); do
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$cmd" in *node*|*tsx*|*deno*|*bun*) ;; *) continue ;; esac
+    if is_creagent_pid "$pid"; then kill -9 "$pid" 2>/dev/null || true; fi
+  done
 }
 
 RUNNING="$(running_build || true)"
