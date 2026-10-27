@@ -77,6 +77,23 @@ describe("normalizeUrl + detectReply + storeAsset", () => {
   });
 });
 
+describe("monidPayloadError", () => {
+  it("spots silent provider failures and bad handles", async () => {
+    const { monidPayloadError } = await import("../lib/ingest");
+    assert.equal(
+      monidPayloadError({ httpStatus: 502, error: { error: "all providers failed" } }),
+      "Monid provider error (HTTP 502: all providers failed)",
+    );
+    assert.equal(
+      monidPayloadError({ found: false, data: null, reason: "not_found" }),
+      "handle not found (not_found) — check the spelling",
+    );
+    assert.equal(monidPayloadError({ data: { posts: [] } }), null);
+    assert.equal(monidPayloadError({ httpStatus: 200 }), null);
+    assert.equal(monidPayloadError(null), null);
+  });
+});
+
 describe("video project lib", () => {
   it("creates with the default track stack, lists, and deletes", async () => {
     const video = await import("../lib/video");

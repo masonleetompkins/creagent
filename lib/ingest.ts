@@ -46,6 +46,34 @@ export const INGEST_SOURCES = {
 
 export type IngestSource = keyof typeof INGEST_SOURCES;
 
+// Monid upstream routes by reliability (from /v1/inspect uptime stats).
+// The default route fails silently too often, so we pin the best route and
+// fall back automatically instead of reporting a bogus "0 new".
+const MONID_ROUTES: Record<IngestSource, string[]> = {
+  x_posts: ["lynx", "capybara"],
+  tiktok_videos: ["giraffe", "fox"],
+  instagram_posts: ["lynx", "fox"],
+  youtube_transcript: ["badger", "octopus"],
+  instagram_reel: ["anyapi"],
+};
+
+// Monid marks runs COMPLETED even when the provider failed or the handle
+// doesn't exist — the failure hides inside the payload. Detect it so the
+// UI reports a failed target instead of a green "0 new".
+export function monidPayloadError(payload: unknown): string | null {
+  if (!isObj(payload)) return null;
+  if (payload["found"] === false) {
+    return `handle not found (${String(payload["reason"] ?? "not_found")}) — check the spelling`;
+  }
+  const http = payload["httpStatus"];
+  if (typeof http === "number" && http >= 400) {
+    const err = payload["error"];
+    const msg = isObj(err) ? String(err["error"] ?? err["message"] ?? "") : String(err ?? "");
+    return `Monid provider error (HTTP ${http}${msg ? `: ${msg}` : ""})`;
+  }
+  return null;
+}
+
 export function isIngestSource(value: string): value is IngestSource {
   return value in INGEST_SOURCES;
 }
@@ -368,13 +396,26 @@ export async function runIngest(
         : { url: value.trim() };
     if (!body.handle && !body.url) throw new Error("ingest input is empty");
     if (cursor) body.cursor = cursor;
-    const result = await monidRunAndWait(apiKey, def.provider, def.endpoint, {
-      body,
-    });
-    if (result.status !== "COMPLETED") {
-      throw new Error(`monid run ${result.runId}: ${result.status}`);
+    let result: Awaited<ReturnType<typeof monidRunAndWait>> | null = null;
+    let lastError: string | null = null;
+    for (const route of MONID_ROUTES[source]) {
+      const attempt = await monidRunAndWait(apiKey, def.provider, def.endpoint, {
+        body: { ...body, route },
+      });
+      costs.push({ route, cost: attempt.cost });
+      if (attempt.status !== "COMPLETED") {
+        lastError = `monid run ${attempt.runId}: ${attempt.status}`;
+        continue;
+      }
+      const payloadError = monidPayloadError(runPayload(attempt));
+      if (!payloadError) {
+        result = attempt;
+        break;
+      }
+      lastError = payloadError;
+      if (/not found/i.test(payloadError)) break;
     }
-    costs.push(result.cost);
+    if (!result) throw new Error(lastError ?? "monid returned no usable payload");
     const payload = runPayload(result);
     const items = findItems(payload);
     let pageDated = 0;

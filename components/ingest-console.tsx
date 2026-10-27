@@ -350,8 +350,9 @@ export default function IngestConsole(): React.ReactNode {
       <section className="keycard">
         <h2>Connected accounts (Zernio, auto-detected)</h2>
         <p className="muted">
-          Your connected accounts: posts plus engagement, free. Best for history and analytics.
-          Duplicates with Monid are merged into one entry.
+          Your connected accounts: posts plus engagement, free. Best for recent history and
+          analytics — Zernio returns the 25 most recent posts per account. For older history,
+          add a Monid deep pull; duplicates across the two are merged into one entry.
         </p>
         {accountsNote ? <p className="muted">{accountsNote}</p> : null}
         <div className="ppills">
@@ -451,7 +452,7 @@ export default function IngestConsole(): React.ReactNode {
                 <span className="t-dot" aria-hidden="true" />
                 <span className="t-label">{t.label}</span>
                 <span className="muted">
-                  {t.state === "done" && `${t.assets} new`}
+                  {t.state === "done" && (t.assets > 0 ? `${t.assets} new` : "0 new — source returned nothing")}
                   {t.state === "running" && `${t.assets} so far${t.attempts > 0 ? ` · retry ${t.attempts}` : ""}`}
                   {t.state === "pending" && "waiting"}
                   {t.state === "failed" && (t.rateLimited ? "rate limited — retry" : t.error)}
