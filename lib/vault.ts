@@ -1,7 +1,7 @@
 // Vault retrieval over the embedded store: embed the query, brute-force
 // cosine against stored float32 BLOBs.
 import { getDb } from "./db";
-import { blobToVector, cosineSimilarity, embed } from "./embeddings";
+import { blobToVector, cosineSimilarity, embed, vectorToBlob } from "./embeddings";
 
 export type VaultHit = {
   id: string;
@@ -37,6 +37,28 @@ export async function searchVault(query: string, limit = 5): Promise<VaultHit[]>
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, Math.max(1, limit));
+}
+
+export async function updateVaultDoc(
+  id: string,
+  patch: { title?: string | null; body?: string },
+): Promise<boolean> {
+  const row = getDb().prepare(`SELECT title, body FROM vault_docs WHERE id = ?`).get(id) as
+    | { title: string | null; body: string }
+    | undefined;
+  if (!row) return false;
+  const title = patch.title !== undefined ? patch.title : row.title;
+  const body = patch.body !== undefined ? patch.body : row.body;
+  const vec = await embed(`${title ?? ""}\n${body}`);
+  const res = getDb()
+    .prepare(`UPDATE vault_docs SET title = ?, body = ?, embedding = ? WHERE id = ?`)
+    .run(title, body, vectorToBlob(vec), id);
+  return res.changes > 0;
+}
+
+export function deleteVaultDoc(id: string): boolean {
+  const res = getDb().prepare(`DELETE FROM vault_docs WHERE id = ?`).run(id);
+  return res.changes > 0;
 }
 
 export function vaultCounts(): Record<string, number> {

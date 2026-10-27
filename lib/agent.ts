@@ -2,9 +2,9 @@
 // Runs inside the worker (agent_turn job). The chat client is injectable so
 // tests drive the loop without touching the Meta API.
 import { randomUUID } from "node:crypto";
-import { getDb, nowIso } from "./db";
+import { getDb, nowIso, withTransaction } from "./db";
 import { loadKeys } from "./keys";
-import { getMetaClient, metaTextModel } from "./meta";
+import { META_CONTEXT_TOKENS, getMetaClient, metaTextModel, textCostUsd } from "./meta";
 import { AGENT_TOOLS } from "./agent-tools";
 
 export const AGENT_SYSTEM = `You are Creagent, the creator's ghostwriter and editor, working inside their local content app.
@@ -30,19 +30,41 @@ export function createChat(title = "New chat"): string {
   return id;
 }
 
-export function listChats(): { id: string; title: string; created_at: string }[] {
-  return getDb()
-    .prepare(`SELECT id, title, created_at FROM agent_chats ORDER BY created_at DESC LIMIT 50`)
-    .all() as { id: string; title: string; created_at: string }[];
+export type ChatRow = {
+  id: string;
+  title: string;
+  created_at: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  last_context_tokens: number;
+  cost_usd: number;
+  ctx_pct: number;
+};
+
+export function listChats(): ChatRow[] {
+  const model = metaTextModel();
+  const rows = getDb()
+    .prepare(
+      `SELECT id, title, created_at, prompt_tokens, completion_tokens, last_context_tokens
+       FROM agent_chats ORDER BY created_at DESC LIMIT 50`,
+    )
+    .all() as Omit<ChatRow, "cost_usd" | "ctx_pct">[];
+  return rows.map((r) => ({
+    ...r,
+    cost_usd: textCostUsd(model, r.prompt_tokens, r.completion_tokens),
+    ctx_pct: Math.round((r.last_context_tokens / META_CONTEXT_TOKENS) * 1000) / 10,
+  }));
 }
 
-export function getMessages(chatId: string): (AgentMsg & { id: string; created_at: string })[] {
+export type StoredMsg = AgentMsg & { id: string; created_at: string; compacted: number };
+
+export function getMessages(chatId: string): StoredMsg[] {
   return getDb()
     .prepare(
-      `SELECT id, role, content, tool_name AS toolName, created_at FROM agent_messages
+      `SELECT id, role, content, tool_name AS toolName, compacted, created_at FROM agent_messages
        WHERE chat_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 500`,
     )
-    .all(chatId) as (AgentMsg & { id: string; created_at: string })[];
+    .all(chatId) as StoredMsg[];
 }
 
 export function saveMessage(chatId: string, msg: AgentMsg): string {
@@ -64,12 +86,24 @@ export type ChatMessage = {
   name?: string;
 };
 
+export type Usage = { prompt: number; completion: number };
+
 export type ChatClient = {
   complete: (messages: ChatMessage[]) => Promise<{
     content: string | null;
     toolCalls: { id: string; name: string; args: Record<string, unknown> }[];
+    usage?: Usage;
   }>;
 };
+
+// Fallback when the API reports no usage: ~4 chars per token.
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function requestSize(messages: Array<{ role: string; content: string | null }>): number {
+  return estimateTokens(messages.map((m) => `${m.role}:${m.content ?? ""}`).join("\n"));
+}
 
 export function metaChatClient(): ChatClient {
   const keys = loadKeys();
@@ -100,13 +134,67 @@ export function metaChatClient(): ChatClient {
         }
         return { id: c.id, name: c.function?.name ?? "", args };
       });
-      return { content: msg?.content ?? null, toolCalls };
+      const content = msg?.content ?? null;
+      const reported = (res as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } })
+        .usage;
+      const prompt =
+        typeof reported?.prompt_tokens === "number" ? reported.prompt_tokens : requestSize(messages);
+      const completion =
+        typeof reported?.completion_tokens === "number"
+          ? reported.completion_tokens
+          : estimateTokens(`${content ?? ""}\n${JSON.stringify(toolCalls)}`);
+      return { content, toolCalls, usage: { prompt, completion } };
     },
   };
 }
 
 function toolJson(result: unknown): string {
   return JSON.stringify(result).slice(0, 12000);
+}
+
+export function recordUsage(chatId: string, prompt: number, completion: number): void {
+  getDb()
+    .prepare(
+      `UPDATE agent_chats
+       SET prompt_tokens = prompt_tokens + ?,
+           completion_tokens = completion_tokens + ?,
+           last_context_tokens = MAX(last_context_tokens, ?)
+       WHERE id = ?`,
+    )
+    .run(prompt, completion, prompt, chatId);
+}
+
+// Summarize history into one anchor message; old turns stay visible but
+// leave the model context. Returns false when there is nothing worth it.
+export async function compactChat(
+  chatId: string,
+  client: ChatClient = metaChatClient(),
+): Promise<{ compacted: boolean; before: number; after: number }> {
+  const open = getMessages(chatId).filter((m) => !m.compacted);
+  const before = open.reduce((n, m) => n + m.content.length, 0);
+  if (open.length < 4 || before < 4000) return { compacted: false, before, after: before };
+  const { content } = await client.complete([
+    {
+      role: "system",
+      content:
+        "Summarize this creator-agent conversation for continuity: decisions made, work completed with IDs, and open threads. Under 1500 characters, no preamble.",
+    },
+    {
+      role: "user",
+      content: open
+        .filter((m) => m.role !== "tool")
+        .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+        .join("\n\n")
+        .slice(0, 60000),
+    },
+  ]);
+  const summary = (content ?? "").trim().slice(0, 2000) || "(empty summary)";
+  recordUsage(chatId, requestSize(open), estimateTokens(summary));
+  withTransaction(() => {
+    getDb().prepare(`UPDATE agent_messages SET compacted = 1 WHERE chat_id = ?`).run(chatId);
+    saveMessage(chatId, { role: "assistant", content: `📌 Context compacted:\n${summary}` });
+  });
+  return { compacted: true, before, after: summary.length };
 }
 
 // Run one user turn: loop model <-> tools until a final message or the cap.
@@ -117,7 +205,7 @@ export async function runAgentTurn(
   maxSteps = 12,
 ): Promise<{ steps: number; stopped: string }> {
   saveMessage(chatId, { role: "user", content: userText });
-  const history = getMessages(chatId).filter((m) => m.role !== "tool");
+  const history = getMessages(chatId).filter((m) => m.role !== "tool" && !m.compacted);
   const messages: ChatMessage[] = [
     { role: "system", content: AGENT_SYSTEM },
     ...history.map((m): ChatMessage => ({
@@ -130,7 +218,12 @@ export async function runAgentTurn(
   let steps = 0;
   for (;;) {
     steps++;
-    const { content, toolCalls } = await client.complete(messages);
+    const { content, toolCalls, usage } = await client.complete(messages);
+    recordUsage(
+      chatId,
+      usage?.prompt ?? requestSize(messages),
+      usage?.completion ?? estimateTokens(`${content ?? ""}\n${JSON.stringify(toolCalls)}`),
+    );
     if (toolCalls.length === 0) {
       saveMessage(chatId, { role: "assistant", content: content ?? "" });
       return { steps, stopped: "final" };

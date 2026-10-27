@@ -228,12 +228,20 @@ select option {
 
 .day {
   min-width: 0;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--glass);
+  padding: 6px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .dayhead {
   font-size: 12px;
   font-weight: 800;
   margin-bottom: 4px;
+  padding: 0 2px;
 }
 
 .slot {
@@ -596,18 +604,18 @@ button:disabled {
 .ved {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 .ved-top {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   align-items: flex-start;
 }
 .ved-preview {
-  flex: 0 0 360px;
+  flex: 0 0 320px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .ved-screen {
   position: relative;
@@ -1218,4 +1226,170 @@ a.asset-chip:hover {
 }
 .checkline input[type="text"] {
   flex: 1 1 160px;
+}
+/* Docked agent panel pushes content instead of covering it (wide screens). */
+@media (min-width: 1200px) {
+  body.has-agent-dock .content {
+    padding-right: 356px;
+  }
+}
+/* Chat page: session rail + centered thread. */
+.chat2 {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.chat2-rail {
+  flex: 0 0 216px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+}
+.chat2-session {
+  text-align: left;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+.chat2-session.on {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.chat2-session .t {
+  display: block;
+  font-weight: 800;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat2-session .m {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.chat2-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat2-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 760px;
+}
+.chat2-input {
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  gap: 6px;
+  position: sticky;
+  bottom: 12px;
+}
+.chat-msg.old {
+  opacity: 0.55;
+}
+/* Vault + assets compact tables. */
+.vtab {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.vtab button {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+.vtab button.on {
+  background: hsl(var(--hue) 80% 55% / 0.35);
+  font-weight: 800;
+}
+.vtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.vtable th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 800;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.vtable td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+}
+.vtable tr:last-child td {
+  border-bottom: none;
+}
+.vtable .body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.vtable .nowrap {
+  white-space: nowrap;
+}
+.keys-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.keys-grid .keycard {
+  margin: 0;
+}
+@media (max-width: 700px) {
+  .keys-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.edgrid.work {
+  grid-template-columns: 232px 1fr;
+}
+.ced-slides {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.ced-slides .slot {
+  margin-bottom: 0;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.pager .muted {
+  font-size: 12px;
+}
+.pill-conf {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  margin-left: 8px;
+  color: var(--muted);
+}
+.pill-conf.yes {
+  color: #fff;
+  background: hsl(var(--hue) 80% 45% / 0.6);
+  border-color: transparent;
 }

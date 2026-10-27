@@ -8,7 +8,7 @@ export async function GET(): Promise<NextResponse> {
   try {
     const rows = getDb()
       .prepare(
-        `SELECT id, name, description, created_at FROM pillars ORDER BY created_at ASC`,
+        `SELECT id, name, description, confirmed, created_at FROM pillars ORDER BY created_at ASC`,
       )
       .all();
     return NextResponse.json({ pillars: rows });
@@ -36,13 +36,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       id: randomUUID(),
       name: name.trim(),
       description: typeof description === "string" ? description : "",
+      confirmed: 0,
       created_at: nowIso(),
     };
     getDb()
       .prepare(
-        `INSERT INTO pillars (id, name, description, created_at) VALUES (?, ?, ?, ?)`,
+        `INSERT INTO pillars (id, name, description, confirmed, created_at) VALUES (?, ?, ?, ?, ?)`,
       )
-      .run(pillar.id, pillar.name, pillar.description, pillar.created_at);
+      .run(pillar.id, pillar.name, pillar.description, pillar.confirmed, pillar.created_at);
     return NextResponse.json({ pillar });
   } catch (error) {
     return NextResponse.json(

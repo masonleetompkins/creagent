@@ -22,16 +22,7 @@ const WINDOWS = [
 
 const HANDLE_KEY = "creagent.ingest.handles";
 
-type Asset = {
-  id: string;
-  source: string;
-  title: string;
-  source_url: string | null;
-  chars: number;
-  analyzed_at: string | null;
-  posted_at: string | null;
-  created_at: string;
-};
+type Account = { id: string; platform: string; username: string };
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const data = (await res.json()) as Record<string, unknown>;
@@ -56,24 +47,24 @@ function loadHandles(): Record<string, string> {
 }
 
 export default function IngestConsole(): React.ReactNode {
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsOn, setAccountsOn] = useState<Record<string, boolean>>({});
+  const [accountsNote, setAccountsNote] = useState<string | null>(null);
   const [handles, setHandles] = useState<Record<string, string>>({});
-  const [checked, setChecked] = useState<Record<string, boolean>>({
-    x_posts: true,
-    tiktok_videos: false,
-    instagram_posts: false,
-  });
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [windowId, setWindowId] = useState("30");
   const [urlSource, setUrlSource] = useState(URL_SOURCES[0].id);
   const [urlValue, setUrlValue] = useState("");
-  const [assets, setAssets] = useState<Asset[]>([]);
+  const [unanalyzed, setUnanalyzed] = useState(0);
   const [phase, setPhase] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshAssets = useCallback(async () => {
+  const refreshCounts = useCallback(async () => {
     try {
-      const data = await readJson(await fetch("/api/assets?limit=50"));
-      setAssets(data.assets as Asset[]);
+      const data = await readJson(await fetch("/api/assets?limit=500"));
+      const assets = data.assets as { analyzed_at: string | null }[];
+      setUnanalyzed(assets.filter((a) => !a.analyzed_at).length);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -81,8 +72,23 @@ export default function IngestConsole(): React.ReactNode {
 
   useEffect(() => {
     setHandles(loadHandles());
-    void refreshAssets();
-  }, [refreshAssets]);
+    void refreshCounts();
+    fetch("/api/zernio/accounts")
+      .then(async (res) => {
+        const data = (await res.json()) as { accounts?: Account[]; error?: string };
+        if (!res.ok) {
+          setAccountsNote(data.error ?? "Zernio unavailable");
+          return;
+        }
+        const list = data.accounts ?? [];
+        setAccounts(list);
+        const on: Record<string, boolean> = {};
+        for (const a of list) on[a.id] = true;
+        setAccountsOn(on);
+        if (list.length === 0) setAccountsNote("No connected Zernio accounts found.");
+      })
+      .catch((e) => setAccountsNote((e as Error).message));
+  }, [refreshCounts]);
 
   function setHandle(id: string, value: string): void {
     setHandles((h) => {
@@ -97,16 +103,30 @@ export default function IngestConsole(): React.ReactNode {
   }
 
   async function runBatch(since: string | undefined, label: string): Promise<void> {
-    const targets = PLATFORMS.filter((p) => checked[p.id] && (handles[p.id] ?? "").trim());
-    if (targets.length === 0) {
-      setError("check at least one platform and enter its handle");
+    const zTargets = accounts.filter((a) => accountsOn[a.id]);
+    const mTargets = PLATFORMS.filter((p) => checked[p.id] && (handles[p.id] ?? "").trim());
+    if (zTargets.length === 0 && mTargets.length === 0) {
+      setError("check at least one Zernio account or manual handle");
       return;
     }
     setBusy(true);
     setError(null);
     try {
       let total = 0;
-      for (const t of targets) {
+      if (zTargets.length > 0) {
+        setPhase(`${label}: Zernio (${zTargets.length} accounts)…`);
+        const started = await readJson(
+          await fetch("/api/ingest/zernio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accountIds: zTargets.map((a) => a.id), since }),
+          }),
+        );
+        const done = await pollJob(started.jobId as string);
+        if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
+        total += ((done.result ?? {}) as { assets?: number }).assets ?? 0;
+      }
+      for (const t of mTargets) {
         setPhase(`${label}: ${t.label}…`);
         const started = await readJson(
           await fetch("/api/ingest", {
@@ -134,7 +154,7 @@ export default function IngestConsole(): React.ReactNode {
       const done = await pollJob(started.jobId as string);
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
       setPhase(`Done: ${total} new asset${total === 1 ? "" : "s"} ingested and analyzed.`);
-      await refreshAssets();
+      await refreshCounts();
     } catch (e) {
       setError((e as Error).message);
       setPhase(null);
@@ -145,19 +165,20 @@ export default function IngestConsole(): React.ReactNode {
 
   async function ingestAndAnalyze(): Promise<void> {
     const days = windowId === "all" ? null : Number(windowId);
-    const since =
-      days === null ? undefined : new Date(Date.now() - days * 86400000).toISOString();
+    const since = days === null ? undefined : new Date(Date.now() - days * 86400000).toISOString();
     await runBatch(since, "Ingesting");
   }
 
   async function refreshUpToNow(): Promise<void> {
-    const latest = assets
-      .map((a) => a.posted_at ?? a.created_at)
-      .sort()
-      .at(-1);
-    const since =
-      latest ?? new Date(Date.now() - 7 * 86400000).toISOString();
-    await runBatch(since, "Refreshing");
+    let since: string | undefined;
+    try {
+      const data = await readJson(await fetch("/api/assets?limit=1"));
+      const assets = data.assets as { posted_at: string | null; created_at: string }[];
+      since = assets[0]?.posted_at ?? assets[0]?.created_at;
+    } catch {
+      /* fall through to default window */
+    }
+    await runBatch(since ?? new Date(Date.now() - 7 * 86400000).toISOString(), "Refreshing");
   }
 
   async function ingestUrl(): Promise<void> {
@@ -177,7 +198,7 @@ export default function IngestConsole(): React.ReactNode {
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "ingest failed");
       setPhase("URL ingested. Run analysis to fold it into the brain.");
       setUrlValue("");
-      await refreshAssets();
+      await refreshCounts();
     } catch (e) {
       setError((e as Error).message);
       setPhase(null);
@@ -201,7 +222,7 @@ export default function IngestConsole(): React.ReactNode {
       const done = await pollJob(started.jobId as string);
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
       setPhase("Analysis complete.");
-      await refreshAssets();
+      await refreshCounts();
     } catch (e) {
       setError((e as Error).message);
       setPhase(null);
@@ -210,12 +231,25 @@ export default function IngestConsole(): React.ReactNode {
     }
   }
 
-  const unanalyzed = assets.filter((a) => !a.analyzed_at).length;
-
   return (
     <>
       <section className="keycard">
-        <h2>Accounts</h2>
+        <h2>Connected accounts (Zernio, auto-detected)</h2>
+        {accountsNote ? <p className="muted">{accountsNote}</p> : null}
+        {accounts.map((a) => (
+          <div className="checkline" key={a.id}>
+            <input
+              type="checkbox"
+              aria-label={`Include ${a.platform} ${a.username}`}
+              checked={accountsOn[a.id] ?? false}
+              onChange={(e) => setAccountsOn((c) => ({ ...c, [a.id]: e.target.checked }))}
+            />
+            <label>
+              {a.platform} · {a.username}
+            </label>
+          </div>
+        ))}
+        <h2>Manual handles (Monid)</h2>
         {PLATFORMS.map((p) => (
           <div className="checkline" key={p.id}>
             <input
@@ -283,29 +317,6 @@ export default function IngestConsole(): React.ReactNode {
           </button>
         </div>
       </section>
-
-      <h2>Assets ({assets.length})</h2>
-      {assets.length === 0 ? (
-        <p className="muted">Nothing ingested yet.</p>
-      ) : (
-        assets.slice(0, 20).map((a) => (
-          <p key={a.id} className="muted">
-            {a.title.slice(0, 90)}
-            <span className={`status ${a.analyzed_at ? "set" : "unset"}`}>
-              {a.analyzed_at ? "analyzed" : "new"}
-            </span>{" "}
-            · {a.source} · {(a.posted_at ?? a.created_at).slice(0, 10)}
-            {a.source_url ? (
-              <>
-                {" · "}
-                <a href={a.source_url} target="_blank" rel="noreferrer">
-                  source
-                </a>
-              </>
-            ) : null}
-          </p>
-        ))
-      )}
     </>
   );
 }

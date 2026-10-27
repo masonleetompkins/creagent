@@ -132,7 +132,7 @@ export default function SettingsForm(): React.ReactNode {
   if (!loaded) return <p className="muted">Loading key status…</p>;
 
   return (
-    <>
+    <div className="keys-grid">
       {providers.map((p) => (
         <section className="keycard" key={p.id}>
           <h2>
@@ -171,6 +171,6 @@ export default function SettingsForm(): React.ReactNode {
           ) : null}
         </section>
       ))}
-    </>
+    </div>
   );
 }

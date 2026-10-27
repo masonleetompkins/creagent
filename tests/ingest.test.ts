@@ -21,6 +21,8 @@ describe("parsePostedAt", () => {
     assert.equal(parsePostedAt({ taken_at: 1756725600 }), "2025-09-01T11:20:00.000Z");
     assert.equal(parsePostedAt({ timestamp: 1756725600000 }), "2025-09-01T11:20:00.000Z");
     assert.equal(parsePostedAt({ created_at: "1756725600" }), "2025-09-01T11:20:00.000Z");
+    assert.equal(parsePostedAt({ createdUtc: 1790888156 }), "2026-10-01T20:55:56.000Z");
+    assert.equal(parsePostedAt({ createdTime: "2026-09-04T18:21:07.000Z" }), "2026-09-04T18:21:07.000Z");
     assert.equal(parsePostedAt({ text: "no date here" }), null);
     assert.equal(parsePostedAt({ created_at: "not a date" }), null);
     assert.equal(parsePostedAt({}), null);

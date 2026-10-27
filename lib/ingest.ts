@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, nowIso } from "./db";
 import { loadKeys } from "./keys";
 import { monidRunAndWait } from "./monid";
+import { zernioAccountPosts, zernioAccounts } from "./zernio";
 
 export const INGEST_SOURCES = {
   x_posts: {
@@ -89,12 +90,22 @@ function itemToAsset(item: Record<string, unknown>): {
 const DATE_KEYS = [
   "created_at",
   "createdAt",
+  "createdUtc",
+  "created_utc",
+  "createdTime",
+  "created_time",
+  "createTime",
+  "create_time",
   "published_at",
   "publishedAt",
+  "publishTime",
+  "publish_time",
   "date",
   "timestamp",
   "taken_at",
+  "takenAt",
   "upload_date",
+  "uploadDate",
 ];
 
 export function parsePostedAt(item: Record<string, unknown>): string | null {
@@ -277,4 +288,85 @@ export async function runIngest(
     if (!cursor) break;
   }
   return { assets, pages, skipped, duplicates, costs };
+}
+
+export type ZernioIngestResult = {
+  assets: number;
+  skipped: number;
+  duplicates: number;
+  accounts: number;
+};
+
+// Pull posts for connected Zernio accounts. Free (no per-call cost);
+// window + dedupe behave like Monid ingest.
+export async function runZernioIngest(
+  accountIds: string[],
+  window?: IngestWindow,
+  onProgress?: (assets: number) => Promise<void> | void,
+): Promise<ZernioIngestResult> {
+  const apiKey = loadKeys().zernio;
+  if (!apiKey) throw new Error("save a Zernio key in Settings first");
+  if (accountIds.length === 0) throw new Error("no Zernio accounts selected");
+  const sinceMs = window?.since ? Date.parse(window.since) : Number.NaN;
+  const untilMs = window?.until ? Date.parse(window.until) : Number.NaN;
+  const accounts = await zernioAccounts(apiKey);
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const db = getDb();
+  const insert = db.prepare(
+    `INSERT INTO assets (id, source, source_url, kind, title, transcript, metadata, posted_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const seen = db.prepare(`SELECT 1 FROM assets WHERE source_url = ? LIMIT 1`);
+  let assets = 0;
+  let skipped = 0;
+  let duplicates = 0;
+  let done = 0;
+  for (const accountId of accountIds) {
+    const account = byId.get(accountId);
+    if (!account) {
+      skipped++;
+      continue;
+    }
+    const source = `zernio_${account.platform}`;
+    const posts = await zernioAccountPosts(apiKey, accountId);
+    for (const post of posts) {
+      const text =
+        pick(post, "message", "text", "caption", "content", "description") || "";
+      const title = (pick(post, "title", "name") || text.slice(0, 80) || "(untitled)").slice(0, 300);
+      const providerId = pick(post, "id", "_id", "postId");
+      const url =
+        pick(post, "permalink", "url", "link", "post_url") ||
+        (providerId ? `zernio:${account.platform}:${providerId}` : "");
+      const postedAt = parsePostedAt(post);
+      if (postedAt) {
+        const ms = Date.parse(postedAt);
+        if (
+          (!Number.isNaN(sinceMs) && ms < sinceMs) ||
+          (!Number.isNaN(untilMs) && ms > untilMs)
+        ) {
+          skipped++;
+          continue;
+        }
+      }
+      if (url && seen.get(url)) {
+        duplicates++;
+        continue;
+      }
+      insert.run(
+        randomUUID(),
+        source,
+        url || null,
+        source,
+        title,
+        text.slice(0, 20000),
+        JSON.stringify({ accountId, platform: account.platform, raw: truncateRaw(post, 4) }),
+        postedAt,
+        nowIso(),
+      );
+      assets++;
+    }
+    done++;
+    if (onProgress) await onProgress(assets);
+  }
+  return { assets, skipped, duplicates, accounts: done };
 }

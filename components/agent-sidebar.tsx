@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Msg = { id: string; role: string; content: string; toolName: string | null; created_at: string };
+type Msg = { id: string; role: string; content: string; toolName: string | null; compacted: number; created_at: string };
 
 export default function AgentSidebar({
   kind,
@@ -57,6 +57,13 @@ export default function AgentSidebar({
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, open]);
 
+  useEffect(() => {
+    document.body.classList.toggle("has-agent-dock", open);
+    return () => {
+      document.body.classList.remove("has-agent-dock");
+    };
+  }, [open ]);
+
   const ensureChat = useCallback(async (): Promise<string | null> => {
     if (chatId) return chatId;
     const res = await fetch("/api/agent/chats", {
@@ -86,7 +93,7 @@ export default function AgentSidebar({
     setInput("");
     setMessages((m) => [
       ...m,
-      { id: `local-${Date.now()}`, role: "user", content: text, toolName: null, created_at: "" },
+      { id: `local-${Date.now()}`, role: "user", content: text, toolName: null, compacted: 0, created_at: "" },
     ]);
     try {
       const id = await ensureChat();
@@ -178,7 +185,7 @@ export default function AgentSidebar({
               ⚙ {m.toolName} {m.content.startsWith('{"ok":true') ? "✓" : "✗"}
             </div>
           ) : (
-            <div key={m.id} className={`chat-msg ${m.role}`}>
+            <div key={m.id} className={`chat-msg ${m.role}${m.compacted ? " old" : ""}`}>
               {(m.role === "user" ? m.content.replace(/^\[Context:.*?\] /, "") : m.content) || (
                 <span className="muted">(working…)</span>
               )}

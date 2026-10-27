@@ -12,6 +12,22 @@ export const META_TEXT_FRONTIER = "muse-wonder-1.0";
 export function metaTextModel(): string {
   return process.env.META_TEXT_MODEL ?? META_TEXT_DEFAULT;
 }
+
+// Assumed context window: the models endpoint exposes no size, so context
+// percentages are measured against 128k until Meta documents otherwise.
+export const META_CONTEXT_TOKENS = 131072;
+
+// USD per 1M tokens, verified 2026-10-26. Standard-tier rates apply to any
+// non-contributor text model (wonder included) until priced separately.
+export const META_PRICING = {
+  contributor: { input: 0.1, output: 0.2 },
+  standard: { input: 1.25, output: 4.25 },
+};
+
+export function textCostUsd(model: string, promptTokens: number, completionTokens: number): number {
+  const rates = model.includes("contributor") ? META_PRICING.contributor : META_PRICING.standard;
+  return (promptTokens * rates.input + completionTokens * rates.output) / 1_000_000;
+}
 // Unverified: no independent source confirms an image model on the Model API
 // as of 2026-10-26. Test with a real key before relying on it.
 export const META_IMAGE_MODEL = "muse-image-1.0";

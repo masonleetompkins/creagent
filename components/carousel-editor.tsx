@@ -412,16 +412,11 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       {error ? <p className="note err">{error}</p> : null}
 
       <section className="keycard">
-        <h2>Brand kit</h2>
-        <div className="row">
+        <div className="row" style={{ marginTop: 0 }}>
           <input type="text" aria-label="Title" value={kit.title} onChange={(e) => setKit({ ...kit, title: e.target.value })} />
-        </div>
-        <div className="row">
-          <label>Primary <input type="color" value={kit.primary} onChange={(e) => setKit({ ...kit, primary: e.target.value })} /></label>
-          <label>Secondary <input type="color" value={kit.secondary} onChange={(e) => setKit({ ...kit, secondary: e.target.value })} /></label>
-          <label>Background <input type="color" value={kit.background} onChange={(e) => setKit({ ...kit, background: e.target.value })} /></label>
-        </div>
-        <div className="row">
+          <label>Pri <input type="color" value={kit.primary} onChange={(e) => setKit({ ...kit, primary: e.target.value })} /></label>
+          <label>Sec <input type="color" value={kit.secondary} onChange={(e) => setKit({ ...kit, secondary: e.target.value })} /></label>
+          <label>Bg <input type="color" value={kit.background} onChange={(e) => setKit({ ...kit, background: e.target.value })} /></label>
           <select aria-label="Heading font" value={kit.heading} onChange={(e) => setKit({ ...kit, heading: e.target.value })}>
             {HEADING_FONTS.map((f) => (
               <option key={f.id} value={f.id}>Head: {f.label}</option>
@@ -432,26 +427,21 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               <option key={f.id} value={f.id}>Body: {f.label}</option>
             ))}
           </select>
-          <button className="primary" onClick={() => void saveKit()}>Save brand kit</button>
+          <button className="primary" onClick={() => void saveKit()}>Save kit</button>
         </div>
       </section>
 
       <section className="keycard">
-        <h2>Copy ({slides.length} slides)</h2>
-        <div className="row">
-          <input type="text" aria-label="Brief" placeholder="Brief for the model (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
-          <input type="text" aria-label="Slide count" placeholder="7" value={numSlides} onChange={(e) => setNumSlides(e.target.value)} />
-          <button disabled={busy} onClick={() => void runCopyJob(false)}>Generate copy</button>
-          <button disabled={busy} onClick={() => void runCopyJob(true)}>Replace with new copy</button>
-        </div>
-        <div className="row">
-          <input type="text" aria-label="Set slide count" placeholder="Set slide count" value={count} onChange={(e) => setCount(e.target.value)} />
-          <button onClick={() => void applyCount()}>Apply count</button>
-          <button onClick={() => void addSlide()}>Add slide</button>
-        </div>
-        <div className="row">
+        <div className="row" style={{ marginTop: 0 }}>
+          <input type="text" aria-label="Brief" placeholder="Brief (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
+          <input type="text" aria-label="Slides" placeholder="#" value={numSlides} onChange={(e) => setNumSlides(e.target.value)} style={{ flex: "0 1 64px" }} />
+          <button disabled={busy} onClick={() => void runCopyJob(false)}>Generate</button>
+          <button disabled={busy} onClick={() => void runCopyJob(true)}>Replace</button>
+          <input type="text" aria-label="Set count" placeholder="Count" value={count} onChange={(e) => setCount(e.target.value)} style={{ flex: "0 1 72px" }} />
+          <button onClick={() => void applyCount()}>Apply</button>
+          <button onClick={() => void addSlide()}>+ Slide</button>
           <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/autopick`, {}, "Auto-picked")}>
-            Auto-pick photos
+            Auto-pick
           </button>
           <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/plan-images`, {}, "Planned")}>
             Plan images
@@ -459,55 +449,53 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         </div>
       </section>
 
-      <div className="edgrid">
+      <div className="edgrid work">
         <div>
-          <h2>Slides</h2>
-          {slides.map((s, i) => (
-            <button key={s.id} className={`slot ${i === sel ? "sel" : ""}`} onClick={() => setSel(i)}>
-              <span className="slottime">{i + 1}</span>
-              <span className="slotmain">
-                [{s.layout}] {(s.heading || "(no heading)").slice(0, 42)}
-              </span>
-              <span className="slotsub">{s.image_path ? `image: ${s.image_source}` : "no image"}</span>
-            </button>
-          ))}
+          <h2>Slides ({slides.length})</h2>
+          <div className="ced-slides">
+            {slides.map((s, i) => (
+              <button key={s.id} className={`slot ${i === sel ? "sel" : ""}`} onClick={() => setSel(i)}>
+                <span className="slottime">{i + 1}</span>
+                <span className="slotmain">
+                  [{s.layout}] {(s.heading || "(no heading)").slice(0, 28)}
+                </span>
+                <span className="slotsub">{s.image_path ? `img: ${s.image_source}` : "no image"}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div>
-          <h2>Preview</h2>
-          <canvas ref={canvasRef} className="preview" />
-          <div className="row">
-            <button disabled={busy || !current} onClick={() => void exportCurrent()}>Export this PNG</button>
-            <button disabled={busy || slides.length === 0} onClick={() => void exportAll()}>Export all PNGs</button>
-          </div>
-        </div>
-      </div>
-
-      {current ? (
-        <section className="keycard">
-          <h2>
-            Slide {sel + 1}
-            <span className="status unset">{current.layout}</span>
-          </h2>
-          <div className="row">
-            <select aria-label="Layout" value={draft.layout} onChange={(e) => setDraft({ ...draft, layout: e.target.value })}>
-              {LAYOUTS.map((l) => (
-                <option key={l} value={l}>{l}</option>
-              ))}
-            </select>
-            <button onClick={() => void move(-1)}>↑</button>
-            <button onClick={() => void move(1)}>↓</button>
-            <button onClick={() => void deleteSlide(current.id)}>Delete</button>
-          </div>
-          <div className="row">
-            <input type="text" aria-label="Heading" placeholder="Heading" value={draft.heading} onChange={(e) => setDraft({ ...draft, heading: e.target.value })} />
-          </div>
-          <div className="row">
-            <textarea aria-label="Body" rows={5} placeholder="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
-          </div>
-          <div className="row">
-            <button className="primary" onClick={() => void saveSlide()}>Save slide</button>
-          </div>
-          {(() => {
+          {current ? (
+            <section className="keycard" style={{ marginTop: 0 }}>
+              <canvas ref={canvasRef} className="preview" />
+              <div className="row">
+                <button disabled={busy} onClick={() => void exportCurrent()}>Export PNG</button>
+                <button disabled={busy || slides.length === 0} onClick={() => void exportAll()}>Export all</button>
+                <select aria-label="Layout" value={draft.layout} onChange={(e) => setDraft({ ...draft, layout: e.target.value })}>
+                  {LAYOUTS.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+                <button onClick={() => void move(-1)}>↑</button>
+                <button onClick={() => void move(1)}>↓</button>
+                <button onClick={() => void deleteSlide(current.id)}>Delete</button>
+              </div>
+              <div className="row">
+                <input type="text" aria-label="Heading" placeholder={`Slide ${sel + 1} heading`} value={draft.heading} onChange={(e) => setDraft({ ...draft, heading: e.target.value })} />
+              </div>
+              <div className="row">
+                <textarea aria-label="Body" rows={4} placeholder="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
+              </div>
+              <div className="row">
+                <button className="primary" onClick={() => void saveSlide()}>Save slide</button>
+              </div>
+            </section>
+          ) : (
+            <p className="muted">Add a slide to start.</p>
+          )}
+          {current ? (
+            <section className="keycard">
+              {(() => {
             const req = requests
               .filter((r) => r.slide_id === current.id)
               .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null;
@@ -527,7 +515,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               </div>
             );
           })()}
-          <h2>Image</h2>
+              <h2>Image</h2>
           <div className="row">
             <input type="text" aria-label="Image prompt" placeholder="Describe the scene for Muse Image" value={imgPrompt} onChange={(e) => setImgPrompt(e.target.value)} />
             <button disabled={busy || !imgPrompt.trim()} onClick={() => void runImageJob()}>Generate</button>
@@ -557,8 +545,10 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             ))}
           </div>
           {photos.length === 0 ? <p className="muted">No ingested photos yet — ingest content with images first.</p> : null}
-        </section>
-      ) : null}
+            </section>
+          ) : null}
+        </div>
+      </div>
     </>
   );
 }

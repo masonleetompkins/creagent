@@ -7,7 +7,7 @@ import { runAutopick, runPlanImages } from "./lib/carousel-plan";
 import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
 import { runDraftAll, runDraftSlot } from "./lib/drafting";
-import { isIngestSource, runIngest } from "./lib/ingest";
+import { isIngestSource, runIngest, runZernioIngest } from "./lib/ingest";
 import { metaChatClient, runAgentTurn } from "./lib/agent";
 import { runSlotAutoEdit } from "./lib/autoedit";
 import { requestKey, runKeyingSetup } from "./lib/corridorkey";
@@ -46,6 +46,22 @@ async function dispatch(job: JobRow): Promise<unknown> {
       {
         since: typeof since === "string" ? since : undefined,
         until: typeof until === "string" ? until : undefined,
+      },
+    );
+  }
+  if (job.name === "ingest_zernio") {
+    const { accountIds, since, until } = data;
+    if (!Array.isArray(accountIds) || !accountIds.every((a): a is string => typeof a === "string")) {
+      throw new Error("accountIds must be a string array");
+    }
+    return runZernioIngest(
+      accountIds,
+      {
+        since: typeof since === "string" ? since : undefined,
+        until: typeof until === "string" ? until : undefined,
+      },
+      (assets) => {
+        updateProgress(job.id, { assets });
       },
     );
   }

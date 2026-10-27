@@ -1,5 +1,7 @@
 // Zernio unified social API client. Docs: docs.zernio.com
-export const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
+import { fetchWithRetry } from "./fetch-retry";
+
+export const ZERNIO_BASE_URL = "https://zernio.com/api";
 
 async function zernioRequest(
   apiKey: string,
@@ -7,14 +9,14 @@ async function zernioRequest(
   path: string,
   body?: unknown,
 ): Promise<unknown> {
-  const res = await fetch(`${ZERNIO_BASE_URL}${path}`, {
+  const res = await fetchWithRetry(`${ZERNIO_BASE_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(60000),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -48,6 +50,44 @@ export async function zernioAnalyticsDelta(
 
 export async function zernioPosts(apiKey: string): Promise<unknown> {
   return zernioRequest(apiKey, "GET", "/v1/posts");
+}
+
+export type ZernioAccount = { id: string; platform: string; username: string };
+
+function isObj(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+export async function zernioAccounts(apiKey: string): Promise<ZernioAccount[]> {
+  const data = (await zernioRequest(apiKey, "GET", "/v1/accounts?limit=100")) as Record<
+    string,
+    unknown
+  >;
+  const raw = data["accounts"] ?? data["data"];
+  const list = Array.isArray(raw) ? raw : [];
+  return list.filter(isObj).map((a) => ({
+    id: str(a._id ?? a.id),
+    platform: str(a.platform ?? a.network ?? "unknown").toLowerCase() || "unknown",
+    username: str(a.username ?? a.handle ?? a.name ?? a.displayName) || "(unnamed)",
+  })).filter((a) => a.id);
+}
+
+export async function zernioAccountPosts(
+  apiKey: string,
+  accountId: string,
+): Promise<Array<Record<string, unknown>>> {
+  const data = (await zernioRequest(
+    apiKey,
+    "GET",
+    `/v1/accounts/${encodeURIComponent(accountId)}/posts`,
+  )) as Record<string, unknown>;
+  const raw = data["posts"] ?? data["data"];
+  const list = Array.isArray(raw) ? raw : [];
+  return list.filter(isObj);
 }
 
 export async function testZernio(apiKey: string): Promise<string> {

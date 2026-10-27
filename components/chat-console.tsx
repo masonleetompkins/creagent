@@ -2,8 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Chat = { id: string; title: string; created_at: string };
-type Msg = { id: string; role: string; content: string; toolName: string | null; created_at: string };
+type Chat = {
+  id: string;
+  title: string;
+  created_at: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  last_context_tokens: number;
+  cost_usd: number;
+  ctx_pct: number;
+};
+type Msg = {
+  id: string;
+  role: string;
+  content: string;
+  toolName: string | null;
+  compacted: number;
+  created_at: string;
+};
+
+function money(n: number): string {
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
 
 export default function ChatConsole(): React.ReactNode {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -11,6 +31,7 @@ export default function ChatConsole(): React.ReactNode {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -56,10 +77,9 @@ export default function ChatConsole(): React.ReactNode {
     setError("");
     const text = input.trim();
     setInput("");
-    // Optimistic user message; server persists the turn.
     setMessages((m) => [
       ...m,
-      { id: `local-${Date.now()}`, role: "user", content: text, toolName: null, created_at: "" },
+      { id: `local-${Date.now()}`, role: "user", content: text, toolName: null, compacted: 0, created_at: "" },
     ]);
     try {
       const res = await fetch(`/api/agent/chats/${chatId}`, {
@@ -85,37 +105,77 @@ export default function ChatConsole(): React.ReactNode {
         }
       }
       await loadMessages(chatId);
+      await loadChats();
     } finally {
       setBusy(false);
     }
-  }, [chatId, input, busy, loadMessages]);
+  }, [chatId, input, busy, loadMessages, loadChats]);
+
+  const compact = useCallback(async () => {
+    if (!chatId || compacting) return;
+    setCompacting(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/agent/chats/${chatId}/compact`, { method: "POST" });
+      const data = (await res.json()) as { compacted?: boolean; error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "compact failed");
+        return;
+      }
+      if (!data.compacted) setError("Nothing to compact yet — keep chatting.");
+      await loadMessages(chatId);
+      await loadChats();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCompacting(false);
+    }
+  }, [chatId, compacting, loadMessages, loadChats]);
+
+  const active = chats.find((c) => c.id === chatId) ?? null;
 
   return (
-    <div className="chat">
-      <div className="chat-list">
+    <div className="chat2">
+      <div className="chat2-rail">
         <button className="primary" onClick={() => void newChat()}>
-          New chat
+          + New
         </button>
         {chats.map((c) => (
           <button
             key={c.id}
-            className={c.id === chatId ? "primary" : ""}
+            className={`chat2-session${c.id === chatId ? " on" : ""}`}
             onClick={() => setChatId(c.id)}
           >
-            {c.title}
+            <span className="t">{c.title}</span>
+            <span className="m">
+              {money(c.cost_usd)} · ctx {c.ctx_pct}%
+            </span>
           </button>
         ))}
+        {chats.length === 0 && <p className="muted">No sessions yet.</p>}
       </div>
-      <div className="chat-main">
+      <div className="chat2-main">
         {error !== "" && <p className="note err">{error}</p>}
-        {!chatId && <p className="muted">Start a new chat to put the agent to work.</p>}
+        {!chatId && (
+          <p className="muted">Start a new session to put the agent to work.</p>
+        )}
         {chatId && (
           <>
-            <div className="chat-thread">
+            {active && (
+              <p className="muted">
+                {money(active.cost_usd)} this session ·{" "}
+                {(active.prompt_tokens + active.completion_tokens).toLocaleString()} tokens ·{" "}
+                ctx {active.ctx_pct}%{" "}
+                <button disabled={compacting} onClick={() => void compact()}>
+                  {compacting ? "Compacting…" : "Compact"}
+                </button>
+              </p>
+            )}
+            <div className="chat2-thread">
               {messages
                 .filter((m) => m.role !== "tool")
                 .map((m) => (
-                  <div key={m.id} className={`chat-msg ${m.role}`}>
+                  <div key={m.id} className={`chat-msg ${m.role}${m.compacted ? " old" : ""}`}>
                     {m.content || <span className="muted">(working…)</span>}
                   </div>
                 ))}
@@ -128,7 +188,7 @@ export default function ChatConsole(): React.ReactNode {
                 ))}
               <div ref={bottomRef} />
             </div>
-            <div className="row">
+            <div className="chat2-input">
               <input
                 type="text"
                 placeholder="Ask the agent to do anything in the app…"

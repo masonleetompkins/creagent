@@ -11,11 +11,17 @@ before(async () => {
 });
 
 function scriptedClient(
-  turns: { content: string | null; toolCalls: { id: string; name: string; args: Record<string, unknown> }[] }[],
+  turns: {
+    content: string | null;
+    toolCalls: { id: string; name: string; args: Record<string, unknown> }[];
+    usage?: { prompt: number; completion: number };
+  }[],
+  seen: { role: string; content: string | null }[][] = [],
 ) {
   let i = 0;
   return {
-    complete: async () => {
+    complete: async (messages: { role: string; content: string | null }[]) => {
+      seen.push(messages);
       const turn = turns[Math.min(i, turns.length - 1)];
       i++;
       return turn;
@@ -106,5 +112,62 @@ describe("agent tool guards", () => {
     assert.equal(video.getClip(clipId)?.duration_ms, 1500);
     const bad = await editClip.run({ clipId: "not-a-uuid", durationMs: 5 });
     assert.equal(bad.ok, false);
+  });
+});
+
+describe("agent usage and compaction", () => {
+  it("accumulates reported usage into cost and context", async () => {
+    const { createChat, listChats, runAgentTurn } = await import("../lib/agent");
+    const chatId = createChat("usage");
+    await runAgentTurn(
+      chatId,
+      "hi",
+      scriptedClient([
+        {
+          content: "done",
+          toolCalls: [],
+          usage: { prompt: 1000, completion: 50 },
+        },
+      ]),
+    );
+    const row = listChats().find((c) => c.id === chatId);
+    assert.ok(row);
+    assert.equal(row.prompt_tokens, 1000);
+    assert.equal(row.completion_tokens, 50);
+    assert.equal(row.last_context_tokens, 1000);
+    assert.ok(row.cost_usd > 0);
+    assert.ok(row.ctx_pct > 0 && row.ctx_pct < 100);
+  });
+
+  it("compacts long history into an anchor and drops it from context", async () => {
+    const { compactChat, createChat, getMessages, runAgentTurn, saveMessage } =
+      await import("../lib/agent");
+    const chatId = createChat("compact");
+    const filler = "lorem ipsum dolor sit amet ".repeat(40);
+    for (let i = 0; i < 5; i++) {
+      saveMessage(chatId, { role: i % 2 === 0 ? "user" : "assistant", content: `${filler} #${i}` });
+    }
+    const tiny = createChat("tiny");
+    saveMessage(tiny, { role: "user", content: "hi" });
+    const skipped = await compactChat(
+      tiny,
+      scriptedClient([{ content: "unused", toolCalls: [] }]),
+    );
+    assert.equal(skipped.compacted, false);
+    const result = await compactChat(
+      chatId,
+      scriptedClient([{ content: "SUMMARY OF WORK", toolCalls: [] }]),
+    );
+    assert.equal(result.compacted, true);
+    const messages = getMessages(chatId);
+    assert.equal(messages.filter((m) => m.compacted).length, 5);
+    const anchor = messages.find((m) => !m.compacted);
+    assert.ok(anchor);
+    assert.match(anchor.content, /SUMMARY OF WORK/);
+    const seen: { role: string; content: string | null }[][] = [];
+    await runAgentTurn(chatId, "continue", scriptedClient([{ content: "ok", toolCalls: [] }], seen));
+    const joined = seen[0].map((m) => m.content ?? "").join("\n");
+    assert.match(joined, /SUMMARY OF WORK/);
+    assert.doesNotMatch(joined, /lorem ipsum/);
   });
 });

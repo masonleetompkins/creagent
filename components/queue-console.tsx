@@ -68,6 +68,13 @@ const SOURCE_SHORT: Record<string, string> = {
   instagram_posts: "IG",
   youtube_transcript: "YT",
   instagram_reel: "Reel",
+  zernio_instagram: "IG",
+  zernio_youtube: "YT",
+  zernio_linkedin: "LI",
+  zernio_threads: "TH",
+  zernio_tiktok: "TT",
+  zernio_twitter: "X",
+  zernio_facebook: "FB",
 };
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
@@ -459,7 +466,15 @@ export default function QueueConsole(): React.ReactNode {
                   : day.getDate()}
               </div>
               {shownHistory.map((a) => {
-                const label = `${SOURCE_SHORT[a.source] ?? a.source}: ${a.title}`;
+                const when = new Date(a.posted_at ?? a.created_at);
+                const time = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                const label = `${SOURCE_SHORT[a.source] ?? a.source} ${time}: ${a.title}`;
+                const inner = (
+                  <>
+                    <span className="asrc">{time}</span>
+                    {SOURCE_SHORT[a.source] ?? "•"} · {a.title}
+                  </>
+                );
                 return a.source_url ? (
                   <a
                     key={a.id}
@@ -469,13 +484,11 @@ export default function QueueConsole(): React.ReactNode {
                     rel="noreferrer"
                     title={label}
                   >
-                    <span className="asrc">{SOURCE_SHORT[a.source] ?? "•"}</span>
-                    {a.title}
+                    {inner}
                   </a>
                 ) : (
                   <span key={a.id} className="asset-chip" title={label}>
-                    <span className="asrc">{SOURCE_SHORT[a.source] ?? "•"}</span>
-                    {a.title}
+                    {inner}
                   </span>
                 );
               })}

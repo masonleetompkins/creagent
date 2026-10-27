@@ -6,6 +6,7 @@ type Pillar = {
   id: string;
   name: string;
   description: string;
+  confirmed: number;
   created_at: string;
 };
 
@@ -59,6 +60,23 @@ export default function PillarsManager(): React.ReactNode {
     }
   }
 
+  async function setConfirmed(id: string, confirmed: boolean): Promise<void> {
+    setError(null);
+    try {
+      const data = await readJson(
+        await fetch(`/api/pillars/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmed }),
+        }),
+      );
+      const saved = data.pillar as Pillar;
+      setPillars((ps) => ps.map((p) => (p.id === id ? saved : p)));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function remove(id: string, name: string): Promise<void> {
     if (!window.confirm(`Delete pillar "${name}"? Queue slots keep their history but lose the link.`)) return;
     setError(null);
@@ -92,11 +110,23 @@ export default function PillarsManager(): React.ReactNode {
 
   if (!loaded) return <p className="muted">Loading pillars…</p>;
 
+  const confirmedCount = pillars.filter((p) => p.confirmed).length;
+  const ordered = [...pillars].sort((a, b) => b.confirmed - a.confirmed);
+
   return (
     <>
       {error ? <p className="note err">{error}</p> : null}
-      {pillars.map((p) => (
+      <p className="muted">
+        {confirmedCount} of 5 pillars confirmed. Confirmed pillars drive the queue planner.
+      </p>
+      {ordered.map((p) => (
         <section className="keycard" key={p.id}>
+          <div>
+            <strong>{p.name}</strong>
+            <span className={`pill-conf${p.confirmed ? " yes" : ""}`}>
+              {p.confirmed ? "confirmed" : "unconfirmed"}
+            </span>
+          </div>
           <div className="row">
             <input
               type="text"
@@ -122,6 +152,13 @@ export default function PillarsManager(): React.ReactNode {
             <button className="primary" onClick={() => void save(p.id)}>
               Save
             </button>
+            {p.confirmed ? (
+              <button onClick={() => void setConfirmed(p.id, false)}>Unconfirm</button>
+            ) : (
+              <button disabled={confirmedCount >= 5} onClick={() => void setConfirmed(p.id, true)}>
+                Confirm
+              </button>
+            )}
             <button onClick={() => void remove(p.id, p.name)}>Delete</button>
           </div>
         </section>
