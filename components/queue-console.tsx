@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CONTENT_TYPES, PLATFORMS } from "@/lib/content";
 
 type Slot = {
@@ -152,6 +153,7 @@ export default function QueueConsole(): React.ReactNode {
   const [agentNote, setAgentNote] = useState<string | null>(null);
   const [anyRed, setAnyRed] = useState(true);
   const [jobProgress, setJobProgress] = useState<{ done: number; total: number } | null>(null);
+  const agentBoxRef = useRef<HTMLTextAreaElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -540,6 +542,7 @@ export default function QueueConsole(): React.ReactNode {
         if (job.state === "failed") throw new Error(job.failedReason ?? "agent turn failed");
       }
       setAgentInput("");
+      if (agentBoxRef.current) agentBoxRef.current.style.height = "auto";
       setAgentNote("Done — the schedule below is updated. The full conversation is in the agent panel.");
       window.dispatchEvent(new CustomEvent("creagent:agent-updated"));
       await refresh();
@@ -943,8 +946,9 @@ export default function QueueConsole(): React.ReactNode {
       ) : null}
 
       </div>
-      {setupOpen ? (
-        <div className="modal-backdrop" onClick={() => setSetupOpen(false)}>
+      {setupOpen
+        ? createPortal(
+            <div className="modal-backdrop" onClick={() => setSetupOpen(false)}>
           <div className="modal" role="dialog" aria-label="Queue setup" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <h2>Queue setup</h2>
@@ -958,14 +962,25 @@ export default function QueueConsole(): React.ReactNode {
           </p>
           <section className="keycard slim">
             <div className="row">
-              <input
-                type="text"
+              <textarea
+                ref={agentBoxRef}
+                rows={2}
                 aria-label="Describe your cadence to the agent"
                 placeholder='e.g. "Post every day at 9am and 2pm, threads on X in the morning"'
                 value={agentInput}
-                onChange={(e) => setAgentInput(e.target.value)}
+                onChange={(e) => {
+                  setAgentInput(e.target.value);
+                  const el = agentBoxRef.current;
+                  if (el) {
+                    el.style.height = "auto";
+                    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+                  }
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void askAgent();
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void askAgent();
+                  }
                 }}
               />
               <button className="primary" disabled={agentBusy || !agentInput.trim()} onClick={() => void askAgent()}>
@@ -1106,9 +1121,11 @@ export default function QueueConsole(): React.ReactNode {
           </div>
         </div>
       </section>
-          </div>
-        </div>
-      ) : null}
+            </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }
