@@ -11,9 +11,52 @@ cd "$APP_DIR"
 ("$APP_DIR/scripts/ensure-tools.sh") || echo "WARNING: video tools are incomplete."
 (cd "$APP_DIR" && npx tsx scripts/migrate.ts) || echo "WARNING: migrations did not complete."
 URL="http://127.0.0.1:$PORT"
-if [ -f "$CONFIG_DIR/server.pid" ] && kill -0 "$(cat "$CONFIG_DIR/server.pid")" 2>/dev/null; then
-  echo "Server already running (pid $(cat "$CONFIG_DIR/server.pid")). Opening browser…"
+
+running_build() {
+  curl -sf -m 3 "$URL/api/health" 2>/dev/null | grep -o '"buildId":"[^"]*"' | cut -d'"' -f4
+}
+current_build() { cat "$APP_DIR/.next/BUILD_ID" 2>/dev/null || echo "dev"; }
+port_busy() {
+  if command -v lsof >/dev/null 2>&1; then
+    [ -n "$(lsof -ti ":$PORT" 2>/dev/null || true)" ]
+  else
+    curl -sf -m 2 "$URL/" -o /dev/null 2>&1
+  fi
+}
+# Kill only Creagent processes on our port; never touch foreign listeners.
+kill_port() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  local pids pid cmd
+  pids="$(lsof -ti ":$PORT" 2>/dev/null || true)"
+  for pid in $pids; do
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$cmd" in
+      *creagent*) kill "$pid" 2>/dev/null || true ;;
+      *) echo "Port $PORT is held by a non-Creagent process ($pid): $cmd" ;;
+    esac
+  done
+  sleep 2
+}
+stop_worker() {
+  if [ -f "$CONFIG_DIR/worker.pid" ]; then
+    kill "$(cat "$CONFIG_DIR/worker.pid")" 2>/dev/null || true
+    rm -f "$CONFIG_DIR/worker.pid"
+  fi
+}
+
+RUNNING="$(running_build || true)"
+CURRENT="$(current_build)"
+if [ -n "$RUNNING" ] && [ "$RUNNING" = "$CURRENT" ]; then
+  echo "Server already running on the current build. Opening browser…"
 else
+  if [ -n "$RUNNING" ]; then
+    echo "Server is on an old build ($RUNNING vs $CURRENT). Restarting…"
+  elif port_busy; then
+    echo "Port $PORT is busy with an unrecognized server. Restarting…"
+  fi
+  kill_port
+  rm -f "$CONFIG_DIR/server.pid"
+  stop_worker
   echo "Starting server on port ${PORT}..."
   nohup npx next start -H 127.0.0.1 -p "$PORT" >>"$CONFIG_DIR/server.log" 2>&1 &
   echo $! > "$CONFIG_DIR/server.pid"
