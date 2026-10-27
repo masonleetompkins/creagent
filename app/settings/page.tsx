@@ -10,9 +10,7 @@ export default function SettingsPage(): React.ReactNode {
         <div>
           <h1>Settings</h1>
           <div className="sub">
-            Keys are encrypted on this machine only, at{" "}
-            <code>~/.config/creagent/keys.enc.json</code>. They never leave your
-            computer except in direct calls to each provider.
+            Keys stay encrypted on this machine and go only to their provider.
           </div>
         </div>
       </div>

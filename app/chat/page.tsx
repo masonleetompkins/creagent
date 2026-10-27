@@ -7,9 +7,8 @@ export default function ChatPage(): React.ReactNode {
         <div>
           <h1>Agent chat</h1>
           <div className="sub">
-            The in-built agent works anywhere in the app: queue, drafts, carousels,
-            timelines, captions, audio, keying, exports. Spends and publishes still
-            need your approval.
+            One conversation that works anywhere in the app. Spends and
+            publishes still need your approval.
           </div>
         </div>
       </div>

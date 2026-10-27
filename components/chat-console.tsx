@@ -84,6 +84,14 @@ export default function ChatConsole(): React.ReactNode {
     setError("");
   }, []);
 
+  useEffect(() => {
+    if (window.location.hash === "#new") {
+      startNew();
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openChat = useCallback((id: string) => {
     setDraft(false);
     setChatId(id);

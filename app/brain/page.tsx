@@ -8,8 +8,7 @@ export default function BrainPage(): React.ReactNode {
         <div>
           <h1>Brain</h1>
           <div className="sub">
-            Everything the agent knows: your voice, the context vault, posting
-            strategy, and the platform playbook it drafts from.
+            Your voice, vault, pillars, and strategy — everything the agent drafts from.
           </div>
         </div>
       </div>

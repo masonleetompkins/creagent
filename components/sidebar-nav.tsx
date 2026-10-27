@@ -23,6 +23,7 @@ function Ico({ d }: { d: string[] }): React.ReactNode {
 }
 
 const ICONS: Record<string, string[]> = {
+  home: ["m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M9 22V12h6v10"],
   chat: ["M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"],
   calendar: [
     "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
@@ -36,12 +37,13 @@ const ICONS: Record<string, string[]> = {
 };
 
 const ITEMS = [
-  { href: "/chat", label: "Chat", icon: "chat" },
+  { href: "/", label: "Home", icon: "home" },
   { href: "/queue", label: "Calendar", icon: "calendar" },
   { href: "/brain", label: "Brain", icon: "brain" },
   { href: "/carousels", label: "Carousels", icon: "carousels" },
   { href: "/videos", label: "Videos", icon: "videos" },
   { href: "/data", label: "Data", icon: "data" },
+  { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
 export default function SidebarNav({ stamp }: { stamp?: React.ReactNode }): React.ReactNode {
@@ -61,13 +63,15 @@ export default function SidebarNav({ stamp }: { stamp?: React.ReactNode }): Reac
           </a>
         ))}
       </nav>
-      <nav className="foot">
-        <a href="/settings" className={isOn("/settings") ? "on" : ""}>
-          <Ico d={ICONS.settings ?? []} />
-          Settings
-        </a>
-        {stamp}
-      </nav>
+      <button
+        className="cmd-trigger"
+        onClick={() => window.dispatchEvent(new CustomEvent("creagent:command"))}
+        title="Command bar"
+      >
+        <span>Command…</span>
+        <kbd>⌘K</kbd>
+      </button>
+      <nav className="foot">{stamp}</nav>
     </aside>
   );
 }

@@ -7,9 +7,7 @@ export default function DataPage(): React.ReactNode {
         <div>
           <h1>Data</h1>
           <div className="sub">
-            Platform averages and per-post metrics. Each post is scored as a
-            multiplier against its platform average — 2x means twice the usual.
-            Sync pulls engagement from ingested assets and Zernio.
+            What performed, scored as a multiplier against your average.
           </div>
         </div>
       </div>

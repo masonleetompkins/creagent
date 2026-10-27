@@ -3,6 +3,7 @@ import "./globals.css";
 import SidebarNav from "@/components/sidebar-nav";
 import ContentShell from "@/components/content-shell";
 import BuildStampServer from "@/components/build-stamp-server";
+import CommandBar from "@/components/command-bar";
 
 export const metadata: Metadata = {
   title: "Creagent",
@@ -27,6 +28,7 @@ export default function RootLayout({
         <div className="shell">
           <SidebarNav stamp={<BuildStampServer />} />
           <ContentShell>{children}</ContentShell>
+          <CommandBar />
         </div>
       </body>
     </html>
