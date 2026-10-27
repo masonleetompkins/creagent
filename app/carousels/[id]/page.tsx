@@ -9,10 +9,12 @@ export default async function CarouselEditorPage({
 }): Promise<React.ReactNode> {
   const { id } = await params;
   return (
-    <>
-      <ProjectSwitcher kind="carousel" currentId={id} />
-      <CarouselEditor projectId={id} />
+    <div className="editor-shell">
+      <div className="editor-main">
+        <ProjectSwitcher kind="carousel" currentId={id} />
+        <CarouselEditor projectId={id} />
+      </div>
       <AgentSidebar kind="carousel" entityId={id} />
-    </>
+    </div>
   );
 }

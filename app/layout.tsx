@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import SidebarNav from "@/components/sidebar-nav";
+import ContentShell from "@/components/content-shell";
 
 export const metadata: Metadata = {
   title: "Creagent",
@@ -24,7 +25,7 @@ export default function RootLayout({
       <body>
         <div className="shell">
           <SidebarNav />
-          <main className="content">{children}</main>
+          <ContentShell>{children}</ContentShell>
         </div>
       </body>
     </html>

@@ -161,6 +161,20 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
     void refreshMedia();
   }, [refresh, refreshMedia]);
 
+  useEffect(() => {
+    const onAgent = (e: Event): void => {
+      const d = (e as CustomEvent<{ kind?: string; entityId?: string }>).detail;
+      if (d?.kind === "video" && d.entityId === projectId) {
+        void refresh();
+        void refreshMedia();
+      }
+    };
+    window.addEventListener("creagent:agent-updated", onAgent);
+    return () => {
+      window.removeEventListener("creagent:agent-updated", onAgent);
+    };
+  }, [refresh, refreshMedia, projectId]);
+
   const duration = useMemo(() => {
     if (!detail) return 0;
     let end = 0;
@@ -1330,7 +1344,7 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
           </div>
           <audio ref={audioRef} preload="auto" />
           <div className="row">
-            <button className="primary" onClick={() => setPlaying((p) => !p)}>
+            <button onClick={() => setPlaying((p) => !p)}>
               {playing ? "Pause" : "Play"}
             </button>
             <span className="muted">
@@ -1424,32 +1438,23 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
           )}
         </div>
         <div className="ved-side">
-          <div className="row">
-            <button className={tab === "media" ? "primary" : ""} onClick={() => setTab("media")}>
-              Media
+          <div className="seg" role="tablist" aria-label="Editor panels">
+            <button role="tab" aria-selected={tab === "media"} className={tab === "media" ? "on" : ""} onClick={() => setTab("media")}>
+              Media ({media.length})
             </button>
-            <button
-              className={tab === "transcript" ? "primary" : ""}
-              onClick={() => setTab("transcript")}
-            >
+            <button role="tab" aria-selected={tab === "transcript"} className={tab === "transcript" ? "on" : ""} onClick={() => setTab("transcript")}>
               Transcript
             </button>
-            <button className={tab === "raw" ? "primary" : ""} onClick={() => setTab("raw")}>
+            <button role="tab" aria-selected={tab === "raw"} className={tab === "raw" ? "on" : ""} onClick={() => setTab("raw")}>
               RAW
             </button>
-            <button
-              className={tab === "captions" ? "primary" : ""}
-              onClick={() => setTab("captions")}
-            >
-              Captions
+            <button role="tab" aria-selected={tab === "captions"} className={tab === "captions" ? "on" : ""} onClick={() => setTab("captions")}>
+              Captions ({detail.captions.length})
             </button>
-            <button className={tab === "audio" ? "primary" : ""} onClick={() => setTab("audio")}>
+            <button role="tab" aria-selected={tab === "audio"} className={tab === "audio" ? "on" : ""} onClick={() => setTab("audio")}>
               Audio
             </button>
-            <button
-              className={tab === "graphics" ? "primary" : ""}
-              onClick={() => setTab("graphics")}
-            >
+            <button role="tab" aria-selected={tab === "graphics"} className={tab === "graphics" ? "on" : ""} onClick={() => setTab("graphics")}>
               Graphics
             </button>
           </div>
@@ -2210,9 +2215,7 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
             value={noteBody}
             onChange={(e) => setNoteBody(e.target.value)}
           />
-          <button className="primary" onClick={() => void saveNote()}>
-            Save note
-          </button>
+          <button onClick={() => void saveNote()}>Save note</button>
           <button onClick={() => setNoteRange(null)}>Cancel</button>
         </div>
       )}

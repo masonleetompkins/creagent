@@ -1154,42 +1154,78 @@ code {
   padding: 1px 5px;
   border-radius: 5px;
 }
+.editor-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 344px;
+  gap: 14px;
+  align-items: start;
+}
+
+.editor-shell:has(.agent-col.closed) {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.editor-main {
+  min-width: 0;
+}
+
+.agent-col {
+  position: sticky;
+  top: 14px;
+  height: calc(100vh - 28px);
+}
+
 .agent-dock {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 340px;
-  max-width: 92vw;
-  z-index: 50;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 12px;
   background: var(--glass-strong);
-  border-left: 1px solid var(--line);
-  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
   backdrop-filter: blur(28px) saturate(1.4);
   -webkit-backdrop-filter: blur(28px) saturate(1.4);
 }
+
 .agent-tab {
-  position: fixed;
-  top: 40%;
-  right: 0;
-  z-index: 50;
+  width: 44px;
+  height: 100%;
   writing-mode: vertical-rl;
-  padding: 14px 8px;
+  padding: 14px 0;
   border: 1px solid var(--line);
-  border-right: none;
-  border-radius: 12px 0 0 12px;
+  border-radius: var(--r-lg);
   background: var(--glass-strong);
   color: var(--ink);
   cursor: pointer;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+
+@media (max-width: 1100px) {
+  .editor-shell,
+  .editor-shell:has(.agent-col.closed) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-col {
+    position: static;
+    height: auto;
+  }
+  .agent-dock {
+    height: auto;
+    max-height: 70vh;
+  }
+  .agent-tab {
+    width: 100%;
+    height: auto;
+    writing-mode: horizontal-tb;
+    padding: 10px;
+  }
+}
+
 .agent-head {
   display: flex;
   align-items: flex-start;
@@ -1415,11 +1451,8 @@ a.asset-chip:hover {
 .checkline input[type="text"] {
   flex: 1 1 160px;
 }
-/* Docked agent panel pushes content instead of covering it (wide screens). */
-@media (min-width: 1200px) {
-  body.has-agent-dock .content {
-    padding-right: 356px;
-  }
+.content.wide {
+  max-width: none;
 }
 /* Chat page: session rail + centered thread. */
 .chat2 {
@@ -1439,12 +1472,17 @@ a.asset-chip:hover {
 }
 .chat2-session {
   text-align: left;
-  border-radius: 12px;
-  padding: 8px 10px;
+  border-radius: var(--r-md);
+  padding: 9px 11px;
+  background: var(--glass);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 .chat2-session.on {
-  border-color: var(--accent);
-  border-width: 2px;
+  background: hsl(var(--hue) 80% 55% / 0.14);
+  border-color: var(--line);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .chat2-session .t {
   display: block;
@@ -1580,4 +1618,185 @@ a.asset-chip:hover {
   color: #fff;
   background: hsl(var(--hue) 80% 45% / 0.6);
   border-color: transparent;
+}
+
+.slot {
+  white-space: normal;
+}
+
+.slot.st-red {
+  background: rgba(209, 52, 56, 0.13);
+  border-left: 3px solid #d13438;
+}
+
+.slot.st-orange {
+  background: rgba(232, 130, 12, 0.13);
+  border-left: 3px solid #e8820c;
+}
+
+.slot.st-green {
+  background: rgba(21, 127, 61, 0.16);
+  border-left: 3px solid #2ea44f;
+}
+
+.slot.st-gray {
+  background: var(--hover);
+  border-left: 3px solid #9a9a9a;
+}
+
+.cal-dow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  padding: 2px 0 6px;
+}
+
+.chip-more {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+}
+
+.posted-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 6px 0 4px;
+  border-top: 1px dashed var(--hairline);
+  padding-top: 6px;
+}
+
+button.danger {
+  color: var(--bad);
+  border-color: rgba(255, 107, 107, 0.45);
+}
+
+button.danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.queue-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+  align-items: start;
+}
+
+.queue-layout.solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.slot-inspector {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .queue-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .slot-inspector {
+    position: static;
+    max-height: none;
+  }
+  .chat2 {
+    flex-direction: column;
+  }
+  .chat2-rail {
+    flex: none;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    position: static;
+    max-height: none;
+  }
+  .chat2-session {
+    flex: 1 1 160px;
+  }
+  .edgrid.work {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.agent-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
+
+.chat2-input textarea {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  resize: none;
+  max-height: 140px;
+  padding: 4px 10px;
+}
+
+.chat2-input textarea:focus-visible {
+  outline: none;
+}
+
+.agent-dock textarea {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  resize: none;
+  max-height: 120px;
+  padding: 4px 10px;
+}
+
+.agent-dock textarea:focus-visible {
+  outline: none;
+}
+
+.composer {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 6px;
+}
+
+.composer button {
+  flex: 0 0 auto;
+}
+.ced-thumb {
+  display: block;
+  width: 100%;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  margin-bottom: 5px;
+}
+.chat2-input textarea {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  resize: none;
+  max-height: 140px;
+  padding: 4px 10px;
+}
+.chat2-input textarea:focus-visible {
+  outline: none;
+}
+.chat2-input {
+  border-radius: var(--r-lg);
 }

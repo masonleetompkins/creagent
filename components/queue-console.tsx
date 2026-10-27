@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CONTENT_TYPES } from "@/lib/content";
+import { CONTENT_TYPES, PLATFORMS } from "@/lib/content";
 
 type Slot = {
   id: string;
@@ -91,6 +91,15 @@ async function pollJob(jobId: string): Promise<Record<string, unknown>> {
   }
 }
 
+function parsePlatforms(raw: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw || "[]") as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -115,6 +124,7 @@ export default function QueueConsole(): React.ReactNode {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [form, setForm] = useState({
     weekday: "1",
     time: "09:00",
@@ -429,34 +439,59 @@ export default function QueueConsole(): React.ReactNode {
         </button>
         <span className="spacer" />
         <div className="seg">
-          <button disabled={busy} onClick={() => setView("week")} className={view === "week" ? "on" : ""}>
+          <button onClick={() => setView("week")} className={view === "week" ? "on" : ""}>
             Week
           </button>
-          <button disabled={busy} onClick={() => setView("month")} className={view === "month" ? "on" : ""}>
+          <button onClick={() => setView("month")} className={view === "month" ? "on" : ""}>
             Month
           </button>
         </div>
-        <button disabled={busy} onClick={goPrev}>
+        <button onClick={goPrev} aria-label="Previous period">
           ←
         </button>
-        <button disabled={busy} onClick={goToday}>
+        <button onClick={goToday} aria-label="Today">
           Today
         </button>
-        <button disabled={busy} onClick={goNext}>
+        <button onClick={goNext} aria-label="Next period">
           →
         </button>
-        {view === "month" ? <strong>{monthLabel}</strong> : null}
+        {view === "month" ? (
+          <strong>{monthLabel}</strong>
+        ) : (
+          <strong>
+            {days[0].toLocaleDateString([], { month: "short", day: "numeric" })} –{" "}
+            {days[6].toLocaleDateString([], { month: "short", day: "numeric" })}
+          </strong>
+        )}
       </div>
       {busy ? <p className="muted">Working…</p> : null}
       {note ? <p className="note ok">{note}</p> : null}
       {error ? <p className="note err">{error}</p> : null}
 
-      <div className={view === "week" ? "cal" : "cal month"}>
+      {templates.length === 0 && !setupOpen ? (
+        <div className="empty">
+          <p>No posting schedule yet — the calendar is blank until Queue setup adds posting times.</p>
+          <button className="primary" onClick={() => setSetupOpen(true)}>
+            Open Queue setup
+          </button>
+        </div>
+      ) : null}
+      <div className={selected ? "queue-layout" : "queue-layout solo"}>
+      <div>
+      <div className="cal" style={{ marginBottom: 0 }}>
+        {DAYS.map((d) => (
+          <div key={d} className="cal-dow">{d}</div>
+        ))}
+      </div>
+      <div className={view === "week" ? "cal" : "cal month"} style={{ marginTop: 0 }}>
         {days.map((day) => {
           const daySlots = byDay(day);
           const dayHistory = historyByDay(day);
-          const shown = view === "week" ? daySlots : daySlots.slice(0, 3);
-          const shownHistory = view === "week" ? dayHistory : dayHistory.slice(0, 2);
+          const expanded = expandedDay === day.toISOString();
+          const slotCap = expanded ? 99 : view === "week" ? 4 : 3;
+          const histCap = expanded ? 99 : view === "week" ? 3 : 2;
+          const shown = daySlots.slice(0, slotCap);
+          const shownHistory = dayHistory.slice(0, histCap);
           const now = new Date();
           const isToday =
             day.getFullYear() === now.getFullYear() &&
@@ -471,6 +506,29 @@ export default function QueueConsole(): React.ReactNode {
                   ? `${DAYS[day.getDay()]} ${day.getMonth() + 1}/${day.getDate()}`
                   : day.getDate()}
               </div>
+              {shown.map((s) => (
+                <button
+                  key={s.id}
+                  className={`slot st-${s.status}${selected?.id === s.id ? " sel" : ""}`}
+                  onClick={() => void openSlot(s.id)}
+                >
+                  <span className={`dot d-${s.status}`} />
+                  <span className="slottime">{fmtTime(s.scheduled_at)}</span>
+                  <span className="slotmain">{typeLabel(s.content_type)}</span>
+                  {view === "week" ? (
+                    <span className="slotsub">
+                      {s.pillar_name ?? "no pillar"}
+                      {s.draft_count > 0 ? ` · ${s.draft_count} draft${s.draft_count === 1 ? "" : "s"}` : ""}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+              {shown.length < daySlots.length ? (
+                <button className="chip-more" onClick={() => setExpandedDay(day.toISOString())}>
+                  +{daySlots.length - shown.length} slots
+                </button>
+              ) : null}
+              {dayHistory.length > 0 ? <div className="posted-label">Posted</div> : null}
               {shownHistory.map((a) => {
                 const when = new Date(a.posted_at ?? a.created_at);
                 const time = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -498,43 +556,27 @@ export default function QueueConsole(): React.ReactNode {
                   </span>
                 );
               })}
-              {view === "month" && dayHistory.length > 2 ? (
-                <span className="muted">+{dayHistory.length - 2} posted</span>
-              ) : null}
-              {shown.map((s) => (
-                <button
-                  key={s.id}
-                  className={`slot st-${s.status}`}
-                  onClick={() => void openSlot(s.id)}
-                >
-                  <span className={`dot d-${s.status}`} />
-                  <span className="slottime">{fmtTime(s.scheduled_at)}</span>
-                  <span className="slotmain">{typeLabel(s.content_type)}</span>
-                  {view === "week" ? (
-                    <span className="slotsub">
-                      {s.pillar_name ?? "no pillar"}
-                      {s.draft_count > 0 ? ` · ${s.draft_count} draft${s.draft_count === 1 ? "" : "s"}` : ""}
-                    </span>
-                  ) : null}
+              {shownHistory.length < dayHistory.length ? (
+                <button className="chip-more" onClick={() => setExpandedDay(day.toISOString())}>
+                  +{dayHistory.length - shownHistory.length} posted
                 </button>
-              ))}
-              {view === "month" && daySlots.length > 3 ? (
-                <span className="muted">+{daySlots.length - 3} more</span>
               ) : null}
             </div>
           );
         })}
       </div>
 
+      </div>
       {selected ? (
-        <section className="keycard">
+        <section className="keycard slot-inspector">
           <h2>
+            {new Date(selected.scheduled_at).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} ·{" "}
             {typeLabel(selected.content_type)} · {fmtTime(selected.scheduled_at)}
             <span className={`status stext-${selected.status}`}>{selected.status}</span>
           </h2>
           <p className="muted">
             {selected.pillar_name ?? "no pillar"} ·{" "}
-            {(JSON.parse(selected.platforms || "[]") as string[]).join(", ") || "no platforms"}
+            {parsePlatforms(selected.platforms).join(", ") || "no platforms"}
           </p>
           <div className="row">
             {selected.status === "red" ? (
@@ -660,6 +702,7 @@ export default function QueueConsole(): React.ReactNode {
         </section>
       ) : null}
 
+      </div>
       {setupOpen || templates.length === 0 ? (
         <>
           <h2>Queue setup</h2>
@@ -674,10 +717,10 @@ export default function QueueConsole(): React.ReactNode {
               {DAYS[t.weekday]} {t.time}
             </strong>{" "}
             · {typeLabel(t.content_type)} · {t.pillar_name ?? "no pillar"} ·{" "}
-            {(JSON.parse(t.platforms || "[]") as string[]).join(", ") || "no platforms"}
+            {parsePlatforms(t.platforms).join(", ") || "no platforms"}
           </p>
           <div className="row">
-            <button onClick={() => void removeTemplate(t.id)}>Delete</button>
+            <button className="danger" onClick={() => void removeTemplate(t.id)}>Delete</button>
           </div>
         </section>
       ))}
@@ -696,9 +739,8 @@ export default function QueueConsole(): React.ReactNode {
             ))}
           </select>
           <input
-            type="text"
-            aria-label="Time HH:MM"
-            placeholder="09:00"
+            type="time"
+            aria-label="Posting time"
             value={form.time}
             onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))}
           />
@@ -725,14 +767,26 @@ export default function QueueConsole(): React.ReactNode {
               </option>
             ))}
           </select>
-          <input
-            type="text"
-            aria-label="Platforms"
-            placeholder="x, threads"
-            value={form.platforms}
-            onChange={(e) => setForm((f) => ({ ...f, platforms: e.target.value }))}
-          />
-          <button onClick={() => void addTemplate()}>Add</button>
+          <div className="vtab" role="group" aria-label="Platforms">
+            {PLATFORMS.map((pl) => {
+              const on = form.platforms.split(",").map((x) => x.trim()).includes(pl);
+              return (
+                <button
+                  key={pl}
+                  className={on ? "on" : ""}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const cur = form.platforms.split(",").map((x) => x.trim()).filter(Boolean);
+                    const next = on ? cur.filter((x) => x !== pl) : [...cur, pl];
+                    setForm((f) => ({ ...f, platforms: next.join(",") }));
+                  }}
+                >
+                  {pl}
+                </button>
+              );
+            })}
+          </div>
+          <button className="primary" onClick={() => void addTemplate()}>Add</button>
         </div>
       </section>
         </>

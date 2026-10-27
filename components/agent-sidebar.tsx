@@ -11,15 +11,15 @@ export default function AgentSidebar({
   kind: "carousel" | "video";
   entityId: string;
 }): React.ReactNode {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [title, setTitle] = useState(entityId);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [dirty, setDirty] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const stopRef = useRef(false);
   const storeKey = `creagent.agent.${kind}.${entityId}`;
 
   const loadMessages = useCallback(async (id: string) => {
@@ -28,6 +28,7 @@ export default function AgentSidebar({
   }, []);
 
   useEffect(() => {
+    if (window.innerWidth >= 1200) setOpen(true);
     let stored: string | null = null;
     try {
       stored = window.localStorage.getItem(storeKey);
@@ -57,13 +58,6 @@ export default function AgentSidebar({
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, open]);
 
-  useEffect(() => {
-    document.body.classList.toggle("has-agent-dock", open);
-    return () => {
-      document.body.classList.remove("has-agent-dock");
-    };
-  }, [open ]);
-
   const ensureChat = useCallback(async (): Promise<string | null> => {
     if (chatId) return chatId;
     const res = await fetch("/api/agent/chats", {
@@ -88,6 +82,7 @@ export default function AgentSidebar({
   const send = useCallback(async () => {
     if (!input.trim() || busy) return;
     setBusy(true);
+    stopRef.current = false;
     setError("");
     const text = input.trim();
     setInput("");
@@ -111,20 +106,24 @@ export default function AgentSidebar({
         return;
       }
       const { jobId } = (await res.json()) as { jobId: string };
-      for (let i = 0; i < 180; i++) {
+      for (let i = 0; i < 180 && !stopRef.current; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         await loadMessages(id);
         const poll = await fetch(`/api/jobs/${jobId}`);
         if (!poll.ok) break;
         const job = (await poll.json()) as { state: string; failedReason?: string };
-        if (job.state === "completed") break;
+        if (job.state === "completed") {
+          window.dispatchEvent(
+            new CustomEvent("creagent:agent-updated", { detail: { kind, entityId } }),
+          );
+          break;
+        }
         if (job.state === "failed") {
           setError(`agent failed: ${job.failedReason ?? "unknown"}`);
           break;
         }
       }
       await loadMessages(id);
-      setDirty(true);
     } finally {
       setBusy(false);
     }
@@ -143,72 +142,78 @@ export default function AgentSidebar({
 
   if (!open) {
     return (
-      <button className="agent-tab" onClick={() => setOpen(true)} title="Open agent sidebar">
-        ◀ Agent
-      </button>
+      <div className="agent-col closed">
+        <button className="agent-tab" onClick={() => setOpen(true)} title="Open agent panel">
+          Agent
+        </button>
+      </div>
     );
   }
 
   return (
-    <aside className="agent-dock">
-      <div className="agent-head">
-        <div>
-          <strong>Agent</strong>
-          <div className="muted agent-sub">
-            {kind}: {title}
+    <div className="agent-col">
+      <aside className="agent-dock">
+        <div className="agent-head">
+          <div>
+            <strong>Agent</strong>
+            <div className="muted agent-sub">
+              {kind}: {title}
+            </div>
+          </div>
+          <div className="row">
+            <button className="ghost sm" title="Start a fresh conversation" onClick={newConversation}>
+              New
+            </button>
+            <button className="ghost sm" title="Collapse panel" onClick={() => setOpen(false)}>
+              ✕
+            </button>
           </div>
         </div>
-        <div className="row">
-          <button title="Start a fresh conversation" onClick={newConversation}>
-            New
-          </button>
-          <button title="Reload the editor to show agent-made changes" onClick={() => window.location.reload()}>
-            Reload editor
-          </button>
-          <button title="Collapse sidebar" onClick={() => setOpen(false)}>
-            ▶
-          </button>
+        {error !== "" && <p className="note err">{error}</p>}
+        <div className="agent-thread">
+          {messages.length === 0 && (
+            <p className="muted">
+              Ask for anything — drafts, edits, trims, captions, exports. The agent works on this{" "}
+              {kind} directly, and the editor refreshes when it finishes.
+            </p>
+          )}
+          {messages.map((m) =>
+            m.role === "tool" ? (
+              <div key={m.id} className="chat-tool" title={m.content.slice(0, 500)}>
+                ⚙ {m.toolName} {m.content.startsWith('{"ok":true') ? "✓" : "✗"}
+              </div>
+            ) : (
+              <div key={m.id} className={`chat-msg ${m.role}${m.compacted ? " old" : ""}`}>
+                {(m.role === "user" ? m.content.replace(/^\[Context:.*?\] /, "") : m.content) || (
+                  <span className="muted">(working…)</span>
+                )}
+              </div>
+            ),
+          )}
+          <div ref={bottomRef} />
         </div>
-      </div>
-      {error !== "" && <p className="note err">{error}</p>}
-      {dirty && <p className="note">The agent changed this project — Reload editor to see it.</p>}
-      <div className="agent-thread">
-        {messages.length === 0 && (
-          <p className="muted">
-            Ask for anything — drafts, edits, trims, captions, exports. The agent works on this {kind}{" "}
-            directly.
-          </p>
-        )}
-        {messages.map((m) =>
-          m.role === "tool" ? (
-            <div key={m.id} className="chat-tool" title={m.content.slice(0, 500)}>
-              ⚙ {m.toolName} {m.content.startsWith('{"ok":true') ? "✓" : "✗"}
-            </div>
+        <div className="composer">
+          <textarea
+            rows={2}
+            placeholder={busy ? "Agent is working…" : `Ask the agent… (Enter sends)`}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          {busy ? (
+            <button onClick={() => (stopRef.current = true)}>Stop</button>
           ) : (
-            <div key={m.id} className={`chat-msg ${m.role}${m.compacted ? " old" : ""}`}>
-              {(m.role === "user" ? m.content.replace(/^\[Context:.*?\] /, "") : m.content) || (
-                <span className="muted">(working…)</span>
-              )}
-            </div>
-          ),
-        )}
-        <div ref={bottomRef} />
-      </div>
-      <div className="row">
-        <input
-          type="text"
-          placeholder={busy ? "Agent is working…" : `Ask the agent to edit this ${kind}…`}
-          value={input}
-          disabled={busy}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void send();
-          }}
-        />
-        <button className="primary" disabled={busy || !input.trim()} onClick={() => void send()}>
-          {busy ? "Working…" : "Send"}
-        </button>
-      </div>
-    </aside>
+            <button className="primary" disabled={!input.trim()} onClick={() => void send()}>
+              Send
+            </button>
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }

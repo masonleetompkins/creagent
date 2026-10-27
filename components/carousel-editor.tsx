@@ -105,6 +105,17 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onAgent = (e: Event): void => {
+      const d = (e as CustomEvent<{ kind?: string; entityId?: string }>).detail;
+      if (d?.kind === "carousel" && d.entityId === projectId) void load();
+    };
+    window.addEventListener("creagent:agent-updated", onAgent);
+    return () => {
+      window.removeEventListener("creagent:agent-updated", onAgent);
+    };
+  }, [load, projectId]);
+
   const current = slides[sel] ?? null;
 
   useEffect(() => {
@@ -431,23 +442,26 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         </div>
       </section>
 
-      <section className="keycard">
-        <div className="row" style={{ marginTop: 0 }}>
-          <input type="text" aria-label="Brief" placeholder="Brief (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
-          <input type="text" aria-label="Slides" placeholder="#" value={numSlides} onChange={(e) => setNumSlides(e.target.value)} style={{ flex: "0 1 64px" }} />
-          <button disabled={busy} onClick={() => void runCopyJob(false)}>Generate</button>
-          <button disabled={busy} onClick={() => void runCopyJob(true)}>Replace</button>
-          <input type="text" aria-label="Set count" placeholder="Count" value={count} onChange={(e) => setCount(e.target.value)} style={{ flex: "0 1 72px" }} />
-          <button onClick={() => void applyCount()}>Apply</button>
-          <button onClick={() => void addSlide()}>+ Slide</button>
-          <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/autopick`, {}, "Auto-picked")}>
-            Auto-pick
-          </button>
-          <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/plan-images`, {}, "Planned")}>
-            Plan images
-          </button>
-        </div>
-      </section>
+      <div className="toolbar">
+        <button className="primary" disabled={busy} onClick={() => void runCopyJob(false)}>
+          Generate copy
+        </button>
+        <button disabled={busy} onClick={() => void runCopyJob(true)}>Replace</button>
+        <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/autopick`, {}, "Auto-picked")}>
+          Auto-pick photos
+        </button>
+        <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/plan-images`, {}, "Planned")}>
+          Plan images
+        </button>
+        <span className="spacer" />
+        <button onClick={() => void addSlide()}>+ Slide</button>
+        <input type="text" aria-label="Set count" placeholder="Count" value={count} onChange={(e) => setCount(e.target.value)} style={{ flex: "0 1 64px" }} />
+        <button onClick={() => void applyCount()}>Apply</button>
+      </div>
+      <div className="row">
+        <input type="text" aria-label="Brief" placeholder="Brief for the model (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
+        <input type="text" aria-label="Slides" placeholder="# slides" value={numSlides} onChange={(e) => setNumSlides(e.target.value)} style={{ flex: "0 1 80px" }} />
+      </div>
 
       <div className="edgrid work">
         <div>
@@ -455,6 +469,14 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
           <div className="ced-slides">
             {slides.map((s, i) => (
               <button key={s.id} className={`slot ${i === sel ? "sel" : ""}`} onClick={() => setSel(i)}>
+                {s.image_path ? (
+                  <img
+                    className="ced-thumb"
+                    src={`/api/carousels/slides/${s.id}/image`}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : null}
                 <span className="slottime">{i + 1}</span>
                 <span className="slotmain">
                   [{s.layout}] {(s.heading || "(no heading)").slice(0, 28)}

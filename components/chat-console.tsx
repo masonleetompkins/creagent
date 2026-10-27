@@ -34,10 +34,15 @@ export default function ChatConsole(): React.ReactNode {
   const [compacting, setCompacting] = useState(false);
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const stopRef = useRef(false);
 
   const loadChats = useCallback(async () => {
     const res = await fetch("/api/agent/chats");
-    if (res.ok) setChats(((await res.json()) as { chats: Chat[] }).chats);
+    if (res.ok) {
+      const list = ((await res.json()) as { chats: Chat[] }).chats;
+      setChats(list);
+      setChatId((cur) => cur ?? list[0]?.id ?? null);
+    }
   }, []);
 
   const loadMessages = useCallback(async (id: string) => {
@@ -74,6 +79,7 @@ export default function ChatConsole(): React.ReactNode {
   const send = useCallback(async () => {
     if (!chatId || !input.trim() || busy) return;
     setBusy(true);
+    stopRef.current = false;
     setError("");
     const text = input.trim();
     setInput("");
@@ -92,7 +98,7 @@ export default function ChatConsole(): React.ReactNode {
         return;
       }
       const { jobId } = (await res.json()) as { jobId: string };
-      for (let i = 0; i < 120; i++) {
+      for (let i = 0; i < 120 && !stopRef.current; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         await loadMessages(chatId);
         const poll = await fetch(`/api/jobs/${jobId}`);
@@ -137,8 +143,11 @@ export default function ChatConsole(): React.ReactNode {
   return (
     <div className="chat2">
       <div className="chat2-rail">
+        <div className="muted" style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          Sessions
+        </div>
         <button className="primary" onClick={() => void newChat()}>
-          + New
+          + New session
         </button>
         {chats.map((c) => (
           <button
@@ -148,17 +157,23 @@ export default function ChatConsole(): React.ReactNode {
           >
             <span className="t">{c.title}</span>
             <span className="m">
+              {new Date(c.created_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}
               {money(c.cost_usd)} · ctx {c.ctx_pct}%
             </span>
           </button>
         ))}
-        {chats.length === 0 && <p className="muted">No sessions yet.</p>}
+        {chats.length === 0 && (
+          <div className="empty">
+            <p>No sessions yet.</p>
+            <button className="primary" onClick={() => void newChat()}>
+              + New session
+            </button>
+          </div>
+        )}
       </div>
       <div className="chat2-main">
         {error !== "" && <p className="note err">{error}</p>}
-        {!chatId && (
-          <p className="muted">Start a new session to put the agent to work.</p>
-        )}
+        {!chatId && chats.length > 0 && <p className="muted">Pick a session.</p>}
         {chatId && (
           <>
             {active && (
@@ -172,36 +187,44 @@ export default function ChatConsole(): React.ReactNode {
               </p>
             )}
             <div className="chat2-thread">
-              {messages
-                .filter((m) => m.role !== "tool")
-                .map((m) => (
-                  <div key={m.id} className={`chat-msg ${m.role}${m.compacted ? " old" : ""}`}>
-                    {m.content || <span className="muted">(working…)</span>}
-                  </div>
-                ))}
-              {messages
-                .filter((m) => m.role === "tool")
-                .map((m) => (
+              {messages.map((m) =>
+                m.role === "tool" ? (
                   <div key={m.id} className="chat-tool" title={m.content.slice(0, 500)}>
                     ⚙ {m.toolName} {m.content.startsWith('{"ok":true') ? "✓" : "✗"}
                   </div>
-                ))}
+                ) : (
+                  <div key={m.id} className={`chat-msg ${m.role}${m.compacted ? " old" : ""}`}>
+                    {m.content || <span className="muted">(working…)</span>}
+                  </div>
+                ),
+              )}
+              {messages.some((m) => m.compacted) && (
+                <p className="muted" style={{ fontSize: 11 }}>
+                  Dimmed messages were compacted into the summary above to save context.
+                </p>
+              )}
               <div ref={bottomRef} />
             </div>
             <div className="chat2-input">
-              <input
-                type="text"
-                placeholder="Ask the agent to do anything in the app…"
+              <textarea
+                rows={2}
+                placeholder="Ask the agent to do anything in the app… (Enter sends, Shift+Enter for a new line)"
                 value={input}
-                disabled={busy}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void send();
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
                 }}
               />
-              <button className="primary" disabled={busy || !input.trim()} onClick={() => void send()}>
-                {busy ? "Working…" : "Send"}
-              </button>
+              {busy ? (
+                <button onClick={() => (stopRef.current = true)}>Stop</button>
+              ) : (
+                <button className="primary" disabled={!input.trim()} onClick={() => void send()}>
+                  Send
+                </button>
+              )}
             </div>
           </>
         )}
