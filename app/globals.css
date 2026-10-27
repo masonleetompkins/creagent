@@ -2786,7 +2786,7 @@ button.ghosted {
   min-width: 132px;
 }
 
-.datefield > button.empty {
+.datefield > button.is-empty {
   color: var(--muted);
   font-weight: 500;
 }

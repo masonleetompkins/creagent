@@ -92,7 +92,7 @@ export default function DateField({
       <button
         type="button"
         aria-label={label}
-        className={value ? "" : "empty"}
+        className={value ? "" : "is-empty"}
         onClick={() => setOpen((o) => !o)}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
