@@ -21,26 +21,55 @@ export type MonidRunResult = {
   hints?: unknown;
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Retry with backoff. GETs retry on 429/5xx. POSTs retry on 429 and network
+// failures only — a 5xx on run-creation may have executed server-side, and
+// retrying would double-bill.
 async function monidRequest(
   apiKey: string,
   method: "GET" | "POST",
   path: string,
   body?: unknown,
 ): Promise<unknown> {
-  const res = await fetch(`${MONID_BASE_URL}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(60000),
-  });
-  if (!res.ok) {
+  const delays = [5000, 15000, 45000];
+  let lastError: string = "unknown error";
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${MONID_BASE_URL}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(60000),
+      });
+    } catch (error) {
+      lastError = `monid ${method} ${path}: ${(error as Error).message}`;
+      if (attempt < delays.length) {
+        await sleep(delays[attempt] as number);
+        continue;
+      }
+      throw new Error(lastError);
+    }
+    if (res.ok) return res.json() as Promise<unknown>;
     const text = await res.text().catch(() => "");
-    throw new Error(`monid ${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`);
+    lastError = `monid ${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`;
+    const retryable =
+      res.status === 429 || (method === "GET" && [502, 503, 504].includes(res.status));
+    if (!retryable || attempt >= delays.length) throw new Error(lastError);
+    const retryAfter = Number(res.headers.get("retry-after"));
+    await sleep(
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 120000)
+        : (delays[attempt] as number),
+    );
   }
-  return res.json() as Promise<unknown>;
+  throw new Error(lastError);
 }
 
 export async function monidBalance(apiKey: string): Promise<unknown> {

@@ -66,7 +66,7 @@ export default function IngestConsole(): React.ReactNode {
   const [handles, setHandles] = useState<Record<string, string>>({});
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [range, setRange] = useState<Range>({ from: "", to: "" });
-  const [deep, setDeep] = useState(false);
+  const [depth, setDepth] = useState<"quick" | "deep" | "full">("deep");
   const [urlSource, setUrlSource] = useState(URL_SOURCES[0].id);
   const [urlValue, setUrlValue] = useState("");
   const [unanalyzed, setUnanalyzed] = useState(0);
@@ -178,7 +178,7 @@ export default function IngestConsole(): React.ReactNode {
                   value: (t as { handle: string }).handle,
                   since,
                   until,
-                  maxPages: deep ? 20 : 5,
+                  maxPages: depth === "full" ? 0 : depth === "deep" ? 20 : 5,
                 },
           ),
         }),
@@ -186,15 +186,19 @@ export default function IngestConsole(): React.ReactNode {
       const jobId = started.jobId as string;
       for (;;) {
         const data = await readJson(await fetch(`/api/jobs/${jobId}`));
-        const prog = (data.progress ?? {}) as { assets?: number };
+        const prog = (data.progress ?? {}) as { assets?: number; pages?: number };
         st.attempts = typeof data.attempts === "number" ? data.attempts : 0;
         if (typeof prog.assets === "number") st.assets = prog.assets;
+        if (typeof prog.pages === "number" && prog.pages > 0) {
+          st.label = `${t.label} · p${prog.pages}`;
+        }
         setTargets((ts) => ts.map((x) => (x.key === t.key ? { ...st } : x)));
         if (data.state === "completed" || data.state === "failed") {
           if (data.state === "failed") throw new Error((data.failedReason as string) ?? `${label} failed`);
-          const res = (data.result ?? {}) as { assets?: number; duplicates?: number };
+          const res = (data.result ?? {}) as { assets?: number; duplicates?: number; pages?: number; resumed?: boolean };
           if (typeof res.assets === "number") st.assets = res.assets;
           st.state = "done";
+          st.label = `${t.label}${typeof res.pages === "number" ? ` · ${res.pages}p` : ""}${res.resumed ? " · resumed" : ""}`;
           break;
         }
         await new Promise((r) => setTimeout(r, 2000));
@@ -415,14 +419,19 @@ export default function IngestConsole(): React.ReactNode {
           <span className="muted">Blank = all time.</span>
         </div>
         <div className="row">
-          <label className="checkline-inline">
-            <input
-              type="checkbox"
-              checked={deep}
-              onChange={(e) => setDeep(e.target.checked)}
-            />
-            Deep pull (Monid: 20 pages instead of 5)
-          </label>
+          <span className="muted">Monid depth</span>
+          <div className="seg">
+            <button className={depth === "quick" ? "on" : ""} onClick={() => setDepth("quick")} title="5 pages, fastest">
+              Quick
+            </button>
+            <button className={depth === "deep" ? "on" : ""} onClick={() => setDepth("deep")} title="20 pages">
+              Deep
+            </button>
+            <button className={depth === "full" ? "on" : ""} onClick={() => setDepth("full")} title="Every page to exhaustion, ~$0.002/page. Resumes where it stopped.">
+              Full history
+            </button>
+          </div>
+          <span className="muted">Full history walks every page (~$0.002/page) and resumes where it stopped.</span>
         </div>
         <div className="row">
           <button className="primary" disabled={busy} onClick={() => void ingestAndAnalyze()}>

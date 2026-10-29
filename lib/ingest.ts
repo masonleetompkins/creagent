@@ -1,7 +1,7 @@
 // Content ingest: Monid endpoint registry, response normalization, asset writes.
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { getDb, nowIso } from "./db";
+import { clearSyncState, getDb, getSyncState, nowIso, setSyncState } from "./db";
 import { loadKeys } from "./keys";
 import { monidRunAndWait } from "./monid";
 import { zernioAccountPosts, zernioAccounts } from "./zernio";
@@ -284,6 +284,7 @@ export type IngestResult = {
   skipped: number;
   duplicates: number;
   costs: unknown[];
+  resumed: boolean;
 };
 
 type AssetInput = {
@@ -373,7 +374,7 @@ const MAX_PAGES = 5;
 export async function runIngest(
   source: IngestSource,
   value: string,
-  onProgress?: (assets: number) => Promise<void> | void,
+  onProgress?: (assets: number, pages: number) => Promise<void> | void,
   window?: IngestWindow,
   maxPages = MAX_PAGES,
 ): Promise<IngestResult> {
@@ -383,13 +384,36 @@ export async function runIngest(
   const sinceMs = window?.since ? Date.parse(window.since) : Number.NaN;
   const untilMs = window?.until ? Date.parse(window.until) : Number.NaN;
   const db = getDb();
+  // Resume: continue from the saved cursor when the window matches, so a
+  // full-history pull survives rate limits, restarts, and the page cap.
+  // maxPages <= 0 means "to exhaustion" (safety cap 500/run — rerun to go on).
+  const cap = maxPages <= 0 ? 500 : Math.max(1, Math.min(maxPages, 500));
+  const cursorKey = `ingest_cursor:${source}:${value.trim().toLowerCase()}`;
   let cursor: string | null = null;
+  let resumed = false;
+  try {
+    const saved = JSON.parse(getSyncState(cursorKey) ?? "null") as {
+      cursor?: string;
+      since?: string;
+      until?: string;
+    } | null;
+    if (
+      saved?.cursor &&
+      (saved.since ?? undefined) === (window?.since ?? undefined) &&
+      (saved.until ?? undefined) === (window?.until ?? undefined)
+    ) {
+      cursor = saved.cursor;
+      resumed = true;
+    }
+  } catch {
+    /* start fresh */
+  }
   let assets = 0;
   let pages = 0;
   let skipped = 0;
   let duplicates = 0;
   const costs: unknown[] = [];
-  for (let page = 0; page < Math.max(1, Math.min(maxPages, 50)); page++) {
+  for (let page = 0; page < cap; page++) {
     const body: Record<string, string> =
       def.inputKind === "handle"
         ? { handle: value.replace(/^@/, "").trim() }
@@ -447,14 +471,19 @@ export async function runIngest(
       else assets++;
     }
     pages++;
-    if (onProgress) await onProgress(assets);
+    if (onProgress) await onProgress(assets, pages);
     // Handle feeds arrive newest-first: once a whole page predates the
     // window, deeper pages only cost money.
     if (!Number.isNaN(sinceMs) && pageDated > 0 && pageOlderThanSince === pageDated) break;
     cursor = def.inputKind === "handle" ? findCursor(payload) : null;
+    if (cursor) {
+      setSyncState(cursorKey, JSON.stringify({ cursor, since: window?.since, until: window?.until }));
+    } else {
+      clearSyncState(cursorKey);
+    }
     if (!cursor) break;
   }
-  return { assets, pages, skipped, duplicates, costs };
+  return { assets, pages, skipped, duplicates, costs, resumed };
 }
 
 export type ZernioIngestResult = {

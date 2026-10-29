@@ -38,7 +38,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       value: value.trim(),
       since: typeof since === "string" ? since : undefined,
       until: typeof until === "string" ? until : undefined,
-      maxPages: typeof maxPages === "number" ? Math.max(1, Math.min(Math.round(maxPages), 50)) : undefined,
+      maxPages:
+        typeof maxPages === "number" ? Math.max(0, Math.min(Math.round(maxPages), 500)) : undefined,
     });
     return NextResponse.json({ jobId });
   } catch (error) {

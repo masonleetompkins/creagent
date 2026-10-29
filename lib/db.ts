@@ -31,6 +31,26 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+export function getSyncState(key: string): string | null {
+  const row = getDb().prepare(`SELECT value FROM sync_state WHERE key = ?`).get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+export function setSyncState(key: string, value: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .run(key, value, nowIso());
+}
+
+export function clearSyncState(key: string): void {
+  getDb().prepare(`DELETE FROM sync_state WHERE key = ?`).run(key);
+}
+
 export function checkDb(): { ok: boolean; error?: string } {
   try {
     getDb()
