@@ -2,16 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import DateField from "./date-field";
+import PlatformIcon from "./platform-icon";
 
 const PLATFORMS = [
-  { id: "x_posts", label: "X", source: "x_posts" },
-  { id: "tiktok_videos", label: "TikTok", source: "tiktok_videos" },
-  { id: "instagram_posts", label: "Instagram", source: "instagram_posts" },
+  { id: "x_posts", label: "X", source: "x_posts", icon: "x" },
+  { id: "tiktok_videos", label: "TikTok", source: "tiktok_videos", icon: "tiktok" },
+  { id: "instagram_posts", label: "Instagram", source: "instagram_posts", icon: "instagram" },
 ];
 
 const URL_SOURCES = [
-  { id: "youtube_transcript", label: "YouTube transcript by URL" },
-  { id: "instagram_reel", label: "Instagram reel transcript by URL" },
+  { id: "youtube_transcript", label: "YouTube", icon: "youtube" },
+  { id: "instagram_reel", label: "Instagram reel", icon: "instagram" },
 ];
 
 const HANDLE_KEY = "creagent.ingest.handles";
@@ -20,11 +21,12 @@ const RANGE_KEY = "creagent.ingest.range";
 type Account = { id: string; platform: string; username: string };
 type Range = { from: string; to: string };
 type Target =
-  | { kind: "zernio"; key: string; label: string; accountId: string }
-  | { kind: "monid"; key: string; label: string; source: string; handle: string };
+  | { kind: "zernio"; key: string; label: string; icon: string; accountId: string }
+  | { kind: "monid"; key: string; label: string; icon: string; source: string; handle: string };
 type TargetState = {
   key: string;
   label: string;
+  icon: string;
   state: "pending" | "running" | "done" | "failed";
   assets: number;
   dupes: number;
@@ -66,7 +68,6 @@ export default function IngestConsole(): React.ReactNode {
   const [accountsOn, setAccountsOn] = useState<Record<string, boolean>>({});
   const [accountsNote, setAccountsNote] = useState<string | null>(null);
   const [handles, setHandles] = useState<Record<string, string>>({});
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [range, setRange] = useState<Range>({ from: "", to: "" });
   const [depth, setDepth] = useState<"quick" | "deep" | "full">("deep");
   const [urlSource, setUrlSource] = useState(URL_SOURCES[0].id);
@@ -156,13 +157,26 @@ export default function IngestConsole(): React.ReactNode {
     const out: Target[] = [];
     for (const a of accounts) {
       if (accountsOn[a.id]) {
-        out.push({ kind: "zernio", key: `z:${a.id}`, label: `${a.platform} · ${a.username}`, accountId: a.id });
+        out.push({
+          kind: "zernio",
+          key: `z:${a.id}`,
+          label: `@${a.username || a.platform}`,
+          icon: a.platform,
+          accountId: a.id,
+        });
       }
     }
     for (const p of PLATFORMS) {
       const handle = (handles[p.id] ?? "").replace(/^@/, "").trim();
-      if (checked[p.id] && handle) {
-        out.push({ kind: "monid", key: `m:${p.id}`, label: `${p.label} @${handle}`, source: p.source, handle });
+      if (handle) {
+        out.push({
+          kind: "monid",
+          key: `m:${p.id}`,
+          label: `@${handle}`,
+          icon: p.icon,
+          source: p.source,
+          handle,
+        });
       }
     }
     return out;
@@ -178,6 +192,7 @@ export default function IngestConsole(): React.ReactNode {
     const st: TargetState = {
       key: t.key,
       label: t.label,
+      icon: t.icon,
       state: "running",
       assets: 0,
       dupes: 0,
@@ -260,6 +275,7 @@ export default function IngestConsole(): React.ReactNode {
       batch.map((t) => ({
         key: t.key,
         label: t.label,
+        icon: t.icon,
         state: "pending" as const,
         assets: 0,
         dupes: 0,
@@ -435,60 +451,97 @@ export default function IngestConsole(): React.ReactNode {
 
   const failedCount = targets.filter((t) => t.state === "failed").length;
   const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const selectedCount = selectedTargets().length;
+  const urlEntry = URL_SOURCES.find((s) => s.id === urlSource) ?? URL_SOURCES[0];
 
   return (
     <>
-      <section className="keycard">
-        <h2>Connected accounts (Zernio, auto-detected)</h2>
-        <p className="muted">
-          Your connected accounts: posts plus engagement, free. Best for recent history and
-          analytics — Zernio returns the 25 most recent posts per account. For older history,
-          add a Monid deep pull; duplicates across the two are merged into one entry.
-        </p>
-        {accountsNote ? <p className="muted">{accountsNote}</p> : null}
-        <div className="ppills">
-          {accounts.map((a) => (
-            <button
-              key={a.id}
-              className={accountsOn[a.id] ? "on" : ""}
-              title={`${a.platform} · ${a.username}`}
-              onClick={() => setAccountsOn((c) => ({ ...c, [a.id]: !c[a.id] }))}
-            >
-              {a.platform} · {a.username}
-            </button>
-          ))}
+      <section className="keycard ingest">
+        <div className="ingest-head">
+          <h2>Sources</h2>
+          <span className="muted">
+            {selectedCount === 0 ? "nothing selected" : `${selectedCount} selected`}
+          </span>
         </div>
-        <h2>Manual handles (Monid)</h2>
-        <p className="muted">
-          Public scraping by handle: transcripts and captions without connecting anything.
-          Costs credits per run. Use it for accounts you cannot connect.
-        </p>
-        <div className="ppills">
-          {PLATFORMS.map((p) => (
-            <button
-              key={p.id}
-              className={checked[p.id] ? "on" : ""}
-              onClick={() => setChecked((c) => ({ ...c, [p.id]: !c[p.id] }))}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {PLATFORMS.filter((p) => checked[p.id]).map((p) => (
-          <div className="target-row" key={p.id}>
-            <input
-              type="text"
-              spellCheck={false}
-              aria-label={`${p.label} handle`}
-              placeholder={`${p.label} username (no @)`}
-              value={handles[p.id] ?? ""}
-              onChange={(e) => setHandle(p.id, e.target.value)}
-            />
+        <div className="src-group">
+          <div className="src-group-head">
+            <span className="prov">Zernio</span>
+            <span className="muted">Connected · 25 recent posts · free</span>
           </div>
-        ))}
-        <div className="target-row">
-          <span className="muted">Date range</span>
-          <span className="range-inline">
+          {accountsNote ? <p className="muted src-note">{accountsNote}</p> : null}
+          <div className="src-rows">
+            {accounts.map((a) => (
+              <button
+                key={a.id}
+                className={`src-row${accountsOn[a.id] ? " on" : ""}`}
+                title={`${a.platform} · ${a.username} — click to ${accountsOn[a.id] ? "exclude" : "include"}`}
+                onClick={() => setAccountsOn((c) => ({ ...c, [a.id]: !c[a.id] }))}
+              >
+                <PlatformIcon platform={a.platform} />
+                <span className="src-name">@{a.username || a.platform}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="src-group">
+          <div className="src-group-head">
+            <span className="prov">Monid</span>
+            <span className="muted">By handle · full history · ~$0.002/page</span>
+          </div>
+          <div className="src-rows">
+            {PLATFORMS.map((p) => (
+              <label
+                key={p.id}
+                className={`src-row${(handles[p.id] ?? "").trim() ? " on" : ""}`}
+                title={`${p.label} — type a handle to include it`}
+              >
+                <PlatformIcon platform={p.icon} />
+                <input
+                  type="text"
+                  spellCheck={false}
+                  aria-label={`${p.label} handle`}
+                  placeholder={`@${p.label} handle`}
+                  value={handles[p.id] ?? ""}
+                  onChange={(e) => setHandle(p.id, e.target.value)}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="src-group">
+          <div className="src-group-head">
+            <span className="prov">Link</span>
+            <span className="muted">One-off transcript from a pasted URL</span>
+          </div>
+          <div className="src-rows src-rows-wide">
+            <div className="src-row static">
+              <PlatformIcon platform={urlEntry.icon} />
+              <select
+                value={urlSource}
+                onChange={(e) => setUrlSource(e.target.value)}
+                aria-label="URL source type"
+              >
+                {URL_SOURCES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                spellCheck={false}
+                placeholder="https://…"
+                value={urlValue}
+                onChange={(e) => setUrlValue(e.target.value)}
+              />
+              <button className="sm" disabled={busy || !urlValue.trim()} onClick={() => void ingestUrl()}>
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="ingest-opts">
+          <span className="range-inline" title="Date range — blank = all time">
             <DateField
               label="From date"
               placeholder="From"
@@ -503,11 +556,7 @@ export default function IngestConsole(): React.ReactNode {
               onChange={(to) => updateRange({ to })}
             />
           </span>
-          <span className="muted">Blank = all time.</span>
-        </div>
-        <div className="row">
-          <span className="muted">Monid depth</span>
-          <div className="seg">
+          <div className="seg" title="Monid depth">
             <button className={depth === "quick" ? "on" : ""} onClick={() => setDepth("quick")} title="5 pages, fastest">
               Quick
             </button>
@@ -515,24 +564,23 @@ export default function IngestConsole(): React.ReactNode {
               Deep
             </button>
             <button className={depth === "full" ? "on" : ""} onClick={() => setDepth("full")} title="Every page to exhaustion, ~$0.002/page. Resumes where it stopped.">
-              Full history
+              Full
             </button>
           </div>
-          <span className="muted">Full history walks every page (~$0.002/page) and resumes where it stopped.</span>
-        </div>
-        <div className="row">
-          <button className="primary" disabled={busy} onClick={() => void ingestAndAnalyze()}>
-            {busy ? "Working…" : "Ingest & analyze"}
-          </button>
-          <button disabled={busy || failedCount === 0} onClick={() => void retryFailed()}>
-            Retry failed ({failedCount})
-          </button>
-          <button disabled={busy || unanalyzed === 0} onClick={() => void analyzeOnly()}>
-            Analyze unanalyzed ({unanalyzed})
-          </button>
+          <span className="ingest-actions">
+            <button className="primary" disabled={busy} onClick={() => void ingestAndAnalyze()}>
+              {busy ? "Working…" : "Ingest & analyze"}
+            </button>
+            <button disabled={busy || failedCount === 0} title="Retry failed targets" onClick={() => void retryFailed()}>
+              Retry ({failedCount})
+            </button>
+            <button disabled={busy || unanalyzed === 0} title="Analyze assets missing analysis" onClick={() => void analyzeOnly()}>
+              Analyze ({unanalyzed})
+            </button>
+          </span>
         </div>
         {progress && (
-          <div className="progress-wrap">
+          <div className="progress-wrap slim">
             <div className="progress-bar">
               <div className="progress-fill" style={{ width: `${pct}%` }} />
             </div>
@@ -546,6 +594,7 @@ export default function IngestConsole(): React.ReactNode {
             {targets.map((t) => (
               <div key={t.key} className={`target-result ${t.state}`}>
                 <span className="t-dot" aria-hidden="true" />
+                <PlatformIcon platform={t.icon} size={13} />
                 <span className="t-label">{t.label}</span>
                 <span className="muted">
                   {t.state === "done" &&
@@ -563,36 +612,36 @@ export default function IngestConsole(): React.ReactNode {
         {error ? <p className="note err">{error}</p> : null}
       </section>
 
-      <section className="keycard">
-        <h2>Video speech transcripts</h2>
-        <p className="muted">
-          Post listings carry captions; this backfills what&apos;s actually said, per video, via
-          Monid (~$0.002–$0.02 per video depending on length). Progress saves after every video —
-          re-run anytime to resume.
-        </p>
-        <div className="row">
-          <span className="muted">
-            {estimate
-              ? `${estimate.total} videos missing transcripts · est. $${estimate.lo.toFixed(2)}–$${estimate.hi.toFixed(2)}`
-              : "Counting videos…"}
-          </span>
-          <select
-            value={tBatch}
-            onChange={(e) => setTBatch(Number(e.target.value))}
-            aria-label="Transcripts per run"
+      <section className="keycard ingest">
+        <div className="ingest-head">
+          <h2>Transcripts</h2>
+          <span
+            className="muted"
+            title="Post listings carry captions; this backfills what's actually said (~$0.002–$0.02 per video). Progress saves after every video — re-run anytime to resume."
           >
-            {[25, 100, 250, 500].map((n) => (
-              <option key={n} value={n}>
-                {n} per run
-              </option>
-            ))}
-          </select>
-          <button disabled={tBusy || !estimate || estimate.total === 0} onClick={() => void runTranscripts()}>
-            {tBusy ? "Transcribing…" : "Backfill transcripts"}
-          </button>
+            {estimate
+              ? `${estimate.total} missing · ~$${estimate.lo.toFixed(2)}–$${estimate.hi.toFixed(2)}`
+              : "Counting…"}
+          </span>
+          <span className="ingest-head-actions">
+            <select
+              value={tBatch}
+              onChange={(e) => setTBatch(Number(e.target.value))}
+              aria-label="Transcripts per run"
+            >
+              {[25, 100, 250, 500].map((n) => (
+                <option key={n} value={n}>
+                  {n} per run
+                </option>
+              ))}
+            </select>
+            <button disabled={tBusy || !estimate || estimate.total === 0} onClick={() => void runTranscripts()}>
+              {tBusy ? "Transcribing…" : "Backfill"}
+            </button>
+          </span>
         </div>
         {tProgress && (
-          <div className="progress-wrap">
+          <div className="progress-wrap slim">
             <div className="progress-bar">
               <div
                 className="progress-fill"
@@ -605,33 +654,6 @@ export default function IngestConsole(): React.ReactNode {
           </div>
         )}
         {tPhase ? <p className="note ok">{tPhase}</p> : null}
-      </section>
-
-      <section className="keycard">
-        <h2>Single URL</h2>
-        <div className="row">
-          <select
-            value={urlSource}
-            onChange={(e) => setUrlSource(e.target.value)}
-            aria-label="URL source type"
-          >
-            {URL_SOURCES.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            spellCheck={false}
-            placeholder="https://…"
-            value={urlValue}
-            onChange={(e) => setUrlValue(e.target.value)}
-          />
-          <button disabled={busy || !urlValue.trim()} onClick={() => void ingestUrl()}>
-            Ingest
-          </button>
-        </div>
       </section>
     </>
   );
