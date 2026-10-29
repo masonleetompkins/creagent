@@ -27,8 +27,10 @@ type TargetState = {
   label: string;
   state: "pending" | "running" | "done" | "failed";
   assets: number;
+  dupes: number;
   attempts: number;
   error: string | null;
+  note: string | null;
   rateLimited: boolean;
 };
 
@@ -178,8 +180,10 @@ export default function IngestConsole(): React.ReactNode {
       label: t.label,
       state: "running",
       assets: 0,
+      dupes: 0,
       attempts: 0,
       error: null,
+      note: null,
       rateLimited: false,
     };
     setTargets((ts) => ts.map((x) => (x.key === t.key ? st : x)));
@@ -205,19 +209,33 @@ export default function IngestConsole(): React.ReactNode {
       const jobId = started.jobId as string;
       for (;;) {
         const data = await readJson(await fetch(`/api/jobs/${jobId}`));
-        const prog = (data.progress ?? {}) as { assets?: number; pages?: number };
+        const prog = (data.progress ?? {}) as {
+          assets?: number;
+          pages?: number;
+          duplicates?: number;
+        };
         st.attempts = typeof data.attempts === "number" ? data.attempts : 0;
         if (typeof prog.assets === "number") st.assets = prog.assets;
+        if (typeof prog.duplicates === "number") st.dupes = prog.duplicates;
         if (typeof prog.pages === "number" && prog.pages > 0) {
           st.label = `${t.label} · p${prog.pages}`;
         }
         setTargets((ts) => ts.map((x) => (x.key === t.key ? { ...st } : x)));
         if (data.state === "completed" || data.state === "failed") {
           if (data.state === "failed") throw new Error((data.failedReason as string) ?? `${label} failed`);
-          const res = (data.result ?? {}) as { assets?: number; duplicates?: number; pages?: number; resumed?: boolean };
+          const res = (data.result ?? {}) as {
+            assets?: number;
+            duplicates?: number;
+            pages?: number;
+            resumed?: boolean;
+            stalled?: boolean;
+            stopReason?: string;
+          };
           if (typeof res.assets === "number") st.assets = res.assets;
+          if (typeof res.duplicates === "number") st.dupes = res.duplicates;
           st.state = "done";
-          st.label = `${t.label}${typeof res.pages === "number" ? ` · ${res.pages}p` : ""}${res.resumed ? " · resumed" : ""}`;
+          st.label = `${t.label}${typeof res.pages === "number" ? ` · ${res.pages}p` : ""}${res.resumed ? " · resumed" : ""}${res.stalled ? " · stalled" : ""}`;
+          st.note = typeof res.stopReason === "string" && res.stopReason ? res.stopReason : null;
           break;
         }
         await new Promise((r) => setTimeout(r, 2000));
@@ -244,8 +262,10 @@ export default function IngestConsole(): React.ReactNode {
         label: t.label,
         state: "pending" as const,
         assets: 0,
+        dupes: 0,
         attempts: 0,
         error: null,
+        note: null,
         rateLimited: false,
       })),
     );
@@ -528,8 +548,10 @@ export default function IngestConsole(): React.ReactNode {
                 <span className="t-dot" aria-hidden="true" />
                 <span className="t-label">{t.label}</span>
                 <span className="muted">
-                  {t.state === "done" && (t.assets > 0 ? `${t.assets} new` : "0 new — source returned nothing")}
-                  {t.state === "running" && `${t.assets} so far${t.attempts > 0 ? ` · retry ${t.attempts}` : ""}`}
+                  {t.state === "done" &&
+                    `${t.assets > 0 ? `${t.assets} new` : "0 new"}${t.dupes > 0 ? ` · ${t.dupes} dupes` : ""}${t.note ? ` — ${t.note}` : t.assets === 0 ? " — source returned nothing" : ""}`}
+                  {t.state === "running" &&
+                    `${t.assets} so far${t.dupes > 0 ? ` · ${t.dupes} dupes` : ""}${t.attempts > 0 ? ` · retry ${t.attempts}` : ""}`}
                   {t.state === "pending" && "waiting"}
                   {t.state === "failed" && (t.rateLimited ? "rate limited — retry" : t.error)}
                 </span>

@@ -300,7 +300,30 @@ export type IngestResult = {
   duplicates: number;
   costs: unknown[];
   resumed: boolean;
+  stalled: boolean;
+  stopReason: string | null;
 };
+
+// Pages cost money, so the loop must stop when the provider stops yielding
+// new posts — not just when the cursor runs out. Pure state machine over
+// (new-per-page, response cursor) so it can be unit-tested without Monid.
+export const STALL_PAGE_LIMIT = 5;
+
+export class IngestPager {
+  private stallPages = 0;
+  private seenCursors = new Set<string>();
+
+  notePage(pageNew: number, cursor: string | null): { stop: "stalled" | "loop" | null } {
+    if (pageNew > 0) this.stallPages = 0;
+    else this.stallPages++;
+    if (this.stallPages >= STALL_PAGE_LIMIT) return { stop: "stalled" };
+    if (cursor) {
+      if (this.seenCursors.has(cursor)) return { stop: "loop" };
+      this.seenCursors.add(cursor);
+    }
+    return { stop: null };
+  }
+}
 
 type AssetInput = {
   source: string;
@@ -397,7 +420,11 @@ const MAX_PAGES = 5;
 export async function runIngest(
   source: IngestSource,
   value: string,
-  onProgress?: (assets: number, pages: number) => Promise<void> | void,
+  onProgress?: (
+    assets: number,
+    pages: number,
+    info?: { duplicates: number; skipped: number },
+  ) => Promise<void> | void,
   window?: IngestWindow,
   maxPages = MAX_PAGES,
 ): Promise<IngestResult> {
@@ -435,7 +462,11 @@ export async function runIngest(
   let pages = 0;
   let skipped = 0;
   let duplicates = 0;
+  let stalled = false;
+  let stopReason: string | null = null;
   const costs: unknown[] = [];
+  const pager = new IngestPager();
+  let brokeEarly = false;
   for (let page = 0; page < cap; page++) {
     const body: Record<string, string> =
       def.inputKind === "handle"
@@ -465,6 +496,7 @@ export async function runIngest(
     if (!result) throw new Error(lastError ?? "monid returned no usable payload");
     const payload = runPayload(result);
     const items = findItems(payload);
+    const assetsBeforePage = assets;
     let pageDated = 0;
     let pageOlderThanSince = 0;
     for (const item of items) {
@@ -497,19 +529,41 @@ export async function runIngest(
       else assets++;
     }
     pages++;
-    if (onProgress) await onProgress(assets, pages);
+    if (onProgress) await onProgress(assets, pages, { duplicates, skipped });
     // Handle feeds arrive newest-first: once a whole page predates the
     // window, deeper pages only cost money.
-    if (!Number.isNaN(sinceMs) && pageDated > 0 && pageOlderThanSince === pageDated) break;
+    if (!Number.isNaN(sinceMs) && pageDated > 0 && pageOlderThanSince === pageDated) {
+      brokeEarly = true;
+      break;
+    }
     cursor = def.inputKind === "handle" ? findCursor(payload) : null;
+    const { stop } = pager.notePage(assets - assetsBeforePage, cursor);
+    if (stop) {
+      // A stall/loop means deeper pages only cost money: treat history as
+      // exhausted so reruns start clean instead of resuming into the loop.
+      stalled = true;
+      stopReason =
+        stop === "loop"
+          ? `Monid returned the same page cursor twice — history exhausted at page ${pages}`
+          : `no new posts in the last ${STALL_PAGE_LIMIT} pages (provider is repeating history) — stopped at page ${pages} to save credits`;
+      clearSyncState(cursorKey);
+      brokeEarly = true;
+      break;
+    }
     if (cursor) {
       setSyncState(cursorKey, JSON.stringify({ cursor, since: window?.since, until: window?.until }));
     } else {
       clearSyncState(cursorKey);
     }
-    if (!cursor) break;
+    if (!cursor) {
+      brokeEarly = true;
+      break;
+    }
   }
-  return { assets, pages, skipped, duplicates, costs, resumed };
+  if (!brokeEarly) {
+    stopReason = `hit the ${cap}-page safety cap with more history remaining — re-run to continue from the saved cursor`;
+  }
+  return { assets, pages, skipped, duplicates, costs, resumed, stalled, stopReason };
 }
 
 export type ZernioIngestResult = {

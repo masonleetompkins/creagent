@@ -85,6 +85,37 @@ describe("normalizeUrl + detectReply + storeAsset", () => {
   });
 });
 
+describe("IngestPager", () => {
+  it("stops after 5 straight pages with nothing new, resets on new posts", async () => {
+    const { IngestPager } = await import("../lib/ingest");
+    const pager = new IngestPager();
+    for (let i = 0; i < 4; i++) {
+      assert.deepEqual(pager.notePage(0, `c${i}`), { stop: null });
+    }
+    assert.deepEqual(pager.notePage(3, "c4"), { stop: null });
+    for (let i = 5; i < 9; i++) {
+      assert.deepEqual(pager.notePage(0, `c${i}`), { stop: null });
+    }
+    assert.deepEqual(pager.notePage(0, "c9"), { stop: "stalled" });
+  });
+
+  it("stops when the provider repeats a cursor", async () => {
+    const { IngestPager } = await import("../lib/ingest");
+    const pager = new IngestPager();
+    assert.deepEqual(pager.notePage(10, "c1"), { stop: null });
+    assert.deepEqual(pager.notePage(10, "c1"), { stop: "loop" });
+  });
+
+  it("tolerates missing cursors and counts empty pages as stalls", async () => {
+    const { IngestPager } = await import("../lib/ingest");
+    const pager = new IngestPager();
+    for (let i = 0; i < 4; i++) {
+      assert.deepEqual(pager.notePage(0, null), { stop: null });
+    }
+    assert.deepEqual(pager.notePage(0, null), { stop: "stalled" });
+  });
+});
+
 describe("runMigrations", () => {
   it("is idempotent and reports nothing newly applied", async () => {
     const { runMigrations } = await import("../scripts/migrate");

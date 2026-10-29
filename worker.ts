@@ -42,8 +42,8 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return runIngest(
       source,
       value,
-      (assets, pages) => {
-        updateProgress(job.id, { assets, pages });
+      (assets, pages, info) => {
+        updateProgress(job.id, { assets, pages, ...info });
       },
       {
         since: typeof since === "string" ? since : undefined,
