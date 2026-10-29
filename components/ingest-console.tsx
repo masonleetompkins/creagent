@@ -75,6 +75,11 @@ export default function IngestConsole(): React.ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [targets, setTargets] = useState<TargetState[]>([]);
   const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
+  const [estimate, setEstimate] = useState<{ total: number; lo: number; hi: number } | null>(null);
+  const [tBusy, setTBusy] = useState(false);
+  const [tBatch, setTBatch] = useState(100);
+  const [tProgress, setTProgress] = useState<{ done: number; total: number; spent: number } | null>(null);
+  const [tPhase, setTPhase] = useState<string | null>(null);
 
   const refreshCounts = useCallback(async () => {
     try {
@@ -86,10 +91,24 @@ export default function IngestConsole(): React.ReactNode {
     }
   }, []);
 
+  const refreshEstimate = useCallback(async () => {
+    try {
+      const data = await readJson(await fetch("/api/transcripts/estimate"));
+      setEstimate({
+        total: data.total as number,
+        lo: data.lo as number,
+        hi: data.hi as number,
+      });
+    } catch {
+      /* estimate unavailable */
+    }
+  }, []);
+
   useEffect(() => {
     setHandles(loadJson(HANDLE_KEY));
     setRange(loadRange());
     void refreshCounts();
+    void refreshEstimate();
     fetch("/api/zernio/accounts")
       .then(async (res) => {
         const data = (await res.json()) as { accounts?: Account[]; error?: string };
@@ -105,7 +124,7 @@ export default function IngestConsole(): React.ReactNode {
         if (list.length === 0) setAccountsNote("No connected Zernio accounts found.");
       })
       .catch((e) => setAccountsNote((e as Error).message));
-  }, [refreshCounts]);
+  }, [refreshCounts, refreshEstimate]);
 
   function setHandle(id: string, value: string): void {
     setHandles((h) => {
@@ -316,6 +335,54 @@ export default function IngestConsole(): React.ReactNode {
     }
   }
 
+  async function runTranscripts(): Promise<void> {
+    setTBusy(true);
+    setTPhase(null);
+    setTProgress({ done: 0, total: estimate?.total ?? 0, spent: 0 });
+    try {
+      const started = await readJson(
+        await fetch("/api/transcripts/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ batch: tBatch }),
+        }),
+      );
+      for (;;) {
+        const data = await readJson(await fetch(`/api/jobs/${started.jobId as string}`));
+        const prog = (data.progress ?? {}) as { done?: number; total?: number; spent?: number };
+        setTProgress((p) => ({
+          done: typeof prog.done === "number" ? prog.done : p?.done ?? 0,
+          total: typeof prog.total === "number" && prog.total > 0 ? prog.total : p?.total ?? 0,
+          spent: typeof prog.spent === "number" ? prog.spent : p?.spent ?? 0,
+        }));
+        if (data.state === "completed" || data.state === "failed") {
+          if (data.state === "failed") throw new Error((data.failedReason as string) ?? "transcribe failed");
+          const res = (data.result ?? {}) as {
+            done?: number;
+            failed?: number;
+            skipped?: number;
+            spent?: number;
+            remaining?: number;
+            failures?: { asset: string; error: string }[];
+          };
+          setTPhase(
+            `Transcribed ${res.done ?? 0}${res.skipped ? `, skipped ${res.skipped} (unavailable)` : ""} — $${(res.spent ?? 0).toFixed(2)} spent, ${res.remaining ?? 0} remaining.` +
+              (res.failed
+                ? ` ${res.failed} failed (${res.failures?.[0]?.error ?? "unknown"}) — re-run to retry.`
+                : ""),
+          );
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      await refreshEstimate();
+    } catch (e) {
+      setTPhase(`Failed: ${(e as Error).message}`);
+    } finally {
+      setTBusy(false);
+    }
+  }
+
   async function analyzeOnly(): Promise<void> {
     setBusy(true);
     setError(null);
@@ -472,6 +539,50 @@ export default function IngestConsole(): React.ReactNode {
         )}
         {phase ? <p className="note ok">{phase}</p> : null}
         {error ? <p className="note err">{error}</p> : null}
+      </section>
+
+      <section className="keycard">
+        <h2>Video speech transcripts</h2>
+        <p className="muted">
+          Post listings carry captions; this backfills what&apos;s actually said, per video, via
+          Monid (~$0.002–$0.02 per video depending on length). Progress saves after every video —
+          re-run anytime to resume.
+        </p>
+        <div className="row">
+          <span className="muted">
+            {estimate
+              ? `${estimate.total} videos missing transcripts · est. $${estimate.lo.toFixed(2)}–$${estimate.hi.toFixed(2)}`
+              : "Counting videos…"}
+          </span>
+          <select
+            value={tBatch}
+            onChange={(e) => setTBatch(Number(e.target.value))}
+            aria-label="Transcripts per run"
+          >
+            {[25, 100, 250, 500].map((n) => (
+              <option key={n} value={n}>
+                {n} per run
+              </option>
+            ))}
+          </select>
+          <button disabled={tBusy || !estimate || estimate.total === 0} onClick={() => void runTranscripts()}>
+            {tBusy ? "Transcribing…" : "Backfill transcripts"}
+          </button>
+        </div>
+        {tProgress && (
+          <div className="progress-wrap">
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{ width: tProgress.total > 0 ? `${Math.round((tProgress.done / tProgress.total) * 100)}%` : "0%" }}
+              />
+            </div>
+            <p className="muted">
+              {tProgress.done}/{tProgress.total} · ${tProgress.spent.toFixed(2)} spent
+            </p>
+          </div>
+        )}
+        {tPhase ? <p className="note ok">{tPhase}</p> : null}
       </section>
 
       <section className="keycard">

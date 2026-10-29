@@ -15,6 +15,7 @@ import { runExport } from "./lib/export";
 import { runMetricsSync } from "./lib/metrics";
 import { runPlanner } from "./lib/planner";
 import { runTranscription } from "./lib/transcribe";
+import { eligibleCount, runTranscriptBackfill } from "./lib/transcript-backfill";
 import {
   claimNext,
   completeJob,
@@ -88,6 +89,15 @@ async function dispatch(job: JobRow): Promise<unknown> {
   }
   if (job.name === "sync_metrics") {
     return runMetricsSync();
+  }
+  if (job.name === "transcribe_backfill") {
+    const { limit } = data;
+    const result = await runTranscriptBackfill(
+      typeof limit === "number" ? limit : 500,
+      (done, total, spent) => updateProgress(job.id, { done, total, spent }),
+    );
+    const { total: remaining } = eligibleCount();
+    return { ...result, failures: result.failures.slice(0, 10), remaining };
   }
   if (job.name === "carousel_copy") {
     const { projectId, numSlides, brief, replace } = data;

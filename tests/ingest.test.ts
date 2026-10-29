@@ -52,6 +52,8 @@ describe("normalizeUrl + detectReply + storeAsset", () => {
       metadata: { runId: "a" },
       postedAt: "2026-01-01T00:00:00.000Z",
       isReply: false,
+      isVideo: true,
+      transcribedAt: null,
     });
     assert.equal(first, "inserted");
     const second = storeAsset(db, {
@@ -62,16 +64,22 @@ describe("normalizeUrl + detectReply + storeAsset", () => {
       metadata: { accountId: "b" },
       postedAt: null,
       isReply: false,
+      isVideo: false,
+      transcribedAt: "2026-02-02T00:00:00.000Z",
     });
     assert.equal(second, "merged");
-    const rows = db.prepare(`SELECT title, transcript, metadata FROM assets`).all() as {
+    const rows = db.prepare(`SELECT title, transcript, metadata, is_video, transcribed_at FROM assets`).all() as {
       title: string;
       transcript: string;
       metadata: string;
+      is_video: number;
+      transcribed_at: string | null;
     }[];
     assert.equal(rows.length, 1);
     assert.equal(rows[0].title, "hello");
     assert.equal(rows[0].transcript, "hello world");
+    assert.equal(rows[0].is_video, 1);
+    assert.equal(rows[0].transcribed_at, "2026-02-02T00:00:00.000Z");
     const meta = JSON.parse(rows[0].metadata) as { sources: string[] };
     assert.deepEqual([...meta.sources].sort(), ["x_posts", "zernio_x"]);
   });

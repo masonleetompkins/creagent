@@ -144,6 +144,21 @@ function pick(item: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+export function detectVideo(source: string, item: Record<string, unknown>): boolean {
+  const s = source.toLowerCase();
+  if (s.includes("tiktok") || s.includes("youtube")) return true;
+  if (s.includes("instagram")) {
+    const t = String(
+      item["mediaType"] ?? item["media_type"] ?? item["productType"] ?? item["product_type"] ?? "",
+    ).toLowerCase();
+    if (["video", "reel", "clip", "igtv"].includes(t)) return true;
+    if (typeof item["videoUrl"] === "string" || typeof item["video_url"] === "string") return true;
+    if (typeof item["durationSeconds"] === "number" || typeof item["duration"] === "number") return true;
+    return false;
+  }
+  return false;
+}
+
 function itemToAsset(item: Record<string, unknown>): {
   title: string;
   transcript: string;
@@ -295,6 +310,8 @@ type AssetInput = {
   metadata: Record<string, unknown>;
   postedAt: string | null;
   isReply: boolean;
+  isVideo: boolean;
+  transcribedAt?: string | null;
 };
 
 // Insert or combine: when the same post arrives from a second provider (or a
@@ -309,12 +326,14 @@ export function storeAsset(db: DatabaseSync, row: AssetInput): "inserted" | "mer
     posted_at: string | null;
     metadata: string;
     is_reply: number;
+    is_video: number;
+    transcribed_at: string | null;
   };
   const existing = (
     row.sourceUrl
       ? db
           .prepare(
-            `SELECT id, title, transcript, posted_at, metadata, is_reply FROM assets
+            `SELECT id, title, transcript, posted_at, metadata, is_reply, is_video, transcribed_at FROM assets
              WHERE source_url = ? OR url_norm = ? LIMIT 1`,
           )
           .get(row.sourceUrl, norm || "\0")
@@ -322,8 +341,8 @@ export function storeAsset(db: DatabaseSync, row: AssetInput): "inserted" | "mer
   ) as Existing | undefined;
   if (!existing) {
     db.prepare(
-      `INSERT INTO assets (id, source, source_url, url_norm, kind, title, transcript, metadata, posted_at, is_reply, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO assets (id, source, source_url, url_norm, kind, title, transcript, metadata, posted_at, is_reply, is_video, transcribed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       randomUUID(),
       row.source,
@@ -335,6 +354,8 @@ export function storeAsset(db: DatabaseSync, row: AssetInput): "inserted" | "mer
       JSON.stringify({ ...row.metadata, sources: [row.source] }),
       row.postedAt,
       row.isReply ? 1 : 0,
+      row.isVideo ? 1 : 0,
+      row.transcribedAt ?? null,
       nowIso(),
     );
     return "inserted";
@@ -355,13 +376,15 @@ export function storeAsset(db: DatabaseSync, row: AssetInput): "inserted" | "mer
     [`raw_${row.source}`]: row.metadata["raw"],
   };
   db.prepare(
-    `UPDATE assets SET title = ?, transcript = ?, posted_at = ?, metadata = ?, is_reply = ? WHERE id = ?`,
+    `UPDATE assets SET title = ?, transcript = ?, posted_at = ?, metadata = ?, is_reply = ?, is_video = ?, transcribed_at = ? WHERE id = ?`,
   ).run(
     existing.title || row.title,
     existing.transcript || row.transcript,
     existing.posted_at ?? row.postedAt,
     JSON.stringify(mergedMeta),
     existing.is_reply || row.isReply ? 1 : 0,
+    existing.is_video || row.isVideo ? 1 : 0,
+    existing.transcribed_at ?? row.transcribedAt ?? null,
     existing.id,
   );
   return "merged";
@@ -458,6 +481,7 @@ export async function runIngest(
           continue;
         }
       }
+      const transcriptSource = source === "youtube_transcript" || source === "instagram_reel";
       const stored = storeAsset(db, {
         source,
         sourceUrl: asset.sourceUrl,
@@ -466,6 +490,8 @@ export async function runIngest(
         metadata: { runId: result.runId, raw: truncateRaw(item, 4) },
         postedAt: asset.postedAt,
         isReply: detectReply(item),
+        isVideo: transcriptSource || detectVideo(source, item),
+        transcribedAt: transcriptSource ? nowIso() : null,
       });
       if (stored === "merged") duplicates++;
       else assets++;
@@ -547,6 +573,8 @@ export async function runZernioIngest(
         metadata: { accountId, platform: account.platform, raw: truncateRaw(post, 4) },
         postedAt,
         isReply: detectReply(post),
+        isVideo: detectVideo(source, post),
+        transcribedAt: null,
       });
       if (stored === "merged") duplicates++;
       else assets++;
