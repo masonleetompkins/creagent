@@ -7,6 +7,7 @@ import { runAutopick, runPlanImages } from "./lib/carousel-plan";
 import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
 import { runDraftAll, runDraftSlot } from "./lib/drafting";
+import { runMigrations } from "./scripts/migrate";
 import { isIngestSource, runIngest, runZernioIngest } from "./lib/ingest";
 import { metaChatClient, runAgentTurn } from "./lib/agent";
 import { runSlotAutoEdit } from "./lib/autoedit";
@@ -170,9 +171,20 @@ async function dispatch(job: JobRow): Promise<unknown> {
 }
 
 let stopping = false;
+let ticks = 0;
 
 async function tick(): Promise<void> {
   if (stopping) return;
+  ticks++;
+  // Pick up new migrations without a relaunch (hot-reload path).
+  if (ticks % 60 === 0) {
+    try {
+      const applied = runMigrations();
+      if (applied.length > 0) console.log(`migrations applied: ${applied.join(", ")}`);
+    } catch (error) {
+      console.log(`migration check failed: ${(error as Error).message}`);
+    }
+  }
   try {
     const { requeued, failed } = reapStaleJobs();
     if (requeued > 0 || failed > 0) {

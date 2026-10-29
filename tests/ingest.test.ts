@@ -85,6 +85,13 @@ describe("normalizeUrl + detectReply + storeAsset", () => {
   });
 });
 
+describe("runMigrations", () => {
+  it("is idempotent and reports nothing newly applied", async () => {
+    const { runMigrations } = await import("../scripts/migrate");
+    assert.deepEqual(runMigrations(), []);
+  });
+});
+
 describe("monidPayloadError", () => {
   it("spots silent provider failures and bad handles", async () => {
     const { monidPayloadError } = await import("../lib/ingest");

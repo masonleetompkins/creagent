@@ -48,6 +48,15 @@ npm run build
 npm start
 ```
 
+The desktop launcher (`start.sh`, default) runs in dev mode: `next dev`
+hot-reloads UI/API changes, `tsx watch` restarts the worker on code changes,
+and the worker applies new SQL migrations within a minute — no relaunch
+needed while iterating. For a production server instead:
+
+```bash
+CREAGENT_MODE=prod ./start.sh
+```
+
 ## Settings and keys
 
 Open **Settings** in the app and save keys for:
