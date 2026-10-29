@@ -70,7 +70,9 @@ async function dispatch(job: JobRow): Promise<unknown> {
   }
   if (job.name === "analyze") {
     const { limit } = data;
-    return runAnalysis(typeof limit === "number" ? limit : undefined);
+    return runAnalysis(typeof limit === "number" ? limit : undefined, (done, total, stage) =>
+      updateProgress(job.id, { done, total, stage }),
+    );
   }
   if (job.name === "plan") {
     const { days } = data;

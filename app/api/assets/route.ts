@@ -10,6 +10,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const q = (url.searchParams.get("q") || "").trim().slice(0, 200);
+  const unanalyzedOnly = url.searchParams.get("unanalyzed") === "1";
   if (from && Number.isNaN(Date.parse(from))) {
     return NextResponse.json({ error: "from must be a date string" }, { status: 400 });
   }
@@ -19,6 +20,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     const where: string[] = [];
     const params: (string | number)[] = [];
+    if (unanalyzedOnly) {
+      where.push(`analyzed_at IS NULL`);
+    }
     if (from) {
       where.push(`COALESCE(posted_at, created_at) >= ?`);
       params.push(new Date(from).toISOString());

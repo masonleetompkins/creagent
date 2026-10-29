@@ -78,6 +78,7 @@ export default function IngestConsole(): React.ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [targets, setTargets] = useState<TargetState[]>([]);
   const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
+  const [analysis, setAnalysis] = useState<{ done: number; total: number; stage: string } | null>(null);
   const [estimate, setEstimate] = useState<{ total: number; lo: number; hi: number } | null>(null);
   const [tBusy, setTBusy] = useState(false);
   const [tBatch, setTBatch] = useState(100);
@@ -86,9 +87,8 @@ export default function IngestConsole(): React.ReactNode {
 
   const refreshCounts = useCallback(async () => {
     try {
-      const data = await readJson(await fetch("/api/assets?limit=500"));
-      const assets = data.assets as { analyzed_at: string | null }[];
-      setUnanalyzed(assets.filter((a) => !a.analyzed_at).length);
+      const data = await readJson(await fetch("/api/assets?limit=1&unanalyzed=1"));
+      setUnanalyzed(typeof data.total === "number" ? data.total : 0);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -296,37 +296,78 @@ export default function IngestConsole(): React.ReactNode {
         if (st.state === "failed") failed++;
         setProgress((p) => (p ? { ...p, done: p.done + 1, current: "" } : p));
       }
+      let analysisNote = "";
       if (total > 0) {
         setPhase("Analyzing new assets…");
-        const started = await readJson(
-          await fetch("/api/analysis/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-          }),
-        );
-        for (;;) {
-          const done = await readJson(await fetch(`/api/jobs/${started.jobId as string}`));
-          if (done.state === "completed" || done.state === "failed") {
-            if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 2000));
-        }
+        const { analyzed, batches } = await runAnalysisLoop();
+        analysisNote = ` · analyzed ${analyzed} in ${batches} batch${batches === 1 ? "" : "es"}`;
+        setAnalysis(null);
       }
       setPhase(
         failed === 0
-          ? `Done: ${total} new asset${total === 1 ? "" : "s"} ingested${total > 0 ? " and analyzed" : ""}.`
-          : `Finished with ${failed} failed target${failed === 1 ? "" : "s"} — fix and retry below.`,
+          ? `Done: ${total} new asset${total === 1 ? "" : "s"} ingested${analysisNote}.`
+          : `Finished with ${failed} failed target${failed === 1 ? "" : "s"}${analysisNote} — fix and retry below.`,
       );
       await refreshCounts();
     } catch (e) {
       setError((e as Error).message);
       setPhase(null);
+      setAnalysis(null);
     } finally {
       setBusy(false);
       setProgress((p) => (p ? { ...p, current: "" } : p));
     }
+  }
+
+  // Analysis runs in batches of up to 40 assets per job; loop until a batch
+  // finds nothing left, counting completions as they land.
+  async function runAnalysisLoop(): Promise<{ analyzed: number; batches: number }> {
+    let total = unanalyzed;
+    try {
+      const seed = await readJson(await fetch("/api/assets?limit=1&unanalyzed=1"));
+      if (typeof seed.total === "number") total = seed.total;
+    } catch {
+      /* fall back to the header count */
+    }
+    let analyzed = 0;
+    let batches = 0;
+    setAnalysis({ done: 0, total, stage: "Starting…" });
+    for (let batch = 0; batch < 100; batch++) {
+      const started = await readJson(
+        await fetch("/api/analysis/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }),
+      );
+      const jobId = started.jobId as string;
+      for (;;) {
+        const data = await readJson(await fetch(`/api/jobs/${jobId}`));
+        const prog = (data.progress ?? {}) as { done?: number; total?: number; stage?: string };
+        const batchDone = typeof prog.done === "number" ? prog.done : 0;
+        const batchTotal = typeof prog.total === "number" ? prog.total : 0;
+        const seen = Math.max(total, analyzed + batchTotal);
+        setAnalysis({
+          done: Math.min(analyzed + batchDone, seen),
+          total: seen,
+          stage: typeof prog.stage === "string" && prog.stage ? prog.stage : "Analyzing…",
+        });
+        if (data.state === "completed" || data.state === "failed") {
+          if (data.state === "failed") throw new Error((data.failedReason as string) ?? "analysis failed");
+          const res = (data.result ?? {}) as { assetsAnalyzed?: number };
+          const n = typeof res.assetsAnalyzed === "number" ? res.assetsAnalyzed : 0;
+          analyzed += n;
+          batches++;
+          setAnalysis((a) =>
+            a ? { ...a, done: analyzed, total: Math.max(a.total, analyzed) } : a,
+          );
+          if (n === 0) return { analyzed, batches };
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+    throw new Error("analysis stopped after 100 batches — please retry");
   }
 
   async function ingestAndAnalyze(): Promise<void> {
@@ -424,26 +465,16 @@ export default function IngestConsole(): React.ReactNode {
     setError(null);
     try {
       setPhase("Analyzing…");
-      const started = await readJson(
-        await fetch("/api/analysis/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        }),
+      const { analyzed, batches } = await runAnalysisLoop();
+      setPhase(
+        `Analysis complete: ${analyzed} asset${analyzed === 1 ? "" : "s"} in ${batches} batch${batches === 1 ? "" : "es"}.`,
       );
-      for (;;) {
-        const done = await readJson(await fetch(`/api/jobs/${started.jobId as string}`));
-        if (done.state === "completed" || done.state === "failed") {
-          if (done.state === "failed") throw new Error((done.failedReason as string) ?? "analysis failed");
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      setPhase("Analysis complete.");
+      setAnalysis(null);
       await refreshCounts();
     } catch (e) {
       setError((e as Error).message);
       setPhase(null);
+      setAnalysis(null);
     } finally {
       setBusy(false);
     }
@@ -586,6 +617,25 @@ export default function IngestConsole(): React.ReactNode {
             </div>
             <p className="muted">
               {progress.done}/{progress.total} targets{progress.current ? ` · ${progress.current}` : ""}
+            </p>
+          </div>
+        )}
+        {analysis && (
+          <div className="progress-wrap slim">
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{
+                  width:
+                    analysis.total > 0
+                      ? `${Math.min(100, Math.round((analysis.done / analysis.total) * 100))}%`
+                      : "0%",
+                }}
+              />
+            </div>
+            <p className="muted">
+              {analysis.stage}
+              {analysis.total > 0 ? ` · ${analysis.done}/${analysis.total}` : ""}
             </p>
           </div>
         )}

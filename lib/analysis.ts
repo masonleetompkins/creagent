@@ -46,7 +46,19 @@ function asStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
 }
 
-export async function runAnalysis(limit = MAX_ASSETS): Promise<AnalysisResult> {
+export type AnalysisProgress = (done: number, total: number, stage: string) => void;
+
+export function countUnanalyzed(): number {
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM assets WHERE analyzed_at IS NULL`).get() as {
+    n: number;
+  };
+  return Number(row.n);
+}
+
+export async function runAnalysis(
+  limit = MAX_ASSETS,
+  onProgress?: AnalysisProgress,
+): Promise<AnalysisResult> {
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
   const db = getDb();
@@ -73,6 +85,7 @@ export async function runAnalysis(limit = MAX_ASSETS): Promise<AnalysisResult> {
     )
     .join("\n\n---\n\n");
 
+  if (onProgress) onProgress(0, picked.length, `Analyzing ${picked.length} posts…`);
   const client = getMetaClient(metaKey);
   const resp = await client.responses.create(
     {
@@ -82,6 +95,7 @@ export async function runAnalysis(limit = MAX_ASSETS): Promise<AnalysisResult> {
     },
     { timeout: 120000 },
   );
+  if (onProgress) onProgress(0, picked.length, "Writing pillars + vault…");
   const parsed = extractJson(resp.output_text);
 
   const pillars = Array.isArray(parsed.pillars) ? parsed.pillars : [];
@@ -160,5 +174,6 @@ export async function runAnalysis(limit = MAX_ASSETS): Promise<AnalysisResult> {
   const ts = nowIso();
   for (const row of picked) mark.run(ts, row.id);
 
+  if (onProgress) onProgress(picked.length, picked.length, "Done");
   return { assetsAnalyzed: picked.length, pillars: pillarCount, vaultDocs: docs.length };
 }
