@@ -103,3 +103,40 @@ describe("platformForSource", () => {
     assert.equal(platformForSource("something_new"), "other");
   });
 });
+
+describe("refreshMultipliers", () => {
+  it("scores assets against non-reply platform averages", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    process.env.SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "creagent-mult-")), "test.sqlite");
+    await import("../scripts/migrate");
+    const { getDb } = await import("../lib/db");
+    const { refreshMultipliers, pillarStats } = await import("../lib/metrics");
+    const db = getDb();
+    const recent = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const old = new Date(Date.now() - 300 * 24 * 3600 * 1000).toISOString();
+    db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("pp1", "P1", "", "", 0, "2026-01-01T00:00:00.000Z");
+    const insert = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run("m1", "x_posts", "x", "t", "", JSON.stringify({ raw: { likeCount: 100 } }), 0, "pp1", null, recent);
+    insert.run("m2", "x_posts", "x", "t", "", JSON.stringify({ raw: { likeCount: 50 } }), 0, "pp1", null, old);
+    insert.run("m3", "x_posts", "x", "t", "", JSON.stringify({ raw: { likeCount: 1000 } }), 1, null, null, recent);
+    insert.run("m4", "x_posts", "x", "t", "", JSON.stringify({ raw: { note: "no numbers" } }), 0, null, null, recent);
+    // Non-reply average = (100 + 50) / 2 = 75.
+    assert.equal(refreshMultipliers(), 3);
+    const mult = (id: string): number | null =>
+      (db.prepare(`SELECT multiplier FROM assets WHERE id = ?`).get(id) as { multiplier: number | null }).multiplier;
+    assert.equal(mult("m1"), 1.33);
+    assert.equal(mult("m2"), 0.67);
+    assert.equal(mult("m3"), 13.33);
+    assert.equal(mult("m4"), null);
+    const stats = pillarStats();
+    assert.deepEqual(stats["pp1"], { posts: 2, recent: 1, multiplier: 1 });
+    assert.equal(stats["missing"], undefined);
+  });
+});

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDb, nowIso } from "@/lib/db";
+import { pillarStats } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,14 @@ export async function GET(): Promise<NextResponse> {
       .prepare(
         `SELECT id, name, description, voice_notes, confirmed, created_at FROM pillars ORDER BY created_at ASC`,
       )
-      .all();
+      .all() as Array<Record<string, unknown>>;
+    const stats = pillarStats();
+    for (const row of rows) {
+      const st = stats[row["id"] as string];
+      row["posts"] = st?.posts ?? 0;
+      row["recent"] = st?.recent ?? 0;
+      row["multiplier"] = st?.multiplier ?? null;
+    }
     return NextResponse.json({ pillars: rows });
   } catch (error) {
     return NextResponse.json(

@@ -3087,3 +3087,28 @@ button.src-row:hover:not(:disabled) {
   flex: 0 0 auto;
   opacity: 0.9;
 }
+
+.pillar-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  margin-top: 6px;
+}
+
+.mult-badge {
+  font-size: 11px;
+  font-weight: 750;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--muted);
+  background: hsl(var(--hue) 60% 50% / 0.08);
+  white-space: nowrap;
+}
+
+.mult-badge.hot {
+  color: hsl(150 70% 65%);
+  border-color: hsl(150 70% 45% / 0.5);
+  background: hsl(150 70% 45% / 0.12);
+}

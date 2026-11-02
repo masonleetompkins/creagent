@@ -1,10 +1,11 @@
 // Content analysis: unanalyzed assets -> voice profile + vault + pillars.
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { getDb, nowIso } from "./db";
+import { getDb, nowIso, withTransaction } from "./db";
 import { embedMany, vectorToBlob } from "./embeddings";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
+import { pillarStats, refreshMultipliers } from "./metrics";
 
 const MAX_ASSETS = 40;
 const MAX_ASSET_CHARS = 8000;
@@ -93,6 +94,234 @@ export type AnalysisResult = {
   vaultDocs: number;
 };
 
+const CONSOLIDATE_SYSTEM = `You consolidate a content creator's content pillars. There are too many overlapping suggestions; merge the CANDIDATES into 10-12 canonical pillars.
+
+Each candidate has: name, description, posts (linked post count), recent (posts in the last 6 months), mult (average performance multiplier vs their own average, 1.0 = average).
+
+Rules:
+- Every canonical pillar must be specific enough to repeat weekly, but broad enough to hold many posts.
+- Bias HARD toward the last 6 months: candidates with zero recent posts fold into the closest fit, never survive alone.
+- Favor high multipliers: a pillar at 1.5x or more deserves to survive or lend its name.
+- Merge near-duplicates aggressively (same topic, different words).
+- Respond with ONLY a JSON object (no prose, no code fences):
+{"pillars": [{"name": "canonical name", "description": "one sentence", "voice_notes": "how their voice shifts for this pillar", "absorbs": ["exact candidate names folded into this one"]}]}
+- Every candidate name must appear exactly once across all absorbs lists. To keep a candidate as-is, use its name with absorbs containing just itself.`;
+
+export type ConsolidationEntry = {
+  name: string;
+  description: string;
+  voiceNotes: string;
+  absorbs: string[];
+};
+
+export type ConsolidationResult = {
+  merged: number;
+  canonical: number;
+  unmapped: string[];
+};
+
+// Re-point every pillar link (posts, slots, templates) from one pillar to another.
+function repointPillar(fromId: string, toId: string): void {
+  const db = getDb();
+  for (const table of ["assets", "queue_slots", "queue_templates"] as const) {
+    db.prepare(`UPDATE ${table} SET pillar_id = ? WHERE pillar_id = ?`).run(toId, fromId);
+  }
+}
+
+function writePillarVaultDoc(name: string, description: string, voiceNotes: string): void {
+  const db = getDb();
+  db.prepare(`DELETE FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = lower(?)`).run(
+    name,
+  );
+  db.prepare(
+    `INSERT INTO vault_docs (id, doc_type, title, body, created_at) VALUES (?, 'pillar', ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    name,
+    `${name}: ${description}${voiceNotes ? `\nVoice: ${voiceNotes}` : ""}`,
+    nowIso(),
+  );
+}
+
+// Deterministic pre-pass: an unconfirmed suggestion matching a CONFIRMED
+// pillar's name folds into it without asking the model. Returns merged count.
+export function mergeNameMatchesIntoConfirmed(): number {
+  const db = getDb();
+  const confirmed = db.prepare(`SELECT id, name FROM pillars WHERE confirmed = 1`).all() as Array<{
+    id: string;
+    name: string;
+  }>;
+  if (confirmed.length === 0) return 0;
+  const byName = new Map(confirmed.map((c) => [c.name.trim().toLowerCase(), c.id]));
+  const suggestions = db
+    .prepare(`SELECT id, name FROM pillars WHERE confirmed = 0 OR confirmed IS NULL`)
+    .all() as Array<{ id: string; name: string }>;
+  let merged = 0;
+  for (const s of suggestions) {
+    const target = byName.get(s.name.trim().toLowerCase());
+    if (!target || target === s.id) continue;
+    repointPillar(s.id, target);
+    db.prepare(`DELETE FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = lower(?)`).run(
+      s.name,
+    );
+    db.prepare(`DELETE FROM pillars WHERE id = ?`).run(s.id);
+    merged++;
+  }
+  return merged;
+}
+
+// Apply a consolidation plan transactionally. Only unconfirmed pillars move;
+// confirmed pillars and unmapped names are never touched.
+export function applyConsolidation(entries: ConsolidationEntry[]): ConsolidationResult {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT id, name, confirmed FROM pillars`)
+    .all() as Array<{ id: string; name: string; confirmed: number }>;
+  const byName = new Map(existing.map((p) => [p.name.trim().toLowerCase(), p]));
+  const claimed = new Set<string>();
+  const unmapped: string[] = [];
+  let merged = 0;
+  let canonical = 0;
+  withTransaction(() => {
+    for (const entry of entries) {
+      if (!entry.name.trim() || entry.absorbs.length === 0) continue;
+      // Resolve absorbs to live unconfirmed pillars; skip claimed/dropped names.
+      const members = [];
+      for (const name of entry.absorbs) {
+        const hit = byName.get(name.trim().toLowerCase());
+        if (!hit) {
+          unmapped.push(name);
+          continue;
+        }
+        if (hit.confirmed || claimed.has(hit.id)) continue;
+        members.push(hit);
+      }
+      // The canonical name itself counts as an absorb target.
+      const selfHit = byName.get(entry.name.trim().toLowerCase());
+      if (selfHit && !selfHit.confirmed && !claimed.has(selfHit.id) && !members.includes(selfHit)) {
+        members.push(selfHit);
+      }
+      if (members.length === 0) continue;
+      for (const m of members) claimed.add(m.id);
+      // Survivor = most linked posts, tie-break earliest created.
+      const counts = db.prepare(
+        `SELECT pillar_id, COUNT(*) AS n, MIN(COALESCE(posted_at, created_at)) AS first
+         FROM assets WHERE pillar_id IS NOT NULL GROUP BY pillar_id`,
+      ).all() as Array<{ pillar_id: string; n: number; first: string | null }>;
+      const countById = new Map(counts.map((c) => [c.pillar_id, c]));
+      members.sort((a, b) => {
+        const an = countById.get(a.id)?.n ?? 0;
+        const bn = countById.get(b.id)?.n ?? 0;
+        if (bn !== an) return bn - an;
+        return (countById.get(a.id)?.first ?? "").localeCompare(countById.get(b.id)?.first ?? "");
+      });
+      const survivor = members[0];
+      db.prepare(`UPDATE pillars SET name = ?, description = ?, voice_notes = ? WHERE id = ?`).run(
+        entry.name.trim(),
+        entry.description,
+        entry.voiceNotes,
+        survivor.id,
+      );
+      for (const loser of members.slice(1)) {
+        repointPillar(loser.id, survivor.id);
+        db.prepare(
+          `DELETE FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = lower(?)`,
+        ).run(loser.name);
+        db.prepare(`DELETE FROM pillars WHERE id = ?`).run(loser.id);
+        merged++;
+      }
+      db.prepare(
+        `DELETE FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = lower(?)`,
+      ).run(survivor.name);
+      writePillarVaultDoc(entry.name.trim(), entry.description, entry.voiceNotes);
+      canonical++;
+    }
+  });
+  return { merged, canonical, unmapped };
+}
+
+// Embed pillar vault docs written without vectors (consolidation apply is
+// sync; this runs after, on the live path only).
+export async function embedMissingPillarDocs(): Promise<number> {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, title, body FROM vault_docs WHERE doc_type = 'pillar' AND embedding IS NULL`,
+    )
+    .all() as Array<{ id: string; title: string | null; body: string }>;
+  if (rows.length === 0) return 0;
+  const vectors = await embedMany(rows.map((r) => `${r.title ?? ""}\n${r.body}`));
+  const update = db.prepare(`UPDATE vault_docs SET embedding = ? WHERE id = ?`);
+  rows.forEach((row, i) => update.run(vectorToBlob(vectors[i]), row.id));
+  return rows.length;
+}
+
+export async function consolidatePillars(
+  onProgress?: (stage: string) => void,
+): Promise<ConsolidationResult> {
+  const metaKey = loadKeys().meta;
+  if (!metaKey) throw new Error("save a Meta key in Settings first");
+  const db = getDb();
+  const total = { merged: mergeNameMatchesIntoConfirmed(), canonical: 0, unmapped: [] as string[] };
+  const suggestions = db
+    .prepare(
+      `SELECT name, description, voice_notes FROM pillars
+       WHERE confirmed = 0 OR confirmed IS NULL ORDER BY name ASC`,
+    )
+    .all() as Array<{ name: string; description: string; voice_notes: string }>;
+  if (suggestions.length <= 15) {
+    return { ...total, canonical: suggestions.length };
+  }
+  if (onProgress) onProgress(`Consolidating ${suggestions.length} pillars…`);
+  const stats = pillarStats();
+  const idByName = new Map(
+    (
+      db.prepare(`SELECT id, name FROM pillars`).all() as Array<{ id: string; name: string }>
+    ).map((p) => [p.name.trim().toLowerCase(), p.id]),
+  );
+  const candidates = suggestions.map((s) => {
+    const st = stats[idByName.get(s.name.trim().toLowerCase()) ?? ""];
+    return {
+      name: s.name,
+      description: s.description.slice(0, 200),
+      posts: st?.posts ?? 0,
+      recent: st?.recent ?? 0,
+      mult: st?.multiplier ?? null,
+    };
+  });
+  const client = getMetaClient(metaKey);
+  const resp = await client.responses.create(
+    {
+      model: metaTextModel(),
+      input: `${CONSOLIDATE_SYSTEM}\n\nCANDIDATES:\n${JSON.stringify(candidates)}`,
+      max_output_tokens: 4000,
+    },
+    { timeout: 180000 },
+  );
+  const parsed = extractJson(resp.output_text);
+  const rawEntries = Array.isArray(parsed.pillars) ? parsed.pillars : [];
+  const entries: ConsolidationEntry[] = [];
+  for (const e of rawEntries) {
+    if (!e || typeof e !== "object") continue;
+    const { name, description, voice_notes, absorbs } = e as Record<string, unknown>;
+    if (typeof name !== "string" || !name.trim()) continue;
+    entries.push({
+      name: name.trim(),
+      description: typeof description === "string" ? description : "",
+      voiceNotes: typeof voice_notes === "string" ? voice_notes : "",
+      absorbs: asStringArray(absorbs),
+    });
+  }
+  const applied = applyConsolidation(entries);
+  if (onProgress) onProgress("Embedding pillar docs…");
+  await embedMissingPillarDocs();
+  return {
+    merged: total.merged + applied.merged,
+    canonical: applied.canonical,
+    unmapped: applied.unmapped,
+  };
+}
+
 const SYSTEM = `You analyze a content creator's posts and videos. Study the CONTENT below and respond with ONLY a JSON object (no prose, no code fences) shaped exactly like:
 {"voice": {"summary": "2-3 sentences: who they sound like on the page",
 "diction": "vocabulary notes: word choices, slang, jargon level, signature words and phrases they repeat",
@@ -106,8 +335,9 @@ const SYSTEM = `You analyze a content creator's posts and videos. Study the CONT
 "pillars": [{"name": "short pillar name", "description": "one sentence on what this pillar covers", "voice_notes": "how their voice shifts for this pillar: angles, references, energy"}],
 "qa": [{"q": "a question their audience would ask", "a": "the creator's likely answer in their voice"}],
 "principles": ["a belief or rule that guides their content"],
-"quotes": ["a quotable line in their voice, invented or paraphrased from the content"]}
-Aim for 3-6 pillars, 4-8 Q&A pairs, 3-6 principles, 3-6 quotes, 2-4 donts, 2-4 examples. Every voice field must be specific enough for a ghostwriter to imitate: name real habits, not generic praise. Entries marked [DIGEST of ~Nk chars] are faithful condensations of longer pieces — treat their ideas and quotes as real content.`;
+"quotes": ["a quotable line in their voice, invented or paraphrased from the content"],
+"assignments": {"1": "exact pillar name from your pillars list for post 1"}}
+Aim for 3-6 pillars, 4-8 Q&A pairs, 3-6 principles, 3-6 quotes, 2-4 donts, 2-4 examples. Assign EVERY numbered entry to exactly one pillar in assignments, using the exact pillar name. Every voice field must be specific enough for a ghostwriter to imitate: name real habits, not generic praise. Entries marked [DIGEST of ~Nk chars] are faithful condensations of longer pieces — treat their ideas and quotes as real content.`;
 
 function extractJson(text: string): Record<string, unknown> {
   try {
@@ -204,6 +434,25 @@ export function buildVoiceMarkdown(
 }
 
 export type PillarUpsert = { name: string; description: string; voiceNotes: string };
+
+// Resolve the model's {"1": "Pillar Name"} assignments to pillar ids.
+// Unknown names and out-of-range indexes are dropped, never fatal.
+export function mapAssignments(
+  raw: unknown,
+  count: number,
+  nameToId: Map<string, string>,
+): Map<number, string> {
+  const out = new Map<number, string>();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [key, value] of Object.entries(raw)) {
+    const index = Number(key);
+    if (!Number.isInteger(index) || index < 1 || index > count) continue;
+    if (typeof value !== "string") continue;
+    const id = nameToId.get(value.trim().toLowerCase());
+    if (id) out.set(index, id);
+  }
+  return out;
+}
 
 // Merge rule: new pillars insert as suggestions; unconfirmed ones refresh;
 // confirmed pillars keep the user's description and only gain voice notes
@@ -343,6 +592,7 @@ export async function runAnalysis(
   let pillarCount = 0;
   const pillarNotes: { name: string; voiceNotes: string }[] = [];
   const pillarBodies: { title: string; body: string }[] = [];
+  const nameToId = new Map<string, string>();
   for (const p of rawPillars) {
     if (!p || typeof p !== "object") continue;
     const { name, description, voice_notes } = p as {
@@ -356,6 +606,7 @@ export async function runAnalysis(
       description: typeof description === "string" ? description : "",
       voiceNotes: typeof voice_notes === "string" ? voice_notes : "",
     });
+    nameToId.set(name.trim().toLowerCase(), final.id);
     pillarCount++;
     pillarNotes.push({ name: name.trim(), voiceNotes: final.voiceNotes });
     pillarBodies.push({
@@ -426,6 +677,19 @@ export async function runAnalysis(
   const ts = nowIso();
   for (const row of picked) mark.run(ts, row.id);
 
+  // Link every post to its pillar, then score every post against its
+  // platform's average.
+  const links = mapAssignments(parsed.assignments, picked.length, nameToId);
+  if (links.size > 0) {
+    const link = db.prepare(`UPDATE assets SET pillar_id = ? WHERE id = ?`);
+    for (const [index, pillarId] of links) {
+      const row = picked[index - 1];
+      if (row) link.run(pillarId, row.id);
+    }
+  }
+  if (onProgress) onProgress(picked.length, picked.length, "Scoring posts…");
+  refreshMultipliers();
+
   if (onProgress) onProgress(picked.length, picked.length, "Done");
   return { assetsAnalyzed: picked.length, pillars: pillarCount, vaultDocs };
 }
@@ -441,7 +705,7 @@ export function resetBrain(): void {
 
 export async function runBrainRegenerate(
   onProgress?: AnalysisProgress,
-): Promise<{ analyzed: number; batches: number }> {
+): Promise<{ analyzed: number; batches: number; merged: number; canonical: number }> {
   resetBrain();
   const total = countUnanalyzed();
   let analyzed = 0;
@@ -464,5 +728,15 @@ export async function runBrainRegenerate(
     }
     if (res.assetsAnalyzed === 0) break;
   }
-  return { analyzed, batches };
+  if (onProgress) onProgress(analyzed, Math.max(total, analyzed), "Consolidating pillars…");
+  const consolidated = await consolidatePillars((stage) => {
+    if (onProgress) onProgress(analyzed, Math.max(total, analyzed), stage);
+  });
+  if (onProgress) onProgress(analyzed, Math.max(total, analyzed), "Done");
+  return {
+    analyzed,
+    batches,
+    merged: consolidated.merged,
+    canonical: consolidated.canonical,
+  };
 }

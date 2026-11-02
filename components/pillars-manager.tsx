@@ -9,6 +9,9 @@ type Pillar = {
   voice_notes: string;
   confirmed: number;
   created_at: string;
+  posts?: number;
+  recent?: number;
+  multiplier?: number | null;
 };
 
 type Draft = { name: string; description: string; voiceNotes: string };
@@ -166,6 +169,23 @@ export default function PillarsManager(): React.ReactNode {
         value={drafts[p.id]?.voiceNotes ?? ""}
         onChange={(e) => setDraft(p.id, { voiceNotes: e.target.value })}
       />
+      <div className="pillar-stats muted">
+        {(p.posts ?? 0) > 0 || (p.recent ?? 0) > 0 ? (
+          <span>
+            {p.posts ?? 0} posts · {p.recent ?? 0} in 6mo
+          </span>
+        ) : (
+          <span>no linked posts yet</span>
+        )}
+        {typeof p.multiplier === "number" && (
+          <span
+            className={`mult-badge${p.multiplier >= 1.5 ? " hot" : ""}`}
+            title="Average performance vs your per-platform average"
+          >
+            {p.multiplier.toFixed(1)}x avg
+          </span>
+        )}
+      </div>
       <div className="pillar-btns">
         <button onClick={() => void save(p.id)} title="Save edits">
           Save

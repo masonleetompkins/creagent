@@ -141,7 +141,7 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           state?: string;
           failedReason?: string;
           progress?: { done?: number; total?: number; stage?: string };
-          result?: { analyzed?: number; batches?: number };
+          result?: { analyzed?: number; batches?: number; merged?: number; canonical?: number };
         };
         const prog = data.progress ?? {};
         setRegen((r) => ({
@@ -153,7 +153,54 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           if (data.state === "failed") throw new Error(data.failedReason ?? "regenerate failed");
           const res = data.result ?? {};
           setRegenNote(
-            `Brain rebuilt: ${res.analyzed ?? 0} assets in ${res.batches ?? 0} batches.`,
+            `Brain rebuilt: ${res.analyzed ?? 0} assets in ${res.batches ?? 0} batches.` +
+              (typeof res.merged === "number" && typeof res.canonical === "number"
+                ? ` ${res.merged} pillars merged into ${res.canonical}.`
+                : ""),
+          );
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      setRegenCount((n) => n + 1);
+      await loadOverview();
+      await loadVault();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRegenBusy(false);
+      setRegen(null);
+    }
+  }
+
+  async function consolidate(): Promise<void> {
+    setError("");
+    setRegenNote(null);
+    setRegenBusy(true);
+    setRegen({ done: 0, total: 0, stage: "Starting…" });
+    try {
+      const started = (await (await fetch("/api/brain/consolidate", { method: "POST" })).json()) as {
+        jobId?: string;
+        error?: string;
+      };
+      if (!started.jobId) throw new Error(started.error ?? "consolidate failed to start");
+      for (;;) {
+        const data = (await (await fetch(`/api/jobs/${started.jobId}`)).json()) as {
+          state?: string;
+          failedReason?: string;
+          progress?: { stage?: string };
+          result?: { merged?: number; canonical?: number; unmapped?: string[] };
+        };
+        const stage = data.progress?.stage;
+        if (stage) setRegen((r) => ({ done: 0, total: 0, stage }));
+        if (data.state === "completed" || data.state === "failed") {
+          if (data.state === "failed") throw new Error(data.failedReason ?? "consolidate failed");
+          const res = data.result ?? {};
+          setRegenNote(
+            `Consolidated: ${res.merged ?? 0} merged into ${res.canonical ?? 0} pillars.` +
+              (res.unmapped && res.unmapped.length > 0
+                ? ` ${res.unmapped.length} left untouched (${res.unmapped.slice(0, 3).join(", ")}${res.unmapped.length > 3 ? "…" : ""}).`
+                : ""),
           );
           break;
         }
@@ -191,6 +238,13 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           <h2>Rebuild brain</h2>
           <span className="muted">Voice, pillars, and vault regenerated from all posts</span>
           <span className="ingest-head-actions">
+            <button
+              disabled={regenBusy}
+              title="Merge overlapping pillar suggestions into ~10 canonical pillars"
+              onClick={() => void consolidate()}
+            >
+              {regenBusy ? "Working…" : "Consolidate pillars"}
+            </button>
             <button disabled={regenBusy} onClick={() => void regenerate()}>
               {regenBusy ? "Rebuilding…" : "Regenerate"}
             </button>

@@ -165,6 +165,111 @@ describe("digest cache", () => {
   });
 });
 
+describe("mapAssignments", () => {
+  it("resolves names case-insensitively and drops junk", async () => {
+    const { mapAssignments } = await import("../lib/analysis");
+    const ids = new Map([
+      ["alpha", "id-a"],
+      ["beta", "id-b"],
+    ]);
+    const out = mapAssignments({ "1": "Alpha", "2": "BETA ", "3": "nope", "9": "Alpha", "x": "Alpha" }, 3, ids);
+    assert.deepEqual([...out.entries()], [
+      [1, "id-a"],
+      [2, "id-b"],
+    ]);
+    assert.equal(mapAssignments(null, 3, ids).size, 0);
+    assert.equal(mapAssignments([], 3, ids).size, 0);
+  });
+});
+
+describe("mergeNameMatchesIntoConfirmed", () => {
+  it("folds same-name suggestions into confirmed pillars", async () => {
+    const { mergeNameMatchesIntoConfirmed } = await import("../lib/analysis");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("mc1", "Zebra Merge", "mine", "v", 1, "2026-01-01T00:00:00.000Z");
+    db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("mc2", "zebra merge", "dup", "", 0, "2026-01-02T00:00:00.000Z");
+    db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, pillar_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("ma1", "x", "x", "t", "", "{}", "mc2", "2026-01-03T00:00:00.000Z");
+    assert.equal(mergeNameMatchesIntoConfirmed(), 1);
+    assert.equal(mergeNameMatchesIntoConfirmed(), 0);
+    const asset = db.prepare(`SELECT pillar_id FROM assets WHERE id = ?`).get("ma1") as {
+      pillar_id: string;
+    };
+    assert.equal(asset.pillar_id, "mc1");
+    const gone = db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("mc2");
+    assert.equal(gone, undefined);
+  });
+});
+
+describe("applyConsolidation", () => {
+  it("merges losers into survivors and re-points every link", async () => {
+    const { applyConsolidation } = await import("../lib/analysis");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    const mkpillar = db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    mkpillar.run("ca", "Alpha", "da", "", 0, "2026-01-01T00:00:00.000Z");
+    mkpillar.run("cb", "Beta", "db", "", 0, "2026-01-02T00:00:00.000Z");
+    mkpillar.run("cc", "Confirmed", "dc", "vc", 1, "2026-01-03T00:00:00.000Z");
+    mkpillar.run("cd", "Delta", "dd", "", 0, "2026-01-04T00:00:00.000Z");
+    const mkasset = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, pillar_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    mkasset.run("caa1", "x", "x", "t", "", "{}", "cb", "2026-01-05T00:00:00.000Z");
+    mkasset.run("caa2", "x", "x", "t", "", "{}", "cb", "2026-01-06T00:00:00.000Z");
+    mkasset.run("caa3", "x", "x", "t", "", "{}", "ca", "2026-01-07T00:00:00.000Z");
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, pillar_id, content_type, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run("cs1", "2026-02-01T00:00:00.000Z", "ca", "post", "2026-01-08T00:00:00.000Z");
+    db.prepare(
+      `INSERT INTO queue_templates (id, weekday, time, pillar_id, content_type, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("ct1", 1, "09:00", "ca", "post", "2026-01-08T00:00:00.000Z");
+    const res = applyConsolidation([
+      { name: "Alpha Prime", description: "merged", voiceNotes: "loud", absorbs: ["alpha", "BETA", "Ghost"] },
+      { name: "Confirmed", description: "evil", voiceNotes: "x", absorbs: ["Confirmed"] },
+    ]);
+    assert.deepEqual(res.unmapped, ["Ghost"]);
+    assert.equal(res.merged, 1);
+    assert.equal(res.canonical, 1);
+    // Survivor keeps the richest id (cb had 2 assets), renamed.
+    const survivor = db.prepare(`SELECT id, name, description, voice_notes FROM pillars WHERE id = ?`).get("cb") as {
+      id: string;
+      name: string;
+      description: string;
+      voice_notes: string;
+    };
+    assert.equal(survivor.name, "Alpha Prime");
+    assert.equal(survivor.description, "merged");
+    assert.equal(survivor.voice_notes, "loud");
+    assert.equal(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("ca"), undefined);
+    const links = db.prepare(`SELECT pillar_id FROM assets WHERE id = ?`).get("caa3") as { pillar_id: string };
+    assert.equal(links.pillar_id, "cb");
+    const slot = db.prepare(`SELECT pillar_id FROM queue_slots WHERE id = ?`).get("cs1") as { pillar_id: string };
+    assert.equal(slot.pillar_id, "cb");
+    const tmpl = db.prepare(`SELECT pillar_id FROM queue_templates WHERE id = ?`).get("ct1") as { pillar_id: string };
+    assert.equal(tmpl.pillar_id, "cb");
+    // Confirmed pillar and untouched suggestion survive verbatim.
+    const conf = db.prepare(`SELECT description FROM pillars WHERE id = ?`).get("cc") as { description: string };
+    assert.equal(conf.description, "dc");
+    assert.ok(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("cd"));
+    const vault = db.prepare(`SELECT title, body FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = ?`).get("alpha prime") as {
+      title: string;
+      body: string;
+    };
+    assert.equal(vault.title, "Alpha Prime");
+    assert.ok(vault.body.includes("merged"));
+  });
+});
+
 describe("resetBrain", () => {
   it("wipes vault + analysis marks but keeps every pillar", async () => {
     const { resetBrain } = await import("../lib/analysis");

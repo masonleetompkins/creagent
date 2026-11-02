@@ -321,3 +321,75 @@ export function listPlatforms(): string[] {
     .all() as Array<{ platform: string }>;
   return rows.map((r) => r.platform);
 }
+
+// Score every linked asset against its platform's average and store it.
+// Basis: views where the platform has view averages, else likes. Averages
+// use non-replies only (replies perform on a different curve); replies are
+// still scored against that bar. Idempotent — rerun whenever metrics change.
+export function refreshMultipliers(): number {
+  syncFromAssets();
+  const db = getDb();
+  const platforms = db.prepare(`SELECT DISTINCT platform FROM post_metrics`).all() as Array<{
+    platform: string;
+  }>;
+  const update = db.prepare(`UPDATE assets SET multiplier = ? WHERE id = ?`);
+  let updated = 0;
+  for (const { platform } of platforms) {
+    const rows = db
+      .prepare(
+        `SELECT m.asset_id, m.likes, m.views, COALESCE(a.is_reply, 0) AS is_reply
+         FROM post_metrics m LEFT JOIN assets a ON a.id = m.asset_id
+         WHERE m.platform = ?`,
+      )
+      .all(platform) as Array<{
+      asset_id: string | null;
+      likes: number | null;
+      views: number | null;
+      is_reply: number;
+    }>;
+    const base = rows.filter((r) => !r.is_reply);
+    const avgViews = mean(base.map((r) => r.views));
+    const useViews = avgViews !== null && avgViews > 0;
+    const avg = useViews ? avgViews : mean(base.map((r) => r.likes));
+    if (avg === null || avg === 0) continue;
+    for (const row of rows) {
+      if (!row.asset_id) continue;
+      const value = useViews ? row.views : row.likes;
+      update.run(value === null ? null : Math.round((value / avg) * 100) / 100, row.asset_id);
+      updated++;
+    }
+  }
+  return updated;
+}
+
+export type PillarStat = { posts: number; recent: number; multiplier: number | null };
+
+// Per-pillar post counts (all-time + last ~6 months) and the average stored
+// multiplier of linked posts. AVG ignores NULLs, so unscored posts don't
+// drag the badge.
+export function pillarStats(): Record<string, PillarStat> {
+  const sixmo = new Date(Date.now() - 182 * 24 * 3600 * 1000).toISOString();
+  const rows = getDb()
+    .prepare(
+      `SELECT pillar_id,
+              COUNT(*) AS posts,
+              SUM(CASE WHEN COALESCE(posted_at, created_at) >= ? THEN 1 ELSE 0 END) AS recent,
+              AVG(multiplier) AS multiplier
+       FROM assets WHERE pillar_id IS NOT NULL GROUP BY pillar_id`,
+    )
+    .all(sixmo) as Array<{
+    pillar_id: string;
+    posts: number;
+    recent: number;
+    multiplier: number | null;
+  }>;
+  const out: Record<string, PillarStat> = {};
+  for (const r of rows) {
+    out[r.pillar_id] = {
+      posts: Number(r.posts),
+      recent: Number(r.recent),
+      multiplier: r.multiplier === null ? null : Math.round(r.multiplier * 100) / 100,
+    };
+  }
+  return out;
+}
