@@ -339,15 +339,58 @@ const SYSTEM = `You analyze a content creator's posts and videos. Study the CONT
 "assignments": {"1": "exact pillar name from your pillars list for post 1"}}
 Aim for 3-6 pillars, 4-8 Q&A pairs, 3-6 principles, 3-6 quotes, 2-4 donts, 2-4 examples. Assign EVERY numbered entry to exactly one pillar in assignments, using the exact pillar name. Every voice field must be specific enough for a ghostwriter to imitate: name real habits, not generic praise. Entries marked [DIGEST of ~Nk chars] are faithful condensations of longer pieces — treat their ideas and quotes as real content.`;
 
-function extractJson(text: string): Record<string, unknown> {
+// Extract the first complete top-level JSON object, tolerating fenced
+// blocks, leading prose, and trailing commentary. The old greedy-regex
+// fallback swallowed trailing garbage (including stray braces) into the
+// parse and killed whole runs on valid output.
+export function extractJson(text: string): Record<string, unknown> {
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
-    const match =
-      text.match(/```json\s*([\s\S]*?)```/) ?? text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("model did not return JSON");
-    return JSON.parse(match[1] ?? match[0]) as Record<string, unknown>;
+    /* fall through to the scan */
   }
+  const candidates: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const start = text.indexOf("{", i);
+    if (start === -1) break;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let end = -1;
+    for (let j = start; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+      } else if (ch === '"') {
+        inStr = true;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    if (end === -1) break;
+    candidates.push(text.slice(start, end + 1));
+    i = end + 1;
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as Record<string, unknown>;
+    } catch {
+      /* try the next balanced block */
+    }
+  }
+  console.log(`extractJson failed on model output head: ${text.slice(0, 500)}`);
+  throw new Error(
+    candidates.length > 0 ? "model returned malformed JSON" : "model did not return JSON",
+  );
 }
 
 function asStringArray(value: unknown): string[] {

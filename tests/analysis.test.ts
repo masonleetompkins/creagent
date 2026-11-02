@@ -165,6 +165,25 @@ describe("digest cache", () => {
   });
 });
 
+describe("extractJson", () => {
+  it("tolerates fences, prose, and trailing garbage", async () => {
+    const { extractJson } = await import("../lib/analysis");
+    assert.deepEqual(extractJson(`{"a": 1}`), { a: 1 });
+    assert.deepEqual(extractJson("```json\n{\"a\": 1}\n```"), { a: 1 });
+    assert.deepEqual(extractJson('Here you go: {"a": 1}'), { a: 1 });
+    // The live failure: valid object + trailing commentary with a stray brace.
+    assert.deepEqual(extractJson('{"a": 1} hope this helps } bye'), { a: 1 });
+    // Braces and escaped quotes inside strings don't break balancing.
+    assert.deepEqual(extractJson('{"a": "x { y } \\"q\\""} trailing'), { a: 'x { y } "q"' });
+    // Nested objects stay intact.
+    assert.deepEqual(extractJson('{"a": {"b": [1, {"c": 2}]}}'), { a: { b: [1, { c: 2 }] } });
+    // First parseable balanced block wins.
+    assert.deepEqual(extractJson('{oops} {"a": 1}'), { a: 1 });
+    assert.throws(() => extractJson("no json here"), /did not return JSON/);
+    assert.throws(() => extractJson('{"a": 1'), /did not return JSON/);
+  });
+});
+
 describe("mapAssignments", () => {
   it("resolves names case-insensitively and drops junk", async () => {
     const { mapAssignments } = await import("../lib/analysis");
