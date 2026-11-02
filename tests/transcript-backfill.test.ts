@@ -47,6 +47,56 @@ describe("endpointFor + detectVideo", () => {
   });
 });
 
+describe("runPool", () => {
+  it("runs every item exactly once across lanes", async () => {
+    const { runPool } = await import("../lib/transcript-backfill");
+    const seen: number[] = [];
+    const items = Array.from({ length: 20 }, (_, i) => i);
+    await runPool(items, 4, async (item) => {
+      await new Promise((r) => setTimeout(r, Math.random() * 5));
+      seen.push(item);
+    });
+    assert.deepEqual([...seen].sort((a, b) => a - b), items);
+  });
+
+  it("caps parallelism but actually runs in parallel", async () => {
+    const { runPool } = await import("../lib/transcript-backfill");
+    let active = 0;
+    let maxActive = 0;
+    await runPool(Array.from({ length: 12 }, (_, i) => i), 3, async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+    });
+    assert.ok(maxActive > 1, `expected parallel lanes, saw max ${maxActive}`);
+    assert.ok(maxActive <= 3, `cap exceeded: ${maxActive}`);
+  });
+
+  it("handles empty input and degenerate concurrency", async () => {
+    const { runPool } = await import("../lib/transcript-backfill");
+    let calls = 0;
+    await runPool([], 4, async () => {
+      calls++;
+    });
+    assert.equal(calls, 0);
+    await runPool([1, 2, 3], 0, async () => {
+      calls++;
+    });
+    assert.equal(calls, 3);
+  });
+
+  it("propagates fn errors to the caller", async () => {
+    const { runPool } = await import("../lib/transcript-backfill");
+    await assert.rejects(
+      runPool([1, 2, 3], 2, async (item) => {
+        if (item === 2) throw new Error("boom");
+      }),
+      /boom/,
+    );
+  });
+});
+
 describe("eligibleCount", () => {
   it("counts only untranscribed videos with urls", async () => {
     const { storeAsset } = await import("../lib/ingest");

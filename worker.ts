@@ -94,10 +94,11 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return runMetricsSync();
   }
   if (job.name === "transcribe_backfill") {
-    const { limit } = data;
+    const { limit, concurrency } = data;
     const result = await runTranscriptBackfill(
       typeof limit === "number" ? limit : 500,
       (done, total, spent) => updateProgress(job.id, { done, total, spent }),
+      typeof concurrency === "number" ? { concurrency } : undefined,
     );
     const { total: remaining } = eligibleCount();
     return { ...result, failures: result.failures.slice(0, 10), remaining };

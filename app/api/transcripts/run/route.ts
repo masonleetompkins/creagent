@@ -5,12 +5,19 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const body = (await request.json().catch(() => ({}))) as { batch?: unknown };
+    const body = (await request.json().catch(() => ({}))) as {
+      batch?: unknown;
+      concurrency?: unknown;
+    };
     const batch =
       typeof body.batch === "number" && Number.isFinite(body.batch)
         ? Math.max(1, Math.min(Math.floor(body.batch), 1000))
         : 100;
-    const jobId = enqueue("transcribe_backfill", { limit: batch });
+    const concurrency =
+      typeof body.concurrency === "number" && Number.isFinite(body.concurrency)
+        ? Math.max(1, Math.min(Math.floor(body.concurrency), 12))
+        : undefined;
+    const jobId = enqueue("transcribe_backfill", { limit: batch, concurrency });
     return NextResponse.json({ jobId });
   } catch (error) {
     return NextResponse.json(

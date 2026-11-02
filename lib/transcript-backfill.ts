@@ -92,68 +92,108 @@ export type TranscriptBackfillResult = {
   failures: { asset: string; error: string }[];
 };
 
+export const DEFAULT_TRANSCRIBE_CONCURRENCY = 6;
+export const MAX_TRANSCRIBE_CONCURRENCY = 12;
+
+// Bounded worker pool. Index claiming is atomic (single-threaded event loop),
+// so every item runs exactly once across lanes. Per-item errors belong to fn;
+// a throw here rejects the pool.
+export async function runPool<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  const lanes = Math.max(
+    1,
+    Math.min(Math.floor(concurrency) || 1, Math.max(items.length, 1)),
+  );
+  let next = 0;
+  async function lane(): Promise<void> {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: lanes }, () => lane()));
+}
+
 export async function runTranscriptBackfill(
   limit = 500,
   onProgress?: (done: number, total: number, spent: number) => void,
+  opts?: { concurrency?: number },
 ): Promise<TranscriptBackfillResult> {
   const apiKey = loadKeys().monid;
   if (!apiKey) throw new Error("save a Monid key in Settings first");
   const db = getDb();
   const { total } = eligibleCount();
   const out: TranscriptBackfillResult = { done: 0, failed: 0, skipped: 0, spent: 0, failures: [] };
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      Math.floor(opts?.concurrency ?? DEFAULT_TRANSCRIBE_CONCURRENCY),
+      MAX_TRANSCRIBE_CONCURRENCY,
+    ),
+  );
+  // Snapshot upfront: transcribed_at persists per asset, so reruns resume
+  // without reprocessing, and lanes never contend over the queue.
+  const queue = eligibleAssets(Math.min(limit, 2000));
   let processed = 0;
-  for (;;) {
-    const batch = eligibleAssets(Math.min(50, limit - processed));
-    if (batch.length === 0 || processed >= limit) break;
-    for (const asset of batch) {
-      processed++;
-      try {
-        const def = endpointFor(asset.source);
-        if (!def) {
-          out.skipped++;
-          db.prepare(`UPDATE assets SET transcribed_at = ? WHERE id = ?`).run(nowIso(), asset.id);
-          continue;
-        }
-        const result = await monidRunAndWait(
-          apiKey,
-          "anyapi",
-          def.endpoint,
-          { body: { url: asset.source_url, route: def.route } },
-          { timeoutMs: 300000 },
-        );
-        if (result.status !== "COMPLETED") throw new Error(`monid run ${result.runId}: ${result.status}`);
-        const payload = result.output ?? result.providerResponse;
-        const payloadError = monidPayloadError(payload);
-        if (payloadError) throw new Error(payloadError);
-        const cost = result.cost as { value?: unknown } | undefined;
-        if (typeof cost?.value === "number") out.spent += cost.value;
-        const parsed = parseTranscript(payload);
-        if (!parsed) throw new Error("no transcript in Monid response");
-        if ("notFound" in parsed) {
-          out.skipped++;
-          db.prepare(`UPDATE assets SET transcribed_at = ? WHERE id = ?`).run(nowIso(), asset.id);
-          continue;
-        }
-        const row = db.prepare(`SELECT transcript FROM assets WHERE id = ?`).get(asset.id) as {
-          transcript: string;
-        };
-        const existing = (row.transcript ?? "").trim();
-        const combined = existing ? `${existing}\n\n[Speech transcript]\n${parsed.text}` : parsed.text;
-        db.prepare(`UPDATE assets SET transcript = ?, transcribed_at = ? WHERE id = ?`).run(
-          combined.slice(0, 60000),
-          nowIso(),
-          asset.id,
-        );
-        out.done++;
-      } catch (error) {
-        out.failed++;
+
+  async function processOne(asset: TranscriptEligible): Promise<void> {
+    try {
+      const def = endpointFor(asset.source);
+      if (!def) {
+        out.skipped++;
+        db.prepare(`UPDATE assets SET transcribed_at = ? WHERE id = ?`).run(nowIso(), asset.id);
+        return;
+      }
+      const result = await monidRunAndWait(
+        apiKey,
+        "anyapi",
+        def.endpoint,
+        { body: { url: asset.source_url, route: def.route } },
+        { timeoutMs: 300000 },
+      );
+      if (result.status !== "COMPLETED") throw new Error(`monid run ${result.runId}: ${result.status}`);
+      const payload = result.output ?? result.providerResponse;
+      const payloadError = monidPayloadError(payload);
+      if (payloadError) throw new Error(payloadError);
+      const cost = result.cost as { value?: unknown } | undefined;
+      if (typeof cost?.value === "number") out.spent += cost.value;
+      const parsed = parseTranscript(payload);
+      if (!parsed) throw new Error("no transcript in Monid response");
+      if ("notFound" in parsed) {
+        out.skipped++;
+        db.prepare(`UPDATE assets SET transcribed_at = ? WHERE id = ?`).run(nowIso(), asset.id);
+        return;
+      }
+      const row = db.prepare(`SELECT transcript FROM assets WHERE id = ?`).get(asset.id) as {
+        transcript: string;
+      };
+      const existing = (row.transcript ?? "").trim();
+      const combined = existing ? `${existing}\n\n[Speech transcript]\n${parsed.text}` : parsed.text;
+      db.prepare(`UPDATE assets SET transcript = ?, transcribed_at = ? WHERE id = ?`).run(
+        combined.slice(0, 60000),
+        nowIso(),
+        asset.id,
+      );
+      out.done++;
+    } catch (error) {
+      out.failed++;
+      if (out.failures.length < 50) {
         out.failures.push({
           asset: asset.id,
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      if (onProgress) onProgress(processed, total, out.spent);
     }
   }
+
+  await runPool(queue, concurrency, async (asset) => {
+    await processOne(asset);
+    processed++;
+    if (onProgress) onProgress(processed, total, out.spent);
+  });
   return out;
 }
