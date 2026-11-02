@@ -441,9 +441,13 @@ export default function IngestConsole(): React.ReactNode {
             spent?: number;
             remaining?: number;
             failures?: { asset: string; error: string }[];
+            skipReasons?: Record<string, number>;
           };
+          const reasons = Object.entries(res.skipReasons ?? {})
+            .map(([reason, n]) => `${reason}: ${n}`)
+            .join(", ");
           setTPhase(
-            `Transcribed ${res.done ?? 0}${res.skipped ? `, skipped ${res.skipped} (unavailable)` : ""} — $${(res.spent ?? 0).toFixed(2)} spent, ${res.remaining ?? 0} remaining.` +
+            `Transcribed ${res.done ?? 0}${res.skipped ? `, skipped ${res.skipped} (${reasons || "unavailable"})` : ""} — $${(res.spent ?? 0).toFixed(2)} spent, ${res.remaining ?? 0} remaining.` +
               (res.failed
                 ? ` ${res.failed} failed (${res.failures?.[0]?.error ?? "unknown"}) — re-run to retry.`
                 : ""),

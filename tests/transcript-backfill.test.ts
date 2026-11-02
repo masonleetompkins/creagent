@@ -29,6 +29,81 @@ describe("parseTranscript", () => {
     assert.equal(parseTranscript(null), null);
     assert.equal(parseTranscript("nope"), null);
   });
+
+  it("reads the Instagram items shape (live probe)", async () => {
+    const { parseTranscript } = await import("../lib/transcript-backfill");
+    assert.deepEqual(
+      parseTranscript({
+        found: true,
+        data: {
+          items: [
+            {
+              shortcode: "Dc4A15nSDli",
+              text: "Explain like I'm five. AI agents.",
+              source: "audio_asr",
+              segments: [{ text: "Explain like I'm five.", start: 0.16, end: 1.12 }],
+            },
+          ],
+        },
+      }),
+      { text: "Explain like I'm five. AI agents." },
+    );
+    assert.deepEqual(
+      parseTranscript({
+        data: { items: [{ segments: [{ text: "a" }, { text: "b" }] }] },
+      }),
+      { text: "a b" },
+    );
+    assert.deepEqual(parseTranscript({ items: [{ text: "top-level items" }] }), {
+      text: "top-level items",
+    });
+    assert.equal(parseTranscript({ data: { items: [{ views: 3 }] } }), null);
+    assert.equal(parseTranscript({ data: { items: [] } }), null);
+  });
+});
+
+describe("photo guards + empty strikes", () => {
+  it("spots photo posts by url and raw markers", async () => {
+    const { isPhotoUrl, isPhotoRaw } = await import("../lib/transcript-backfill");
+    assert.equal(isPhotoUrl("tiktok_videos", "https://www.tiktok.com/@u/photo/123"), true);
+    assert.equal(isPhotoUrl("tiktok_videos", "https://www.tiktok.com/@u/video/123"), false);
+    assert.equal(isPhotoUrl("x_posts", "https://www.tiktok.com/@u/photo/123"), false);
+    assert.equal(isPhotoRaw({ productType: "carousel_container" }), true);
+    assert.equal(isPhotoRaw({ productType: "feed" }), true);
+    assert.equal(isPhotoRaw({ mediaType: "photo" }), true);
+    assert.equal(isPhotoRaw({ productType: "carousel_container", durationSeconds: 10 }), false);
+    assert.equal(isPhotoRaw({ productType: "clips", durationSeconds: 89 }), false);
+    assert.equal(isPhotoRaw({ productType: "clips" }), false);
+    assert.equal(isPhotoRaw(null), false);
+    assert.equal(isPhotoRaw({}), false);
+  });
+
+  it("counts clean-empty results per asset", async () => {
+    const { storeAsset } = await import("../lib/ingest");
+    const { noteEmptyResult } = await import("../lib/transcript-backfill");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    storeAsset(db, {
+      source: "tiktok_videos",
+      sourceUrl: "https://tiktok.com/@u/video/9",
+      title: "v9",
+      transcript: "",
+      metadata: {},
+      postedAt: null,
+      isReply: false,
+      isVideo: true,
+      transcribedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const row = db
+      .prepare(`SELECT id FROM assets WHERE source_url = ?`)
+      .get("https://tiktok.com/@u/video/9") as { id: string };
+    assert.equal(noteEmptyResult(db, row.id), 1);
+    assert.equal(noteEmptyResult(db, row.id), 2);
+    const meta = db.prepare(`SELECT metadata FROM assets WHERE id = ?`).get(row.id) as {
+      metadata: string;
+    };
+    assert.equal((JSON.parse(meta.metadata) as { transcript_empty_hits: number }).transcript_empty_hits, 2);
+  });
 });
 
 describe("endpointFor + detectVideo", () => {
