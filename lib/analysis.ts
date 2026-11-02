@@ -7,7 +7,7 @@ import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
 import { pillarStats, refreshMultipliers } from "./metrics";
 
-const MAX_ASSETS = 40;
+const MAX_ASSETS = 100;
 const MAX_ASSET_CHARS = 8000;
 const MAX_TOTAL_CHARS = 80000;
 // Digested assets cost this much budget; digests are clamped to it.
@@ -619,9 +619,9 @@ export async function runAnalysis(
     {
       model: metaTextModel(),
       input: `${SYSTEM}\n\nCONTENT:\n${corpus}`,
-      max_output_tokens: 8000,
+      max_output_tokens: 12000,
     },
-    { timeout: 180000 },
+    { timeout: 240000 },
   );
   if (onProgress) onProgress(0, picked.length, "Writing pillars + vault…");
   const parsed = extractJson(resp.output_text);

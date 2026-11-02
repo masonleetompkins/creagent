@@ -35,6 +35,81 @@ const TYPES = [
   { id: "metric", label: "Metrics" },
 ];
 
+// Minimal markdown renderer for the voice profile (headings, lists,
+// paragraphs, bold, code). React escapes text nodes, so raw HTML in the
+// body can never execute.
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    const key = `${keyPrefix}-${i}`;
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={key}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return <code key={key}>{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+}
+
+export function VoiceMarkdown({ body }: { body: string }): React.ReactNode {
+  const blocks: React.ReactNode[] = [];
+  let para: string[] = [];
+  let list: string[] = [];
+  const flushPara = (): void => {
+    const text = para.join(" ").trim();
+    para = [];
+    if (text) {
+      const key = `p-${blocks.length}`;
+      blocks.push(<p key={key}>{renderInline(text, key)}</p>);
+    }
+  };
+  const flushList = (): void => {
+    if (list.length === 0) return;
+    const items = list;
+    list = [];
+    const key = `ul-${blocks.length}`;
+    blocks.push(
+      <ul key={key}>
+        {items.map((item, i) => (
+          <li key={i}>{renderInline(item, `${key}-${i}`)}</li>
+        ))}
+      </ul>,
+    );
+  };
+  let seenContent = false;
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    if (!seenContent) {
+      seenContent = true;
+      // The doc's own title duplicates the section header — drop it.
+      if (/^# Voice profile\s*$/i.test(line)) continue;
+    }
+    const hm = line.match(/^(#{1,3})\s+(.*)$/);
+    const li = line.match(/^[-*]\s+(.*)$/);
+    if (hm) {
+      flushPara();
+      flushList();
+      const key = `h-${blocks.length}`;
+      const Tag = hm[1].length >= 3 ? "h4" : "h3";
+      blocks.push(<Tag key={key}>{renderInline(hm[2], key)}</Tag>);
+    } else if (li) {
+      flushPara();
+      list.push(li[1]);
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  flushPara();
+  flushList();
+  return <div className="voice-md">{blocks}</div>;
+}
+
 export default function BrainConsole({ pillars }: { pillars?: React.ReactNode }): React.ReactNode {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [docs, setDocs] = useState<VaultDoc[]>([]);
@@ -289,7 +364,7 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           </>
         ) : (
           <>
-            <p style={{ whiteSpace: "pre-wrap" }}>{overview.voice.body}</p>
+            <VoiceMarkdown body={overview.voice.body} />
             <div className="row">
               <button
                 onClick={() => {

@@ -319,7 +319,7 @@ export default function IngestConsole(): React.ReactNode {
     }
   }
 
-  // Analysis runs in batches of up to 40 assets per job; loop until a batch
+  // Analysis runs in batches of up to 100 assets per job; loop until a batch
   // finds nothing left, counting completions as they land.
   async function runAnalysisLoop(): Promise<{ analyzed: number; batches: number }> {
     let total = unanalyzed;
