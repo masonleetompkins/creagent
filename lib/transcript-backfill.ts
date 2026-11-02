@@ -289,7 +289,7 @@ export async function runTranscriptBackfill(
       const existing = (row.transcript ?? "").trim();
       const combined = existing ? `${existing}\n\n[Speech transcript]\n${parsed.text}` : parsed.text;
       db.prepare(`UPDATE assets SET transcript = ?, transcribed_at = ? WHERE id = ?`).run(
-        combined.slice(0, 60000),
+        combined.slice(0, 120000),
         nowIso(),
         asset.id,
       );

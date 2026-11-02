@@ -38,6 +38,27 @@ describe("normalizeUrl + detectReply + storeAsset", () => {
     assert.equal(normalizeUrl("https://m.facebook.com/x/?a=b"), "facebook.com/x");
     assert.equal(normalizeUrl("zernio:x:9"), "zernio:x:9");
     assert.equal(normalizeUrl(""), "");
+    assert.equal(
+      normalizeUrl("https://www.youtube.com/watch?v=MuBuosFvpZ4"),
+      "youtube.com/watch?v=MuBuosFvpZ4",
+    );
+    assert.notEqual(
+      normalizeUrl("https://www.youtube.com/watch?v=AAA"),
+      normalizeUrl("https://www.youtube.com/watch?v=BBB"),
+    );
+    assert.equal(
+      normalizeUrl("https://www.youtube.com/watch?v=AAA&t=30s&si=xyz"),
+      "youtube.com/watch?v=AAA",
+    );
+    assert.equal(normalizeUrl("https://youtu.be/AAA"), "youtube.com/watch?v=AAA");
+    assert.equal(
+      normalizeUrl("https://www.youtube.com/shorts/AAA"),
+      "youtube.com/watch?v=AAA",
+    );
+    assert.equal(
+      normalizeUrl("https://www.facebook.com/watch?v=123"),
+      "facebook.com/watch?v=123",
+    );
     assert.equal(detectReply({ referenced_tweets: [{ type: "replied_to" }] }), true);
     assert.equal(detectReply({ in_reply_to_status_id: "123" }), true);
     assert.equal(detectReply({ post_type: "reply" }), true);

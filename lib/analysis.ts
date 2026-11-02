@@ -7,15 +7,85 @@ import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
 
 const MAX_ASSETS = 40;
-const MAX_ASSET_CHARS = 4000;
-const MAX_TOTAL_CHARS = 50000;
+const MAX_ASSET_CHARS = 8000;
+const MAX_TOTAL_CHARS = 80000;
+// Digested assets cost this much budget; digests are clamped to it.
+export const DIGEST_CHARS = 3000;
+// Hard input clamp for the digest call itself (~50k tokens, well in-window).
+const DIGEST_INPUT_CLAMP = 200000;
 
-type AssetRow = {
+export type AssetRow = {
   id: string;
   source: string;
   title: string | null;
   transcript: string | null;
 };
+
+// Split picked rows into direct inclusions vs. long transcripts that need a
+// dedicated digest pass. Pure over row lengths so it can be unit-tested.
+export function planCorpus(rows: AssetRow[]): { direct: AssetRow[]; digest: AssetRow[] } {
+  const direct: AssetRow[] = [];
+  const digest: AssetRow[] = [];
+  let total = 0;
+  for (const row of rows) {
+    const len = (row.transcript ?? "").length;
+    const cost = len > MAX_ASSET_CHARS ? DIGEST_CHARS : len;
+    if (total + cost > MAX_TOTAL_CHARS) break;
+    total += cost;
+    (len > MAX_ASSET_CHARS ? digest : direct).push(row);
+  }
+  return { direct, digest };
+}
+
+const DIGEST_SYSTEM = `You distill a long transcript for a creator-analysis pipeline. Read the TRANSCRIPT and output plain compact text (no preamble, no markdown headers) under 2500 characters covering, in order: (1) the ideas and arguments made, in the order raised; (2) key stories, examples, and stances; (3) 2-4 short verbatim lines worth quoting; (4) 2-3 short verbatim excerpts showing how they speak. Never invent content; compress, don't summarize away specifics.`;
+
+export async function digestLongTranscript(
+  client: ReturnType<typeof getMetaClient>,
+  title: string,
+  transcript: string,
+): Promise<string> {
+  const resp = await client.responses.create(
+    {
+      model: metaTextModel(),
+      input: `${DIGEST_SYSTEM}\n\nTITLE: ${title}\n\nTRANSCRIPT:\n${transcript.slice(0, DIGEST_INPUT_CLAMP)}`,
+      max_output_tokens: 1200,
+    },
+    { timeout: 180000 },
+  );
+  return resp.output_text.trim().slice(0, DIGEST_CHARS);
+}
+
+type DigestCache = { chars: number; digest: string };
+
+// Digests are cached on the asset so regenerates don't re-bill them.
+export function readDigestCache(db: DatabaseSync, id: string, chars: number): string | null {
+  try {
+    const row = db.prepare(`SELECT metadata FROM assets WHERE id = ?`).get(id) as {
+      metadata: string;
+    };
+    const meta = JSON.parse(row.metadata || "{}") as { transcript_digest?: DigestCache };
+    const cached = meta.transcript_digest;
+    if (cached && cached.chars === chars && cached.digest) return cached.digest;
+  } catch {
+    /* no usable cache */
+  }
+  return null;
+}
+
+export function writeDigestCache(db: DatabaseSync, id: string, chars: number, digest: string): void {
+  let meta: Record<string, unknown> = {};
+  try {
+    const row = db.prepare(`SELECT metadata FROM assets WHERE id = ?`).get(id) as {
+      metadata: string;
+    };
+    const parsed: unknown = JSON.parse(row.metadata || "{}");
+    if (parsed && typeof parsed === "object") meta = parsed as Record<string, unknown>;
+  } catch {
+    /* start fresh */
+  }
+  meta["transcript_digest"] = { chars, digest } satisfies DigestCache;
+  db.prepare(`UPDATE assets SET metadata = ? WHERE id = ?`).run(JSON.stringify(meta), id);
+}
 
 export type AnalysisResult = {
   assetsAnalyzed: number;
@@ -37,7 +107,7 @@ const SYSTEM = `You analyze a content creator's posts and videos. Study the CONT
 "qa": [{"q": "a question their audience would ask", "a": "the creator's likely answer in their voice"}],
 "principles": ["a belief or rule that guides their content"],
 "quotes": ["a quotable line in their voice, invented or paraphrased from the content"]}
-Aim for 3-6 pillars, 4-8 Q&A pairs, 3-6 principles, 3-6 quotes, 2-4 donts, 2-4 examples. Every voice field must be specific enough for a ghostwriter to imitate: name real habits, not generic praise.`;
+Aim for 3-6 pillars, 4-8 Q&A pairs, 3-6 principles, 3-6 quotes, 2-4 donts, 2-4 examples. Every voice field must be specific enough for a ghostwriter to imitate: name real habits, not generic praise. Entries marked [DIGEST of ~Nk chars] are faithful condensations of longer pieces — treat their ideas and quotes as real content.`;
 
 function extractJson(text: string): Record<string, unknown> {
   try {
@@ -207,23 +277,52 @@ export async function runAnalysis(
     .all(Math.max(1, Math.min(limit, MAX_ASSETS))) as AssetRow[];
   if (rows.length === 0) return { assetsAnalyzed: 0, pillars: 0, vaultDocs: 0 };
 
-  let total = 0;
-  const picked: AssetRow[] = [];
-  for (const row of rows) {
-    const len = Math.min((row.transcript ?? "").length, MAX_ASSET_CHARS);
-    if (total + len > MAX_TOTAL_CHARS) break;
-    total += len;
-    picked.push(row);
+  const { direct, digest } = planCorpus(rows);
+  const picked = [...direct, ...digest];
+  if (picked.length === 0) return { assetsAnalyzed: 0, pillars: 0, vaultDocs: 0 };
+  const client = getMetaClient(metaKey);
+  // Long transcripts get a dedicated digest pass so nothing is silently cut;
+  // a failed digest falls back to head truncation rather than failing the batch.
+  const digests = new Map<string, string>();
+  if (digest.length > 0) {
+    if (onProgress) {
+      onProgress(
+        0,
+        picked.length,
+        `Distilling ${digest.length} long transcript${digest.length === 1 ? "" : "s"}…`,
+      );
+    }
+    for (const row of digest) {
+      const text = row.transcript ?? "";
+      const cached = readDigestCache(db, row.id, text.length);
+      if (cached) {
+        digests.set(row.id, cached);
+        continue;
+      }
+      try {
+        const d = await digestLongTranscript(client, row.title ?? "", text);
+        writeDigestCache(db, row.id, text.length, d);
+        digests.set(row.id, d);
+      } catch (error) {
+        console.log(
+          `digest failed for ${row.id}: ${(error as Error).message} — using head truncation`,
+        );
+      }
+    }
   }
   const corpus = picked
-    .map(
-      (row, i) =>
-        `[${i + 1}] (${row.source}) ${row.title ?? ""}\n${(row.transcript ?? "").slice(0, MAX_ASSET_CHARS)}`,
-    )
+    .map((row, i) => {
+      const text = row.transcript ?? "";
+      const d = digests.get(row.id);
+      if (d) {
+        const k = Math.max(1, Math.round(text.length / 1000));
+        return `[${i + 1}] (${row.source}) ${row.title ?? ""}\n[DIGEST of ~${k}k chars]\n${d}`;
+      }
+      return `[${i + 1}] (${row.source}) ${row.title ?? ""}\n${text.slice(0, MAX_ASSET_CHARS)}`;
+    })
     .join("\n\n---\n\n");
 
   if (onProgress) onProgress(0, picked.length, `Analyzing ${picked.length} posts…`);
-  const client = getMetaClient(metaKey);
   const resp = await client.responses.create(
     {
       model: metaTextModel(),

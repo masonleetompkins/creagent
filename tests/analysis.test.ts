@@ -122,6 +122,49 @@ describe("upsertPillar", () => {
   });
 });
 
+describe("planCorpus", () => {
+  it("routes long transcripts to digest and respects the budget", async () => {
+    const { planCorpus, DIGEST_CHARS } = await import("../lib/analysis");
+    const row = (id: string, chars: number) => ({
+      id,
+      source: "x",
+      title: null,
+      transcript: "x".repeat(chars),
+    });
+    const short = row("s", 1000);
+    const long = row("l", 50000);
+    const plan = planCorpus([short, long]);
+    assert.deepEqual(plan.direct.map((r) => r.id), ["s"]);
+    assert.deepEqual(plan.digest.map((r) => r.id), ["l"]);
+    assert.ok(DIGEST_CHARS <= 8000);
+    // Budget overflow stops the pick: fill ~80k with shorts, the tail waits.
+    const many = Array.from({ length: 40 }, (_, i) => row(`m${i}`, 3000));
+    const full = planCorpus([...many, row("tail", 100)]);
+    assert.ok(full.direct.length < 41);
+    assert.deepEqual(full.digest, []);
+    const ids = new Set(full.direct.map((r) => r.id));
+    assert.ok(!ids.has("tail"));
+    assert.equal(planCorpus([]).direct.length, 0);
+  });
+});
+
+describe("digest cache", () => {
+  it("round-trips and invalidates on length change", async () => {
+    const { readDigestCache, writeDigestCache } = await import("../lib/analysis");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run("dc1", "x", "x", "t", "hello", "{}", "2026-01-01T00:00:00.000Z");
+    assert.equal(readDigestCache(db, "dc1", 5), null);
+    writeDigestCache(db, "dc1", 5, "greeting");
+    assert.equal(readDigestCache(db, "dc1", 5), "greeting");
+    assert.equal(readDigestCache(db, "dc1", 6), null);
+    assert.equal(readDigestCache(db, "missing", 5), null);
+  });
+});
+
 describe("resetBrain", () => {
   it("wipes vault + analysis marks but keeps every pillar", async () => {
     const { resetBrain } = await import("../lib/analysis");

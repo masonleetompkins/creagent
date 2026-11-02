@@ -6,6 +6,10 @@ import { loadKeys } from "./keys";
 import { monidRunAndWait } from "./monid";
 import { zernioAccountPosts, zernioAccounts } from "./zernio";
 
+// Stored-transcript ceiling: high enough for multi-hour talks (~50k chars/hr
+// of speech). Analysis budgets the corpus separately; ingest keeps everything.
+export const MAX_TRANSCRIPT_CHARS = 100000;
+
 export const INGEST_SOURCES = {
   x_posts: {
     label: "X posts by handle",
@@ -92,7 +96,23 @@ export function normalizeUrl(raw: string): string {
     const parsed = new URL(trimmed);
     let host = parsed.hostname.toLowerCase().replace(/^(m|mobile|www)\./, "");
     if (host === "twitter.com") host = "x.com";
+    // Short links carry the id in the path — canonicalize to the watch form.
+    if (host === "youtu.be") {
+      const id = parsed.pathname.replace(/\/+$/, "").replace(/^\//, "");
+      if (id && !id.includes("/")) return `youtube.com/watch?v=${id}`;
+    }
     const path = parsed.pathname.replace(/\/+$/, "");
+    if (host === "youtube.com" && path.startsWith("/shorts/")) {
+      const id = path.slice("/shorts/".length);
+      if (id && !id.includes("/")) return `youtube.com/watch?v=${id}`;
+    }
+    // Most platforms identify posts by path, but YouTube/Facebook watch URLs
+    // identify by the ?v= query param — stripping it collapses every video
+    // into one entry. Preserve v, drop tracking params.
+    if ((host === "youtube.com" || host === "facebook.com") && path === "/watch") {
+      const v = parsed.searchParams.get("v");
+      if (v) return `${host}/watch?v=${v}`;
+    }
     return `${host}${path}`;
   } catch {
     return trimmed
@@ -179,7 +199,7 @@ function itemToAsset(item: Record<string, unknown>): {
   const url = pick(item, "url", "link", "permalink", "video_url", "post_url");
   return {
     title: title.slice(0, 300),
-    transcript: text.slice(0, 20000),
+    transcript: text.slice(0, MAX_TRANSCRIPT_CHARS),
     sourceUrl: url || null,
     postedAt: parsePostedAt(item),
   };
@@ -623,7 +643,7 @@ export async function runZernioIngest(
         source,
         sourceUrl: url || null,
         title,
-        transcript: text.slice(0, 20000),
+        transcript: text.slice(0, MAX_TRANSCRIPT_CHARS),
         metadata: { accountId, platform: account.platform, raw: truncateRaw(post, 4) },
         postedAt,
         isReply: detectReply(post),
