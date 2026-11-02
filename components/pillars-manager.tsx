@@ -12,6 +12,16 @@ type Pillar = {
   posts?: number;
   recent?: number;
   multiplier?: number | null;
+  byPlatform?: Record<string, { posts: number; multiplier: number | null }>;
+};
+
+const PLATFORM_SHORT: Record<string, string> = {
+  instagram: "ig",
+  youtube: "yt",
+  tiktok: "tt",
+  threads: "th",
+  x: "x",
+  other: "other",
 };
 
 type Draft = { name: string; description: string; voiceNotes: string };
@@ -180,11 +190,25 @@ export default function PillarsManager(): React.ReactNode {
         {typeof p.multiplier === "number" && (
           <span
             className={`mult-badge${p.multiplier >= 1.5 ? " hot" : ""}`}
-            title="Average performance vs your per-platform average"
+            title="Median-based average on this pillar's primary platform vs that platform's typical post"
           >
             {p.multiplier.toFixed(1)}x avg
           </span>
         )}
+        {p.byPlatform &&
+          Object.entries(p.byPlatform).filter(([, s]) => s.posts > 0).length > 1 && (
+            <span className="platform-chips" title="Per-platform averages (replies excluded)">
+              {Object.entries(p.byPlatform)
+                .filter(([, s]) => s.posts > 0)
+                .sort((a, b) => b[1].posts - a[1].posts)
+                .map(([platform, s]) => (
+                  <span key={platform} className="platform-chip">
+                    {PLATFORM_SHORT[platform] ?? platform}{" "}
+                    {typeof s.multiplier === "number" ? `${s.multiplier.toFixed(1)}x` : "—"}
+                  </span>
+                ))}
+            </span>
+          )}
       </div>
       <div className="pillar-btns">
         <button onClick={() => void save(p.id)} title="Save edits">

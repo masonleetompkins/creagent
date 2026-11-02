@@ -235,3 +235,47 @@ describe("assets posted_at migration", () => {
     assert.equal(row.posted_at, "2026-08-01T00:00:00.000Z");
   });
 });
+
+describe("detectReply + detectRetweet + backfillReplyFlags", () => {
+  it("reads provider flags and retweet markers", async () => {
+    const { detectReply, detectRetweet } = await import("../lib/ingest");
+    assert.equal(detectReply({ isReply: true }), true);
+    assert.equal(detectReply({ is_reply: true }), true);
+    assert.equal(detectReply({ isReply: false, text: "original" }), false);
+    assert.equal(detectRetweet({ isRetweet: true }), true);
+    assert.equal(detectRetweet({ retweeted_status: { id: "1" } }), true);
+    assert.equal(detectRetweet({ referenced_tweets: [{ type: "retweeted" }] }), true);
+    assert.equal(detectRetweet({ text: "RT @dhh: invent the future" }), true);
+    assert.equal(detectRetweet({ text: "discount starts today" }), false);
+    assert.equal(detectRetweet({ text: "original thought" }), false);
+  });
+
+  it("upgrades stored assets to reply flags without touching originals", async () => {
+    const { backfillReplyFlags } = await import("../lib/ingest");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    const insert = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run(
+      "bf1", "x_posts", "x", "t", "", JSON.stringify({ raw: { isReply: true, text: "a reply" } }),
+      0, "2026-01-01T00:00:00.000Z",
+    );
+    insert.run(
+      "bf2", "x_posts", "x", "t", "", JSON.stringify({ raw: { text: "RT @x: not mine" } }),
+      0, "2026-01-01T00:00:00.000Z",
+    );
+    insert.run(
+      "bf3", "x_posts", "x", "t", "", JSON.stringify({ raw: { isReply: false, text: "mine" } }),
+      0, "2026-01-01T00:00:00.000Z",
+    );
+    assert.ok(backfillReplyFlags() >= 2);
+    const flag = (id: string): number =>
+      (db.prepare(`SELECT is_reply FROM assets WHERE id = ?`).get(id) as { is_reply: number }).is_reply;
+    assert.equal(flag("bf1"), 1);
+    assert.equal(flag("bf2"), 1);
+    assert.equal(flag("bf3"), 0);
+    assert.equal(backfillReplyFlags(), 0);
+  });
+});

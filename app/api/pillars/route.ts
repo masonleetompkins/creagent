@@ -18,6 +18,7 @@ export async function GET(): Promise<NextResponse> {
       row["posts"] = st?.posts ?? 0;
       row["recent"] = st?.recent ?? 0;
       row["multiplier"] = st?.multiplier ?? null;
+      row["byPlatform"] = st?.byPlatform ?? {};
     }
     return NextResponse.json({ pillars: rows });
   } catch (error) {

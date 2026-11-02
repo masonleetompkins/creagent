@@ -100,6 +100,11 @@ describe("platformForSource", () => {
     assert.equal(platformForSource("tiktok_videos"), "tiktok");
     assert.equal(platformForSource("instagram_posts"), "instagram");
     assert.equal(platformForSource("youtube_transcript"), "youtube");
+    assert.equal(platformForSource("zernio_twitter"), "x");
+    assert.equal(platformForSource("zernio_tiktok"), "tiktok");
+    assert.equal(platformForSource("zernio_instagram"), "instagram");
+    assert.equal(platformForSource("zernio_youtube"), "youtube");
+    assert.equal(platformForSource("zernio_threads"), "threads");
     assert.equal(platformForSource("something_new"), "other");
   });
 });
@@ -136,7 +141,104 @@ describe("refreshMultipliers", () => {
     assert.equal(mult("m3"), 13.33);
     assert.equal(mult("m4"), null);
     const stats = pillarStats();
-    assert.deepEqual(stats["pp1"], { posts: 2, recent: 1, multiplier: 1 });
+    assert.deepEqual(stats["pp1"], {
+      posts: 2,
+      recent: 1,
+      multiplier: 1,
+      byPlatform: { x: { posts: 2, multiplier: 1 } },
+    });
     assert.equal(stats["missing"], undefined);
+  });
+});
+
+describe("median-based scoring", () => {
+  it("uses the median so viral hits don't inflate the bar", () => {
+    const avg = computeAverages([
+      post({ likes: 10 }),
+      post({ likes: 20 }),
+      post({ likes: 1000 }),
+    ]);
+    assert.equal(avg.likes, 20);
+    const [a, , c] = scorePosts(
+      [post({ id: "a", likes: 10 }), post({ id: "b", likes: 20 }), post({ id: "c", likes: 1000 })],
+      avg,
+    );
+    assert.equal(a.multipliers.likes, 0.5);
+    assert.equal(c.multipliers.likes, 50);
+  });
+
+  it("treats zero views as missing, never as a real zero", () => {
+    assert.deepEqual(extractEngagement({ views: 0, likes: 5 }), {
+      likes: 5,
+      comments: null,
+      shares: null,
+      views: null,
+    });
+  });
+
+  it("scores likes-only posts against the likes median (per-row fallback)", async () => {
+    const { getDb } = await import("../lib/db");
+    const { refreshMultipliers } = await import("../lib/metrics");
+    const db = getDb();
+    const recent = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
+    db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("pp2", "P2", "", "", 0, "2026-01-01T00:00:00.000Z");
+    const insert = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const raw = (o: unknown): string => JSON.stringify({ raw: o });
+    // Views median = 200; likes median over the likes-only rows = 60.
+    insert.run("g1", "instagram_posts", "ig", "t", "", raw({ viewCount: 400 }), 0, "pp2", null, recent);
+    insert.run("g2", "instagram_posts", "ig", "t", "", raw({ viewCount: 200 }), 0, null, null, recent);
+    insert.run("g3", "instagram_posts", "ig", "t", "", raw({ viewCount: 100 }), 0, null, null, recent);
+    insert.run("g4", "instagram_posts", "ig", "t", "", raw({ likeCount: 90 }), 0, "pp2", null, recent);
+    insert.run("g5", "instagram_posts", "ig", "t", "", raw({ likeCount: 30 }), 0, null, null, recent);
+    insert.run("x1", "x_posts", "x", "t", "", raw({ likeCount: 150 }), 0, "pp2", null, recent);
+    assert.ok(refreshMultipliers() >= 6);
+    const mult = (id: string): number | null =>
+      (db.prepare(`SELECT multiplier FROM assets WHERE id = ?`).get(id) as { multiplier: number | null }).multiplier;
+    assert.equal(mult("g1"), 2);
+    assert.equal(mult("g2"), 1);
+    assert.equal(mult("g3"), 0.5);
+    assert.equal(mult("g4"), 1.5);
+    assert.equal(mult("g5"), 0.5);
+    // x likes median over non-replies [100, 50, 150] = 100.
+    assert.equal(mult("x1"), 1.5);
+  });
+
+  it("repairs stale 'other' platforms from the asset source", async () => {
+    const { getDb } = await import("../lib/db");
+    const { backfillMetricPlatforms } = await import("../lib/metrics");
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("yt1", "zernio_youtube", "yt", "t", "", "{}", 0, null, null, "2026-01-01T00:00:00.000Z");
+    db.prepare(
+      `INSERT INTO post_metrics (id, asset_id, platform, likes, collected_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run("pm-stale", "yt1", "other", 67, "2026-01-01T00:00:00.000Z");
+    assert.ok(backfillMetricPlatforms() >= 1);
+    const row = db.prepare(`SELECT platform FROM post_metrics WHERE id = ?`).get("pm-stale") as {
+      platform: string;
+    };
+    assert.equal(row.platform, "youtube");
+    assert.equal(backfillMetricPlatforms(), 0);
+  });
+
+  it("reports per-platform pillar stats with a primary-platform headline", async () => {
+    const { pillarStats } = await import("../lib/metrics");
+    const stats = pillarStats();
+    // pp2: g1 (ig 2.0), g4 (ig 1.5), x1 (x 1.5). Primary = instagram (2 posts).
+    assert.deepEqual(stats["pp2"], {
+      posts: 3,
+      recent: 3,
+      multiplier: 1.75,
+      byPlatform: {
+        instagram: { posts: 2, multiplier: 1.75 },
+        x: { posts: 1, multiplier: 1.5 },
+      },
+    });
   });
 });

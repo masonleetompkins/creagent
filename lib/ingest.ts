@@ -151,9 +151,10 @@ export function normalizeUrl(raw: string): string {
 }
 
 // Reply detection for X/Threads (and any source using the same markers):
-// referenced_tweets with replied_to, in_reply_to_*/parent_* ids, or an
-// explicit reply post type.
+// referenced_tweets with replied_to, in_reply_to_*/parent_* ids, an
+// explicit reply post type, or a provider isReply flag (Monid).
 export function detectReply(item: Record<string, unknown>): boolean {
+  if (item["isReply"] === true || item["is_reply"] === true) return true;
   const refs = item["referenced_tweets"];
   if (
     Array.isArray(refs) &&
@@ -181,6 +182,52 @@ export function detectReply(item: Record<string, unknown>): boolean {
     item["post_type"] ?? item["type"] ?? item["kind"] ?? "",
   ).toLowerCase();
   return t === "reply" || t === "comment" || t === "response";
+}
+
+// Retweets amplify someone else's content, so their engagement must not set
+// the bar for original posts. Flagged into is_reply alongside replies:
+// excluded from medians, still scored for reference.
+export function detectRetweet(item: Record<string, unknown>): boolean {
+  if (item["isRetweet"] === true || item["is_retweet"] === true) return true;
+  if (item["retweeted_status"] !== null && item["retweeted_status"] !== undefined) return true;
+  const refs = item["referenced_tweets"];
+  if (
+    Array.isArray(refs) &&
+    refs.some((r) => isObj(r) && String(r["type"] ?? "").toLowerCase() === "retweeted")
+  ) {
+    return true;
+  }
+  for (const key of ["text", "message", "caption", "content", "full_text"]) {
+    const v = item[key];
+    if (typeof v === "string" && /^rt @\S+/i.test(v.trim())) return true;
+  }
+  return false;
+}
+
+// Re-run reply/retweet detection over stored metadata for assets ingested
+// before the flags existed. Upgrade-only (0 → 1); idempotent.
+export function backfillReplyFlags(): number {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT id, metadata FROM assets WHERE is_reply = 0 OR is_reply IS NULL`)
+    .all() as Array<{ id: string; metadata: string }>;
+  const update = db.prepare(`UPDATE assets SET is_reply = 1 WHERE id = ?`);
+  let fixed = 0;
+  for (const row of rows) {
+    let meta: Record<string, unknown>;
+    try {
+      meta = JSON.parse(row.metadata) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const raw = (meta.raw ?? meta) as Record<string, unknown>;
+    if (typeof raw !== "object" || raw === null) continue;
+    if (detectReply(raw) || detectRetweet(raw)) {
+      update.run(row.id);
+      fixed++;
+    }
+  }
+  return fixed;
 }
 
 function pick(item: Record<string, unknown>, ...keys: string[]): string {
@@ -571,7 +618,7 @@ export async function runIngest(
         transcript: asset.transcript,
         metadata: { runId: result.runId, raw: truncateRaw(item, 4) },
         postedAt: asset.postedAt,
-        isReply: detectReply(item),
+        isReply: detectReply(item) || detectRetweet(item),
         isVideo: transcriptSource || detectVideo(source, item),
         transcribedAt: transcriptSource ? nowIso() : null,
       });
@@ -676,7 +723,7 @@ export async function runZernioIngest(
         transcript: text.slice(0, MAX_TRANSCRIPT_CHARS),
         metadata: { accountId, platform: account.platform, raw: truncateRaw(post, 4) },
         postedAt,
-        isReply: detectReply(post),
+        isReply: detectReply(post) || detectRetweet(post),
         isVideo: detectVideo(source, post),
         transcribedAt: null,
       });
