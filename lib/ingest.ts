@@ -4,7 +4,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { clearSyncState, getDb, getSyncState, nowIso, setSyncState } from "./db";
 import { loadKeys } from "./keys";
 import { monidRunAndWait } from "./monid";
-import { zernioAccountPosts, zernioAccounts } from "./zernio";
+import { zernioAccountPosts, zernioAccounts, zernioAnalyticsPage } from "./zernio";
+import {
+  engagementEmpty,
+  extractEngagement,
+  platformForSource,
+  upsertMetricForAsset,
+} from "./metrics";
 
 // Stored-transcript ceiling: high enough for multi-hour talks (~50k chars/hr
 // of speech). Analysis budgets the corpus separately; ingest keeps everything.
@@ -734,4 +740,109 @@ export async function runZernioIngest(
     if (onProgress) await onProgress(assets);
   }
   return { assets, skipped, duplicates, accounts: done };
+}
+
+export type ZernioBackfillResult = {
+  entries: number;
+  assets: number;
+  merged: number;
+  skipped: number;
+};
+
+// Map one /v1/analytics list entry to an asset row. Null when the entry
+// carries no URL (nothing to dedupe or link against).
+export function analyticsEntryToAssetInput(
+  entry: Record<string, unknown>,
+): (AssetInput & { url: string; platform: string }) | null {
+  const url = pick(entry, "platformPostUrl", "permalink", "url");
+  if (!url) return null;
+  const platform = String(entry["platform"] ?? "unknown").toLowerCase() || "unknown";
+  const source = `zernio_${platform}`;
+  const text = pick(entry, "content", "message", "text", "caption");
+  const title = (pick(entry, "title", "name") || text.slice(0, 80) || "(untitled)").slice(0, 300);
+  return {
+    url,
+    platform,
+    source,
+    sourceUrl: url,
+    title,
+    transcript: text.slice(0, MAX_TRANSCRIPT_CHARS),
+    metadata: { platform, raw: truncateRaw(entry, 4) },
+    postedAt: parsePostedAt(entry),
+    isReply: detectReply(entry) || detectRetweet(entry),
+    isVideo: detectVideo(source, entry),
+    transcribedAt: null,
+  };
+}
+
+// Retroactive Zernio metrics: page the full analytics window (capped at 366
+// days per request), create assets for posts never ingested (the /posts feed
+// caps at 25 per account), and max-merge every reading into the linked
+// metric row. Idempotent — URL dedupe + max-merge make reruns safe.
+export async function runZernioAnalyticsBackfill(
+  onProgress?: (entries: number, pages: number) => Promise<void> | void,
+): Promise<ZernioBackfillResult> {
+  const apiKey = loadKeys().zernio;
+  if (!apiKey) throw new Error("save a Zernio key in Settings first");
+  const to = new Date();
+  const from = new Date(Date.now() - 365 * 24 * 3600 * 1000);
+  const day = (d: Date): string => d.toISOString().slice(0, 10);
+  const db = getDb();
+  const findAsset = db.prepare(
+    `SELECT id FROM assets WHERE source_url = ? OR url_norm = ? LIMIT 1`,
+  );
+  let page = 1;
+  let pages = 1;
+  let entries = 0;
+  let assets = 0;
+  let merged = 0;
+  let skipped = 0;
+  for (;;) {
+    const res = await zernioAnalyticsPage(apiKey, {
+      fromDate: day(from),
+      toDate: day(to),
+      limit: 50,
+      page,
+    });
+    if (!res.hasAnalyticsAccess) {
+      throw new Error("Zernio analytics add-on is not enabled for this key");
+    }
+    pages = Math.max(pages, res.pages);
+    for (const entry of res.posts) {
+      entries++;
+      const input = analyticsEntryToAssetInput(entry);
+      if (!input) {
+        skipped++;
+        continue;
+      }
+      const stored = storeAsset(db, input);
+      if (stored === "inserted") assets++;
+      const eng = extractEngagement(
+        (entry["analytics"] ?? entry["platforms"] ?? entry) as unknown,
+      );
+      if (engagementEmpty(eng)) {
+        skipped++;
+        continue;
+      }
+      const asset = findAsset.get(input.url, normalizeUrl(input.url) || "\0") as
+        | { id: string }
+        | undefined;
+      if (!asset) {
+        skipped++;
+        continue;
+      }
+      upsertMetricForAsset(
+        asset.id,
+        platformForSource(input.source),
+        input.url,
+        eng,
+        entry,
+      );
+      merged++;
+    }
+    if (onProgress) await onProgress(entries, page);
+    if (page >= pages) break;
+    page++;
+  }
+  return { entries, assets, merged, skipped };
 }

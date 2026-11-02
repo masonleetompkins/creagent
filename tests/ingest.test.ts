@@ -279,3 +279,24 @@ describe("detectReply + detectRetweet + backfillReplyFlags", () => {
     assert.equal(backfillReplyFlags(), 0);
   });
 });
+
+describe("analyticsEntryToAssetInput", () => {
+  it("maps analytics entries to asset rows, null without a URL", async () => {
+    const { analyticsEntryToAssetInput } = await import("../lib/ingest");
+    const input = analyticsEntryToAssetInput({
+      platform: "Threads",
+      platformPostUrl: "https://www.threads.com/@u/post/abc",
+      content: "hello world, this is a post",
+      publishedAt: "2026-10-01T10:00:00.000Z",
+      mediaType: "text",
+      analytics: { views: 100, likes: 5 },
+    });
+    assert.ok(input);
+    assert.equal(input?.source, "zernio_threads");
+    assert.equal(input?.sourceUrl, "https://www.threads.com/@u/post/abc");
+    assert.equal(input?.transcript, "hello world, this is a post");
+    assert.equal(input?.isVideo, false);
+    assert.equal(input?.isReply, false);
+    assert.equal(analyticsEntryToAssetInput({ platform: "threads" }), null);
+  });
+});

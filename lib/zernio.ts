@@ -29,27 +29,39 @@ export async function zernioProfiles(apiKey: string): Promise<unknown> {
   return zernioRequest(apiKey, "GET", "/v1/profiles");
 }
 
-// Hourly-synced analytics changes across every connected account. Cursor
-// param name is undocumented; try `cursor`, fall back to no cursor.
-export async function zernioAnalyticsDelta(
-  apiKey: string,
-  cursor: string | null,
-): Promise<unknown> {
-  const path = cursor
-    ? `/v1/analytics/delta?cursor=${encodeURIComponent(cursor)}`
-    : "/v1/analytics/delta";
-  try {
-    return await zernioRequest(apiKey, "GET", path);
-  } catch (error) {
-    if (cursor && /400|422/.test((error as Error).message)) {
-      return zernioRequest(apiKey, "GET", "/v1/analytics/delta");
-    }
-    throw error;
-  }
-}
+// Post performance analytics across every connected account. Requires the
+// analytics add-on (hasAnalyticsAccess); returns a paginated list with
+// overview stats. Date range caps at 366 days per request.
+export type ZernioAnalyticsPage = {
+  posts: Array<Record<string, unknown>>;
+  total: number;
+  pages: number;
+  hasAnalyticsAccess: boolean;
+};
 
-export async function zernioPosts(apiKey: string): Promise<unknown> {
-  return zernioRequest(apiKey, "GET", "/v1/posts");
+export async function zernioAnalyticsPage(
+  apiKey: string,
+  opts: { fromDate?: string; toDate?: string; limit?: number; page?: number },
+): Promise<ZernioAnalyticsPage> {
+  const params = new URLSearchParams();
+  if (opts.fromDate) params.set("fromDate", opts.fromDate);
+  if (opts.toDate) params.set("toDate", opts.toDate);
+  params.set("limit", String(opts.limit ?? 50));
+  params.set("page", String(opts.page ?? 1));
+  const data = (await zernioRequest(apiKey, "GET", `/v1/analytics?${params}`)) as Record<
+    string,
+    unknown
+  >;
+  const posts = Array.isArray(data["posts"])
+    ? (data["posts"] as Array<unknown>).filter(isObj)
+    : [];
+  const pagination = (data["pagination"] ?? {}) as Record<string, unknown>;
+  return {
+    posts,
+    total: typeof pagination["total"] === "number" ? pagination["total"] : posts.length,
+    pages: typeof pagination["pages"] === "number" ? pagination["pages"] : 1,
+    hasAnalyticsAccess: data["hasAnalyticsAccess"] === true,
+  };
 }
 
 export type ZernioAccount = { id: string; platform: string; username: string };

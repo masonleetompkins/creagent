@@ -8,7 +8,7 @@ import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
 import { runDraftAll, runDraftSlot } from "./lib/drafting";
 import { runMigrations } from "./scripts/migrate";
-import { isIngestSource, runIngest, runZernioIngest } from "./lib/ingest";
+import { isIngestSource, runIngest, runZernioAnalyticsBackfill, runZernioIngest } from "./lib/ingest";
 import { metaChatClient, runAgentTurn } from "./lib/agent";
 import { runSlotAutoEdit } from "./lib/autoedit";
 import { requestKey, runKeyingSetup } from "./lib/corridorkey";
@@ -99,7 +99,16 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return { drafted: 1 };
   }
   if (job.name === "sync_metrics") {
-    return runMetricsSync();
+    let backfill: unknown = null;
+    try {
+      backfill = await runZernioAnalyticsBackfill((entries, pages) =>
+        updateProgress(job.id, { done: entries, stage: `Zernio analytics · page ${pages}` }),
+      );
+    } catch (error) {
+      backfill = { error: (error as Error).message };
+    }
+    const synced = await runMetricsSync();
+    return { ...synced, zernioBackfill: backfill };
   }
   if (job.name === "transcribe_backfill") {
     const { limit, concurrency } = data;

@@ -18,6 +18,8 @@ type ScoredPost = {
   comments: number | null;
   shares: number | null;
   views: number | null;
+  reach?: number | null;
+  saves?: number | null;
   posted_at: string | null;
   collected_at: string;
   is_reply: number;
@@ -66,7 +68,9 @@ export default function DataConsole(): React.ReactNode {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<"date" | "platform" | "likes" | "comments" | "shares" | "views">("date");
+  const [sortKey, setSortKey] = useState<
+    "date" | "platform" | "likes" | "comments" | "shares" | "views" | "reach" | "saves"
+  >("date");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   const sorted = [...posts].sort((a, b) => {
@@ -75,6 +79,9 @@ export default function DataConsole(): React.ReactNode {
       const da = a.posted_at ?? a.collected_at;
       const db = b.posted_at ?? b.collected_at;
       return sortDir * da.localeCompare(db);
+    }
+    if (sortKey === "reach" || sortKey === "saves") {
+      return sortDir * ((a[sortKey] ?? -1) - (b[sortKey] ?? -1));
     }
     const ma = a.multipliers[sortKey] ?? -1;
     const mb = b.multipliers[sortKey] ?? -1;
@@ -177,6 +184,8 @@ export default function DataConsole(): React.ReactNode {
               <th><button className="th-sort" onClick={() => toggleSort("comments")}>Comments{arrow("comments")}</button></th>
               <th><button className="th-sort" onClick={() => toggleSort("shares")}>Shares{arrow("shares")}</button></th>
               <th><button className="th-sort" onClick={() => toggleSort("views")}>Views{arrow("views")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("reach")}>Reach{arrow("reach")}</button></th>
+              <th><button className="th-sort" onClick={() => toggleSort("saves")}>Saves{arrow("saves")}</button></th>
               <th></th>
             </tr>
           </thead>
@@ -192,6 +201,8 @@ export default function DataConsole(): React.ReactNode {
                 <td className="nowrap"><Metric value={p.comments} mult={p.multipliers.comments} /></td>
                 <td className="nowrap"><Metric value={p.shares} mult={p.multipliers.shares} /></td>
                 <td className="nowrap"><Metric value={p.views} mult={p.multipliers.views} /></td>
+                <td className="nowrap"><Metric value={p.reach ?? null} mult={null} /></td>
+                <td className="nowrap"><Metric value={p.saves ?? null} mult={null} /></td>
                 <td className="nowrap">
                   {p.post_url ? (
                     <a href={p.post_url} target="_blank" rel="noreferrer">

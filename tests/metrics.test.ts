@@ -30,13 +30,15 @@ describe("extractEngagement", () => {
       comments: null,
       shares: null,
       views: 100,
+      reach: null,
+      saves: null,
     });
   });
 
   it("reads tiktok-style plain counters", () => {
     assert.deepEqual(
       extractEngagement({ likes: 5, comments: 2, shares: 1, views: 50 }),
-      { likes: 5, comments: 2, shares: 1, views: 50 },
+      { likes: 5, comments: 2, shares: 1, views: 50, reach: null, saves: null },
     );
   });
 
@@ -46,6 +48,8 @@ describe("extractEngagement", () => {
       comments: null,
       shares: null,
       views: null,
+      reach: null,
+      saves: null,
     });
   });
 
@@ -55,12 +59,16 @@ describe("extractEngagement", () => {
       comments: null,
       shares: null,
       views: null,
+      reach: null,
+      saves: null,
     });
     assert.deepEqual(extractEngagement(null), {
       likes: null,
       comments: null,
       shares: null,
       views: null,
+      reach: null,
+      saves: null,
     });
   });
 });
@@ -105,6 +113,7 @@ describe("platformForSource", () => {
     assert.equal(platformForSource("zernio_instagram"), "instagram");
     assert.equal(platformForSource("zernio_youtube"), "youtube");
     assert.equal(platformForSource("zernio_threads"), "threads");
+    assert.equal(platformForSource("zernio_linkedin"), "linkedin");
     assert.equal(platformForSource("something_new"), "other");
   });
 });
@@ -173,6 +182,8 @@ describe("median-based scoring", () => {
       comments: null,
       shares: null,
       views: null,
+      reach: null,
+      saves: null,
     });
   });
 
@@ -279,5 +290,62 @@ describe("autoConfirmTopPillars", () => {
     assert.equal(count.n, 5);
     // Idempotent: re-ranking changes nothing.
     assert.deepEqual(autoConfirmTopPillars(), names);
+  });
+});
+
+describe("extended engagement merge", () => {
+  it("reads reach/saves keys including bookmarks", () => {
+    assert.deepEqual(
+      extractEngagement({ reach: 500, saves: 12, views: 1000 }),
+      { likes: null, comments: null, shares: null, views: 1000, reach: 500, saves: 12 },
+    );
+    assert.equal(extractEngagement({ bookmarks: 4 }).saves, 4);
+  });
+
+  it("max-merges two readings, nulls never win over data", async () => {
+    const { mergeEngagement, engagementEmpty } = await import("../lib/metrics");
+    assert.deepEqual(
+      mergeEngagement(
+        { likes: 100, comments: null, shares: 0, views: 500, reach: null, saves: 3 },
+        { likes: 80, comments: 7, shares: 5, views: null, reach: 900, saves: 0 },
+      ),
+      { likes: 100, comments: 7, shares: 5, views: 500, reach: 900, saves: 3 },
+    );
+    assert.equal(
+      engagementEmpty({ likes: null, comments: 0, shares: null, views: null, reach: 0, saves: null }),
+      true,
+    );
+    assert.equal(
+      engagementEmpty({ likes: 1, comments: null, shares: null, views: null, reach: null, saves: null }),
+      false,
+    );
+  });
+
+  it("upsertMetricForAsset merges into the linked row across providers", async () => {
+    const { getDb } = await import("../lib/db");
+    const { upsertMetricForAsset } = await import("../lib/metrics");
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("um1", "zernio_threads", "th", "t", "", "{}", 0, null, null, "2026-01-01T00:00:00.000Z");
+    const empty = { likes: null, comments: null, shares: null, views: null, reach: null, saves: null };
+    upsertMetricForAsset("um1", "threads", "https://threads.com/p/1", { ...empty, likes: 10 }, { a: 1 });
+    upsertMetricForAsset(
+      "um1", "threads", "https://threads.com/p/1",
+      { ...empty, likes: 4, views: 300, reach: 250 },
+      { b: 2 },
+    );
+    const row = db.prepare(
+      `SELECT likes, views, reach, saves FROM post_metrics WHERE asset_id = ?`,
+    ).get("um1") as { likes: number; views: number; reach: number; saves: null };
+    assert.equal(row.likes, 10);
+    assert.equal(row.views, 300);
+    assert.equal(row.reach, 250);
+    assert.equal(row.saves, null);
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM post_metrics WHERE asset_id = ?`).get("um1") as {
+      n: number;
+    };
+    assert.equal(count.n, 1);
   });
 });
