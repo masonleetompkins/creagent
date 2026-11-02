@@ -5,7 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { getDb, nowIso } from "./db";
 import { monidRunAndWait } from "./monid";
 import { loadKeys } from "./keys";
-import { monidPayloadError } from "./ingest";
+import { canonicalYoutubeUrl, monidPayloadError } from "./ingest";
 
 type Endpoint = { endpoint: string; route: string; lo: number; hi: number };
 
@@ -256,16 +256,19 @@ export async function runTranscriptBackfill(
         bumpSkipped("photo");
         return;
       }
+      const targetUrl = /youtube/i.test(asset.source)
+        ? canonicalYoutubeUrl(asset.source_url)
+        : asset.source_url;
       const result = await monidRunAndWait(
         apiKey,
         "anyapi",
         def.endpoint,
-        { body: { url: asset.source_url, route: def.route } },
+        { body: { url: targetUrl, route: def.route } },
         { timeoutMs: 300000 },
       );
       if (result.status !== "COMPLETED") throw new Error(`monid run ${result.runId}: ${result.status}`);
       const payload = result.output ?? result.providerResponse;
-      const payloadError = monidPayloadError(payload);
+      const payloadError = monidPayloadError(payload, "video");
       if (payloadError) throw new Error(payloadError);
       const cost = result.cost as { value?: unknown } | undefined;
       if (typeof cost?.value === "number") out.spent += cost.value;

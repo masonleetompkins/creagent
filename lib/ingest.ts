@@ -64,10 +64,11 @@ const MONID_ROUTES: Record<IngestSource, string[]> = {
 // Monid marks runs COMPLETED even when the provider failed or the handle
 // doesn't exist — the failure hides inside the payload. Detect it so the
 // UI reports a failed target instead of a green "0 new".
-export function monidPayloadError(payload: unknown): string | null {
+export function monidPayloadError(payload: unknown, what = "handle"): string | null {
   if (!isObj(payload)) return null;
   if (payload["found"] === false) {
-    return `handle not found (${String(payload["reason"] ?? "not_found")}) — check the spelling`;
+    const hint = what === "handle" ? "check the spelling" : "check the URL";
+    return `${what} not found (${String(payload["reason"] ?? "not_found")}) — ${hint}`;
   }
   const http = payload["httpStatus"];
   if (typeof http === "number" && http >= 400) {
@@ -80,6 +81,32 @@ export function monidPayloadError(payload: unknown): string | null {
 
 export function isIngestSource(value: string): value is IngestSource {
   return value in INGEST_SOURCES;
+}
+
+// Transcript endpoints want the canonical watch form. Share links come as
+// /live/, /shorts/, youtu.be/, /embed/ with tracking params — fold them all
+// to https://www.youtube.com/watch?v=ID. Returns the input unchanged when no
+// video id is recognizable.
+export function canonicalYoutubeUrl(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    const v = parsed.searchParams.get("v");
+    if ((host === "youtube.com" || host === "m.youtube.com") && v) {
+      return `https://www.youtube.com/watch?v=${v}`;
+    }
+    const pathMatch =
+      host === "youtu.be"
+        ? parsed.pathname.match(/^\/([^/?#]+)/)
+        : host === "youtube.com" || host === "m.youtube.com"
+          ? parsed.pathname.match(/^\/(?:live|shorts|embed|v)\/([^/?#]+)/)
+          : null;
+    if (pathMatch) return `https://www.youtube.com/watch?v=${pathMatch[1]}`;
+  } catch {
+    /* fall through */
+  }
+  return trimmed;
 }
 
 function isObj(value: unknown): value is Record<string, unknown> {
@@ -491,7 +518,7 @@ export async function runIngest(
     const body: Record<string, string> =
       def.inputKind === "handle"
         ? { handle: value.replace(/^@/, "").trim() }
-        : { url: value.trim() };
+        : { url: /youtube/i.test(source) ? canonicalYoutubeUrl(value) : value.trim() };
     if (!body.handle && !body.url) throw new Error("ingest input is empty");
     if (cursor) body.cursor = cursor;
     let result: Awaited<ReturnType<typeof monidRunAndWait>> | null = null;
@@ -505,7 +532,10 @@ export async function runIngest(
         lastError = `monid run ${attempt.runId}: ${attempt.status}`;
         continue;
       }
-      const payloadError = monidPayloadError(runPayload(attempt));
+      const payloadError = monidPayloadError(
+        runPayload(attempt),
+        def.inputKind === "handle" ? "handle" : "video",
+      );
       if (!payloadError) {
         result = attempt;
         break;

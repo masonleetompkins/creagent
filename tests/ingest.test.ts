@@ -144,7 +144,41 @@ describe("runMigrations", () => {
   });
 });
 
+describe("canonicalYoutubeUrl", () => {
+  it("folds share forms into the canonical watch url", async () => {
+    const { canonicalYoutubeUrl } = await import("../lib/ingest");
+    const want = "https://www.youtube.com/watch?v=pFe-cDwb4fY";
+    assert.equal(
+      canonicalYoutubeUrl("https://www.youtube.com/live/pFe-cDwb4fY?si=vnqdE5Qzwl2oprf"),
+      want,
+    );
+    assert.equal(canonicalYoutubeUrl("https://youtu.be/pFe-cDwb4fY?si=abc"), want);
+    assert.equal(canonicalYoutubeUrl("https://www.youtube.com/shorts/pFe-cDwb4fY"), want);
+    assert.equal(canonicalYoutubeUrl("https://www.youtube.com/embed/pFe-cDwb4fY"), want);
+    assert.equal(
+      canonicalYoutubeUrl("https://www.youtube.com/watch?v=pFe-cDwb4fY&t=30s"),
+      want,
+    );
+    assert.equal(canonicalYoutubeUrl(want), want);
+    assert.equal(canonicalYoutubeUrl("not a url"), "not a url");
+    assert.equal(canonicalYoutubeUrl("https://www.youtube.com/"), "https://www.youtube.com/");
+  });
+});
+
 describe("monidPayloadError", () => {
+  it("names videos vs handles in the not-found message", async () => {
+    const { monidPayloadError } = await import("../lib/ingest");
+    assert.equal(
+      monidPayloadError({ found: false }, "video"),
+      "video not found (not_found) — check the URL",
+    );
+    assert.equal(
+      monidPayloadError({ found: false, reason: "gone" }, "video"),
+      "video not found (gone) — check the URL",
+    );
+    assert.match(monidPayloadError({ found: false }) ?? "", /handle not found/);
+  });
+
   it("spots silent provider failures and bad handles", async () => {
     const { monidPayloadError } = await import("../lib/ingest");
     assert.equal(
