@@ -98,7 +98,7 @@ export default function ThemeSettings(): React.ReactNode {
   return (
     <section className="keycard">
       <h2>Appearance</h2>
-      <p className="muted">Glass tint and brightness. Saved on this machine only.</p>
+      <p className="muted">Theme color. Saved on this machine only.</p>
       <div className="theme-row">
         <label>Mode</label>
         <div className="seg">
@@ -109,20 +109,6 @@ export default function ThemeSettings(): React.ReactNode {
             Light
           </button>
         </div>
-      </div>
-      <div className="theme-row">
-        <label htmlFor="hue">Tint</label>
-        <input
-          id="hue"
-          type="range"
-          className="hue"
-          min={0}
-          max={360}
-          step={1}
-          value={hue}
-          onChange={(e) => changeHue(Number(e.target.value))}
-          aria-label="Glass tint hue"
-        />
       </div>
       <div className="theme-row">
         <label>Colors</label>

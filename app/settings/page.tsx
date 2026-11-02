@@ -14,6 +14,7 @@ export default function SettingsPage(): React.ReactNode {
           </div>
         </div>
       </div>
+      <ThemeSettings />
       <SettingsForm />
       <h2>Ingest</h2>
       <p className="muted">
@@ -22,7 +23,6 @@ export default function SettingsPage(): React.ReactNode {
         calendar as history; analysis folds them into the brain.
       </p>
       <IngestConsole />
-      <ThemeSettings />
       <AssetsTable />
     </>
   );
