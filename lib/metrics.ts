@@ -339,11 +339,12 @@ export function listPlatforms(): string[] {
   return rows.map((r) => r.platform);
 }
 
-// Score every linked asset against its platform's median and store it.
-// Basis is per-row: views where the post reported views, else likes — so a
-// likes-only post still scores instead of going NULL. Medians use non-replies
-// only (replies perform on a different curve); replies are still scored
-// against that bar. Idempotent — rerun whenever metrics change.
+// Score every linked asset against its platform's views median and store
+// it. Views are the only basis: likes-only posts go NULL (unscored) rather
+// than scoring on a lesser metric — the product optimizes for views. The
+// median uses non-replies with reported views only (replies perform on a
+// different curve); replies with views are still scored against that bar.
+// Idempotent — rerun whenever metrics change.
 export function refreshMultipliers(): number {
   syncFromAssets();
   backfillMetricPlatforms();
@@ -356,27 +357,24 @@ export function refreshMultipliers(): number {
   for (const { platform } of platforms) {
     const rows = db
       .prepare(
-        `SELECT m.asset_id, m.likes, m.views, COALESCE(a.is_reply, 0) AS is_reply
+        `SELECT m.asset_id, m.views, COALESCE(a.is_reply, 0) AS is_reply
          FROM post_metrics m LEFT JOIN assets a ON a.id = m.asset_id
          WHERE m.platform = ?`,
       )
       .all(platform) as Array<{
       asset_id: string | null;
-      likes: number | null;
       views: number | null;
       is_reply: number;
     }>;
-    const base = rows.filter((r) => !r.is_reply);
-    const medViews = median(base.map((r) => r.views));
-    const medLikes = median(base.map((r) => r.likes));
+    const medViews = median(
+      rows.filter((r) => !r.is_reply).map((r) => r.views),
+    );
     for (const row of rows) {
       if (!row.asset_id) continue;
-      let scored: number | null = null;
-      if (row.views !== null && medViews !== null && medViews > 0) {
-        scored = Math.round((row.views / medViews) * 100) / 100;
-      } else if (row.likes !== null && medLikes !== null && medLikes > 0) {
-        scored = Math.round((row.likes / medLikes) * 100) / 100;
-      }
+      const scored =
+        row.views !== null && medViews !== null && medViews > 0
+          ? Math.round((row.views / medViews) * 100) / 100
+          : null;
       update.run(scored, row.asset_id);
       updated++;
     }

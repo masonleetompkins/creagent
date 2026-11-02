@@ -110,7 +110,7 @@ export type AnalysisResult = {
 
 const CONSOLIDATE_SYSTEM = `You consolidate a content creator's content pillars. There are too many overlapping suggestions; merge the CANDIDATES into 10-12 canonical pillars.
 
-Each candidate has: name, posts (linked post count), recent (posts in the last 6 months), mult (average performance multiplier vs their own average, 1.0 = average).
+Each candidate has: name, posts (linked post count), recent (posts in the last 6 months), mult (average views multiplier vs their own typical views, 1.0 = average).
 
 Rules:
 - Every canonical pillar must be specific enough to repeat weekly, but broad enough to hold many posts.

@@ -137,11 +137,11 @@ describe("refreshMultipliers", () => {
       `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    insert.run("m1", "x_posts", "x", "t", "", JSON.stringify({ raw: { likeCount: 100 } }), 0, "pp1", null, recent);
-    insert.run("m2", "x_posts", "x", "t", "", JSON.stringify({ raw: { likeCount: 50 } }), 0, "pp1", null, old);
-    insert.run("m3", "x_posts", "x", "t", "", JSON.stringify({ raw: { likeCount: 1000 } }), 1, null, null, recent);
+    insert.run("m1", "x_posts", "x", "t", "", JSON.stringify({ raw: { viewCount: 100 } }), 0, "pp1", null, recent);
+    insert.run("m2", "x_posts", "x", "t", "", JSON.stringify({ raw: { viewCount: 50 } }), 0, "pp1", null, old);
+    insert.run("m3", "x_posts", "x", "t", "", JSON.stringify({ raw: { viewCount: 1000 } }), 1, null, null, recent);
     insert.run("m4", "x_posts", "x", "t", "", JSON.stringify({ raw: { note: "no numbers" } }), 0, null, null, recent);
-    // Non-reply average = (100 + 50) / 2 = 75.
+    // Non-reply views median = 75.
     assert.equal(refreshMultipliers(), 3);
     const mult = (id: string): number | null =>
       (db.prepare(`SELECT multiplier FROM assets WHERE id = ?`).get(id) as { multiplier: number | null }).multiplier;
@@ -187,7 +187,7 @@ describe("median-based scoring", () => {
     });
   });
 
-  it("scores likes-only posts against the likes median (per-row fallback)", async () => {
+  it("scores views only; likes-only posts go unscored", async () => {
     const { getDb } = await import("../lib/db");
     const { refreshMultipliers } = await import("../lib/metrics");
     const db = getDb();
@@ -200,22 +200,22 @@ describe("median-based scoring", () => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const raw = (o: unknown): string => JSON.stringify({ raw: o });
-    // Views median = 200; likes median over the likes-only rows = 60.
+    // IG views median = 200. Likes-only rows stay NULL: no likes fallback.
     insert.run("g1", "instagram_posts", "ig", "t", "", raw({ viewCount: 400 }), 0, "pp2", null, recent);
     insert.run("g2", "instagram_posts", "ig", "t", "", raw({ viewCount: 200 }), 0, null, null, recent);
     insert.run("g3", "instagram_posts", "ig", "t", "", raw({ viewCount: 100 }), 0, null, null, recent);
-    insert.run("g4", "instagram_posts", "ig", "t", "", raw({ likeCount: 90 }), 0, "pp2", null, recent);
+    insert.run("g4", "instagram_posts", "ig", "t", "", raw({ likeCount: 9000 }), 0, "pp2", null, recent);
     insert.run("g5", "instagram_posts", "ig", "t", "", raw({ likeCount: 30 }), 0, null, null, recent);
-    insert.run("x1", "x_posts", "x", "t", "", raw({ likeCount: 150 }), 0, "pp2", null, recent);
+    insert.run("x1", "x_posts", "x", "t", "", raw({ viewCount: 150 }), 0, "pp2", null, recent);
     assert.ok(refreshMultipliers() >= 6);
     const mult = (id: string): number | null =>
       (db.prepare(`SELECT multiplier FROM assets WHERE id = ?`).get(id) as { multiplier: number | null }).multiplier;
     assert.equal(mult("g1"), 2);
     assert.equal(mult("g2"), 1);
     assert.equal(mult("g3"), 0.5);
-    assert.equal(mult("g4"), 1.5);
-    assert.equal(mult("g5"), 0.5);
-    // x likes median over non-replies [100, 50, 150] = 100.
+    assert.equal(mult("g4"), null);
+    assert.equal(mult("g5"), null);
+    // x views median over non-replies [100, 50, 150] = 100.
     assert.equal(mult("x1"), 1.5);
   });
 
@@ -241,13 +241,13 @@ describe("median-based scoring", () => {
   it("reports per-platform pillar stats with a primary-platform headline", async () => {
     const { pillarStats } = await import("../lib/metrics");
     const stats = pillarStats();
-    // pp2: g1 (ig 2.0), g4 (ig 1.5), x1 (x 1.5). Primary = instagram (2 posts).
+    // pp2: g1 (ig 2.0), g4 (ig unscored), x1 (x 1.5). Primary = instagram.
     assert.deepEqual(stats["pp2"], {
       posts: 3,
       recent: 3,
-      multiplier: 1.75,
+      multiplier: 2,
       byPlatform: {
-        instagram: { posts: 2, multiplier: 1.75 },
+        instagram: { posts: 2, multiplier: 2 },
         x: { posts: 1, multiplier: 1.5 },
       },
     });
@@ -271,8 +271,8 @@ describe("autoConfirmTopPillars", () => {
       ["ac1", "Rank A", 9, 0],
       ["ac2", "Rank B", 7, 0],
       ["ac3", "Rank C", 5, 0],
-      ["ac4", "Rank D", 3, 0],
-      ["ac5", "Rank E", 2, 0],
+      ["ac4", "Rank D", 4, 0],
+      ["ac5", "Rank E", 3, 0],
       ["ac6", "Rank F", 1, 1], // pre-confirmed low scorer: must be released
       ["ac7", "Rank G", null, 0], // unscored: ranks last, never wins a slot here
     ];

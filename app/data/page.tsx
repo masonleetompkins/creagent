@@ -7,7 +7,7 @@ export default function DataPage(): React.ReactNode {
         <div>
           <h1>Data</h1>
           <div className="sub">
-            What performed, scored as a multiplier against your average.
+            What performed, scored against your typical views.
           </div>
         </div>
       </div>

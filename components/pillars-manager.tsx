@@ -203,7 +203,7 @@ export default function PillarsManager(): React.ReactNode {
         {typeof p.multiplier === "number" && (
           <span
             className={`mult-badge${p.multiplier >= 1.5 ? " hot" : ""}`}
-            title="Median-based average on this pillar's primary platform vs that platform's typical post"
+            title="Views-based average on this pillar's primary platform vs that platform's typical views"
           >
             {p.multiplier.toFixed(1)}x avg
           </span>

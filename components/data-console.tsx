@@ -70,7 +70,7 @@ export default function DataConsole(): React.ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<
     "date" | "platform" | "likes" | "comments" | "shares" | "views" | "reach" | "saves"
-  >("date");
+  >("views");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   const sorted = [...posts].sort((a, b) => {
@@ -161,10 +161,10 @@ export default function DataConsole(): React.ReactNode {
           {platforms.map((p) => (
             <div className="tile" key={p.platform}>
               <div className="t">{p.platform}</div>
-              <div className="big">{fmtAvg(p.averages.likes)} likes</div>
+              <div className="big">{fmtAvg(p.averages.views)} views</div>
               <div className="d">
-                from {p.averages.count} posts · comments {fmtAvg(p.averages.comments)} ·
-                shares {fmtAvg(p.averages.shares)} · views {fmtAvg(p.averages.views)}
+                from {p.averages.count} posts · likes {fmtAvg(p.averages.likes)} ·
+                comments {fmtAvg(p.averages.comments)} · shares {fmtAvg(p.averages.shares)}
               </div>
             </div>
           ))}
