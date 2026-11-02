@@ -179,8 +179,8 @@ describe("extractJson", () => {
     assert.deepEqual(extractJson('{"a": {"b": [1, {"c": 2}]}}'), { a: { b: [1, { c: 2 }] } });
     // First parseable balanced block wins.
     assert.deepEqual(extractJson('{oops} {"a": 1}'), { a: 1 });
-    assert.throws(() => extractJson("no json here"), /did not return JSON/);
-    assert.throws(() => extractJson('{"a": 1'), /did not return JSON/);
+    assert.throws(() => extractJson("no json here"), /no parseable JSON object/);
+    assert.throws(() => extractJson('{"a": 1'), /no parseable JSON object.*truncated/);
   });
 });
 
@@ -323,5 +323,130 @@ describe("resetBrain", () => {
       pillars.map((p) => p.id).sort(),
       ["rp1", "rp2"],
     );
+  });
+});
+
+describe("pillarKey", () => {
+  it("treats reorder/case variants as identical, near-misses as different", async () => {
+    const { pillarKey } = await import("../lib/analysis");
+    assert.equal(pillarKey("ELI5 Mental Models"), pillarKey("mental models eli5"));
+    assert.notEqual(pillarKey("Mental Models"), pillarKey("Mental Models Made Simple"));
+    assert.equal(pillarKey("  Solo  "), "solo");
+  });
+});
+
+describe("chooseSurvivor", () => {
+  it("prefers most posts, tie-breaks on earliest post", async () => {
+    const { chooseSurvivor } = await import("../lib/analysis");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    const mkpillar = db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    mkpillar.run("sv1", "Survivor One", "d", "", 0, "2026-01-01T00:00:00.000Z");
+    mkpillar.run("sv2", "Survivor Two", "d", "", 0, "2026-01-02T00:00:00.000Z");
+    mkpillar.run("sv3", "Survivor Three", "d", "", 0, "2026-01-03T00:00:00.000Z");
+    const mkasset = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, pillar_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    mkasset.run("sva1", "x", "x", "t", "", "{}", "sv2", "2026-01-10T00:00:00.000Z");
+    mkasset.run("sva2", "x", "x", "t", "", "{}", "sv2", "2026-01-11T00:00:00.000Z");
+    mkasset.run("sva3", "x", "x", "t", "", "{}", "sv1", "2026-01-05T00:00:00.000Z");
+    assert.equal(chooseSurvivor(["sv1", "sv2", "sv3"]), "sv2");
+    mkasset.run("sva4", "x", "x", "t", "", "{}", "sv1", "2026-01-06T00:00:00.000Z");
+    assert.equal(chooseSurvivor(["sv1", "sv2"]), "sv1");
+  });
+});
+
+describe("mergeTokenDuplicates", () => {
+  it("collapses reorder/case duplicates, richer survivor keeps its name", async () => {
+    const { mergeTokenDuplicates } = await import("../lib/analysis");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    const mkpillar = db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    mkpillar.run("tk1", "ELI5 Mental Models", "d", "", 0, "2026-01-01T00:00:00.000Z");
+    mkpillar.run("tk2", "mental MODELS eli5", "d", "", 0, "2026-01-02T00:00:00.000Z");
+    mkpillar.run("tk3", "Mental Models Made Simple", "d", "", 0, "2026-01-03T00:00:00.000Z");
+    const mkasset = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, pillar_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    mkasset.run("tka1", "x", "x", "t", "", "{}", "tk2", "2026-01-05T00:00:00.000Z");
+    mkasset.run("tka2", "x", "x", "t", "", "{}", "tk2", "2026-01-06T00:00:00.000Z");
+    db.prepare(
+      `INSERT INTO vault_docs (id, doc_type, title, body, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run("tkv1", "pillar", "ELI5 Mental Models", "b", "2026-01-01T00:00:00.000Z");
+    assert.equal(mergeTokenDuplicates() >= 1, true);
+    assert.equal(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("tk1"), undefined);
+    assert.ok(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("tk2"));
+    assert.ok(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("tk3"));
+    const vaultGone = db.prepare(
+      `SELECT id FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = ?`,
+    ).get("eli5 mental models");
+    assert.equal(vaultGone, undefined);
+    assert.equal(mergeTokenDuplicates(), 0);
+  });
+
+  it("folds reorder duplicates into a confirmed pillar", async () => {
+    const { mergeTokenDuplicates } = await import("../lib/analysis");
+    const { getDb } = await import("../lib/db");
+    const db = getDb();
+    const mkpillar = db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    mkpillar.run("tc1", "Morning Routine", "d", "", 1, "2026-01-01T00:00:00.000Z");
+    mkpillar.run("tc2", "routine morning", "d", "", 0, "2026-01-02T00:00:00.000Z");
+    assert.equal(mergeTokenDuplicates() >= 1, true);
+    assert.ok(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("tc1"));
+    assert.equal(db.prepare(`SELECT id FROM pillars WHERE id = ?`).get("tc2"), undefined);
+  });
+});
+
+describe("outputUsable", () => {
+  it("rejects incomplete status and blank text", async () => {
+    const { outputUsable } = await import("../lib/analysis");
+    assert.equal(outputUsable({ status: "complete", output_text: '{"a":1}' }), true);
+    assert.equal(outputUsable({ status: "incomplete", output_text: '{"a":1}' }), false);
+    assert.equal(outputUsable({ status: "complete", output_text: "   " }), false);
+    assert.equal(outputUsable({ status: "complete", output_text: "" }), false);
+  });
+});
+
+describe("extractJson labels", () => {
+  it("names the failing stage and flags truncation", async () => {
+    const { extractJson } = await import("../lib/analysis");
+    assert.throws(() => extractJson("no braces here", "consolidation"), /consolidation/);
+    assert.throws(
+      () => extractJson('preamble {"a": 1, "b": "cut', "analysis"),
+      /analysis.*truncat/i,
+    );
+    assert.deepEqual(extractJson('ok {"a":1} trailing', "analysis"), { a: 1 });
+  });
+});
+
+describe("buildCorpus", () => {
+  it("substitutes digests and truncates raw transcripts", async () => {
+    const { buildCorpus } = await import("../lib/analysis");
+    const rows = [
+      { id: "bc1", source: "x", title: "Long", transcript: "z".repeat(20000) },
+      { id: "bc2", source: "x", title: "Short", transcript: "hello" },
+    ] as never[];
+    const corpus = buildCorpus(rows, new Map([["bc1", "the digest"]]));
+    assert.ok(corpus.includes("[DIGEST of ~20k chars]"));
+    assert.ok(corpus.includes("the digest"));
+    assert.ok(!corpus.includes("z".repeat(100)));
+    assert.ok(corpus.includes("hello"));
+  });
+});
+
+describe("chunkArray", () => {
+  it("splits evenly and keeps the remainder", async () => {
+    const { chunkArray } = await import("../lib/analysis");
+    assert.deepEqual(chunkArray([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+    assert.deepEqual(chunkArray([1, 2], 5), [[1, 2]]);
+    assert.deepEqual(chunkArray([], 5), []);
   });
 });

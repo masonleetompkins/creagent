@@ -73,6 +73,20 @@ export function readDigestCache(db: DatabaseSync, id: string, chars: number): st
   return null;
 }
 
+export function buildCorpus(picked: AssetRow[], digests: Map<string, string>): string {
+  return picked
+    .map((row, i) => {
+      const text = row.transcript ?? "";
+      const d = digests.get(row.id);
+      if (d) {
+        const k = Math.max(1, Math.round(text.length / 1000));
+        return `[${i + 1}] (${row.source}) ${row.title ?? ""}\n[DIGEST of ~${k}k chars]\n${d}`;
+      }
+      return `[${i + 1}] (${row.source}) ${row.title ?? ""}\n${text.slice(0, MAX_ASSET_CHARS)}`;
+    })
+    .join("\n\n---\n\n");
+}
+
 export function writeDigestCache(db: DatabaseSync, id: string, chars: number, digest: string): void {
   let meta: Record<string, unknown> = {};
   try {
@@ -96,7 +110,7 @@ export type AnalysisResult = {
 
 const CONSOLIDATE_SYSTEM = `You consolidate a content creator's content pillars. There are too many overlapping suggestions; merge the CANDIDATES into 10-12 canonical pillars.
 
-Each candidate has: name, description, posts (linked post count), recent (posts in the last 6 months), mult (average performance multiplier vs their own average, 1.0 = average).
+Each candidate has: name, posts (linked post count), recent (posts in the last 6 months), mult (average performance multiplier vs their own average, 1.0 = average).
 
 Rules:
 - Every canonical pillar must be specific enough to repeat weekly, but broad enough to hold many posts.
@@ -170,6 +184,78 @@ export function mergeNameMatchesIntoConfirmed(): number {
   return merged;
 }
 
+// Normalized identity for pillar names: same words in any order/case.
+// "ELI5 Mental Models" ≡ "Mental Models ELI5" but ≠ "Mental Models Made Simple".
+export function pillarKey(name: string): string {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+// Survivor = most linked posts, tie-break earliest linked post. Pure read.
+export function chooseSurvivor(ids: string[]): string {
+  const db = getDb();
+  const counts = db.prepare(
+    `SELECT pillar_id, COUNT(*) AS n, MIN(COALESCE(posted_at, created_at)) AS first
+     FROM assets WHERE pillar_id IS NOT NULL GROUP BY pillar_id`,
+  ).all() as Array<{ pillar_id: string; n: number; first: string | null }>;
+  const byId = new Map(counts.map((c) => [c.pillar_id, c]));
+  return [...ids].sort((a, b) => {
+    const an = byId.get(a)?.n ?? 0;
+    const bn = byId.get(b)?.n ?? 0;
+    if (bn !== an) return bn - an;
+    return (byId.get(a)?.first ?? "").localeCompare(byId.get(b)?.first ?? "");
+  })[0];
+}
+
+// Deterministic pre-pass: collapse reorder/case duplicates without the model
+// ("ELI5 Mental Models" + "Mental Models ELI5"). Groups containing a confirmed
+// pillar fold into it; otherwise the richest member survives under its own name.
+export function mergeTokenDuplicates(): number {
+  const db = getDb();
+  const pillars = db.prepare(`SELECT id, name, confirmed FROM pillars`).all() as Array<{
+    id: string;
+    name: string;
+    confirmed: number;
+  }>;
+  const groups = new Map<string, typeof pillars>();
+  for (const p of pillars) {
+    const key = pillarKey(p.name);
+    if (!key) continue;
+    const group = groups.get(key) ?? [];
+    group.push(p);
+    groups.set(key, group);
+  }
+  let merged = 0;
+  withTransaction(() => {
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const confirmed = group.find((p) => p.confirmed);
+      const survivorId = confirmed ? confirmed.id : chooseSurvivor(group.map((p) => p.id));
+      for (const loser of group) {
+        if (loser.id === survivorId) continue;
+        repointPillar(loser.id, survivorId);
+        db.prepare(
+          `DELETE FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = lower(?)`,
+        ).run(loser.name);
+        db.prepare(`DELETE FROM pillars WHERE id = ?`).run(loser.id);
+        merged++;
+      }
+    }
+  });
+  return merged;
+}
+
+// The model sometimes returns status incomplete (output budget spent on
+// reasoning) with zero text — treat as unusable before parsing.
+export function outputUsable(resp: { status?: unknown; output_text?: unknown }): boolean {
+  if (resp.status === "incomplete") return false;
+  return typeof resp.output_text === "string" && resp.output_text.trim().length > 0;
+}
+
 // Apply a consolidation plan transactionally. Only unconfirmed pillars move;
 // confirmed pillars and unmapped names are never touched.
 export function applyConsolidation(entries: ConsolidationEntry[]): ConsolidationResult {
@@ -203,26 +289,15 @@ export function applyConsolidation(entries: ConsolidationEntry[]): Consolidation
       }
       if (members.length === 0) continue;
       for (const m of members) claimed.add(m.id);
-      // Survivor = most linked posts, tie-break earliest created.
-      const counts = db.prepare(
-        `SELECT pillar_id, COUNT(*) AS n, MIN(COALESCE(posted_at, created_at)) AS first
-         FROM assets WHERE pillar_id IS NOT NULL GROUP BY pillar_id`,
-      ).all() as Array<{ pillar_id: string; n: number; first: string | null }>;
-      const countById = new Map(counts.map((c) => [c.pillar_id, c]));
-      members.sort((a, b) => {
-        const an = countById.get(a.id)?.n ?? 0;
-        const bn = countById.get(b.id)?.n ?? 0;
-        if (bn !== an) return bn - an;
-        return (countById.get(a.id)?.first ?? "").localeCompare(countById.get(b.id)?.first ?? "");
-      });
-      const survivor = members[0];
+      const survivorId = chooseSurvivor(members.map((m) => m.id));
+      const survivor = members.find((m) => m.id === survivorId) ?? members[0];
       db.prepare(`UPDATE pillars SET name = ?, description = ?, voice_notes = ? WHERE id = ?`).run(
         entry.name.trim(),
         entry.description,
         entry.voiceNotes,
         survivor.id,
       );
-      for (const loser of members.slice(1)) {
+      for (const loser of members.filter((m) => m.id !== survivor.id)) {
         repointPillar(loser.id, survivor.id);
         db.prepare(
           `DELETE FROM vault_docs WHERE doc_type = 'pillar' AND lower(title) = lower(?)`,
@@ -256,49 +331,54 @@ export async function embedMissingPillarDocs(): Promise<number> {
   return rows.length;
 }
 
-export async function consolidatePillars(
+export function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+  return chunks;
+}
+
+// Muse-spark reasons hard on grouping tasks: a 600-candidate call burns the
+// whole output budget on reasoning and returns nothing. Small calls with low
+// reasoning effort are the reliable shape — consolidation therefore runs in
+// chunks of at most CONSOLIDATE_CHUNK, then re-passes over the intermediates.
+const CONSOLIDATE_CHUNK = 150;
+
+type ConsolidationCandidate = { name: string; posts: number; recent: number; mult: number | null };
+
+async function requestConsolidation(
+  client: ReturnType<typeof getMetaClient>,
+  candidates: ConsolidationCandidate[],
+  label: string,
   onProgress?: (stage: string) => void,
-): Promise<ConsolidationResult> {
-  const metaKey = loadKeys().meta;
-  if (!metaKey) throw new Error("save a Meta key in Settings first");
-  const db = getDb();
-  const total = { merged: mergeNameMatchesIntoConfirmed(), canonical: 0, unmapped: [] as string[] };
-  const suggestions = db
-    .prepare(
-      `SELECT name, description, voice_notes FROM pillars
-       WHERE confirmed = 0 OR confirmed IS NULL ORDER BY name ASC`,
-    )
-    .all() as Array<{ name: string; description: string; voice_notes: string }>;
-  if (suggestions.length <= 15) {
-    return { ...total, canonical: suggestions.length };
-  }
-  if (onProgress) onProgress(`Consolidating ${suggestions.length} pillars…`);
-  const stats = pillarStats();
-  const idByName = new Map(
-    (
-      db.prepare(`SELECT id, name FROM pillars`).all() as Array<{ id: string; name: string }>
-    ).map((p) => [p.name.trim().toLowerCase(), p.id]),
-  );
-  const candidates = suggestions.map((s) => {
-    const st = stats[idByName.get(s.name.trim().toLowerCase()) ?? ""];
-    return {
-      name: s.name,
-      description: s.description.slice(0, 200),
-      posts: st?.posts ?? 0,
-      recent: st?.recent ?? 0,
-      mult: st?.multiplier ?? null,
-    };
-  });
-  const client = getMetaClient(metaKey);
-  const resp = await client.responses.create(
+): Promise<ConsolidationEntry[]> {
+  const input = `${CONSOLIDATE_SYSTEM}\n\nCANDIDATES:\n${JSON.stringify(candidates)}`;
+  let resp = await client.responses.create(
     {
       model: metaTextModel(),
-      input: `${CONSOLIDATE_SYSTEM}\n\nCANDIDATES:\n${JSON.stringify(candidates)}`,
-      max_output_tokens: 4000,
+      input,
+      max_output_tokens: 24000,
+      reasoning: { effort: "low" },
     },
-    { timeout: 180000 },
+    { timeout: 240000 },
   );
-  const parsed = extractJson(resp.output_text);
+  if (!outputUsable(resp)) {
+    if (onProgress) onProgress(`Retrying ${label}…`);
+    resp = await client.responses.create(
+      {
+        model: metaTextModel(),
+        input: `${input}\n\nYour previous response was empty. Return ONLY the JSON object, no other text.`,
+        max_output_tokens: 24000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: 240000 },
+    );
+    if (!outputUsable(resp)) {
+      throw new Error(
+        `consolidation model returned no usable output (status: ${String((resp as { status?: unknown }).status ?? "unknown")})`,
+      );
+    }
+  }
+  const parsed = extractJson(resp.output_text, `consolidation ${label}`);
   const rawEntries = Array.isArray(parsed.pillars) ? parsed.pillars : [];
   const entries: ConsolidationEntry[] = [];
   for (const e of rawEntries) {
@@ -312,14 +392,80 @@ export async function consolidatePillars(
       absorbs: asStringArray(absorbs),
     });
   }
-  const applied = applyConsolidation(entries);
+  return entries;
+}
+
+function listSuggestionCandidates(): ConsolidationCandidate[] {
+  const db = getDb();
+  const suggestions = db
+    .prepare(
+      `SELECT name FROM pillars WHERE confirmed = 0 OR confirmed IS NULL ORDER BY name ASC`,
+    )
+    .all() as Array<{ name: string }>;
+  const stats = pillarStats();
+  const idByName = new Map(
+    (
+      db.prepare(`SELECT id, name FROM pillars`).all() as Array<{ id: string; name: string }>
+    ).map((p) => [p.name.trim().toLowerCase(), p.id]),
+  );
+  return suggestions.map((s) => {
+    const st = stats[idByName.get(s.name.trim().toLowerCase()) ?? ""];
+    return {
+      name: s.name,
+      posts: st?.posts ?? 0,
+      recent: st?.recent ?? 0,
+      mult: st?.multiplier ?? null,
+    };
+  });
+}
+
+function countSuggestions(): number {
+  const db = getDb();
+  return (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM pillars WHERE confirmed = 0 OR confirmed IS NULL`)
+      .get() as { n: number }
+  ).n;
+}
+
+export async function consolidatePillars(
+  onProgress?: (stage: string) => void,
+): Promise<ConsolidationResult> {
+  const metaKey = loadKeys().meta;
+  if (!metaKey) throw new Error("save a Meta key in Settings first");
+  const client = getMetaClient(metaKey);
+  let merged = mergeTokenDuplicates() + mergeNameMatchesIntoConfirmed();
+  const unmapped: string[] = [];
+  for (let pass = 0; pass < 5; pass++) {
+    const candidates = listSuggestionCandidates();
+    if (candidates.length <= 15) {
+      if (onProgress) onProgress("Embedding pillar docs…");
+      await embedMissingPillarDocs();
+      return { merged, canonical: candidates.length, unmapped: unmapped.slice(0, 50) };
+    }
+    const chunks = chunkArray(candidates, CONSOLIDATE_CHUNK);
+    for (let i = 0; i < chunks.length; i++) {
+      const label =
+        chunks.length === 1
+          ? `consolidation of ${chunks[i].length} pillars`
+          : `consolidation chunk ${i + 1}/${chunks.length} (${chunks[i].length} pillars)`;
+      if (onProgress) {
+        onProgress(
+          chunks.length === 1
+            ? `Consolidating ${chunks[i].length} pillars…`
+            : `Consolidating chunk ${i + 1}/${chunks.length}…`,
+        );
+      }
+      const entries = await requestConsolidation(client, chunks[i], label, onProgress);
+      const applied = applyConsolidation(entries);
+      merged += applied.merged;
+      unmapped.push(...applied.unmapped);
+    }
+    merged += mergeTokenDuplicates();
+  }
   if (onProgress) onProgress("Embedding pillar docs…");
   await embedMissingPillarDocs();
-  return {
-    merged: total.merged + applied.merged,
-    canonical: applied.canonical,
-    unmapped: applied.unmapped,
-  };
+  return { merged, canonical: countSuggestions(), unmapped: unmapped.slice(0, 50) };
 }
 
 const SYSTEM = `You analyze a content creator's posts and videos. Study the CONTENT below and respond with ONLY a JSON object (no prose, no code fences) shaped exactly like:
@@ -343,7 +489,7 @@ Aim for 3-6 pillars, 4-8 Q&A pairs, 3-6 principles, 3-6 quotes, 2-4 donts, 2-4 e
 // blocks, leading prose, and trailing commentary. The old greedy-regex
 // fallback swallowed trailing garbage (including stray braces) into the
 // parse and killed whole runs on valid output.
-export function extractJson(text: string): Record<string, unknown> {
+export function extractJson(text: string, label = "model"): Record<string, unknown> {
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
@@ -387,9 +533,16 @@ export function extractJson(text: string): Record<string, unknown> {
       /* try the next balanced block */
     }
   }
-  console.log(`extractJson failed on model output head: ${text.slice(0, 500)}`);
+  console.log(`extractJson[${label}] failed on model output head: ${text.slice(0, 500)}`);
+  const tail = text.trim().slice(-80);
+  const truncNote =
+    text.includes("{") && /[{[":,\w]\s*$/.test(tail)
+      ? ` (truncated? tail: ${JSON.stringify(tail)})`
+      : "";
   throw new Error(
-    candidates.length > 0 ? "model returned malformed JSON" : "model did not return JSON",
+    candidates.length > 0
+      ? `${label}: model returned malformed JSON${truncNote}`
+      : `${label}: model returned no parseable JSON object (${text.trim().length} chars of text)${truncNote}`,
   );
 }
 
@@ -593,8 +746,9 @@ export async function runAnalysis(
       }
       try {
         const d = await digestLongTranscript(client, row.title ?? "", text);
-        writeDigestCache(db, row.id, text.length, d);
-        digests.set(row.id, d);
+        const usable = d.trim() ? d : text.slice(0, MAX_ASSET_CHARS);
+        writeDigestCache(db, row.id, text.length, usable);
+        digests.set(row.id, usable);
       } catch (error) {
         console.log(
           `digest failed for ${row.id}: ${(error as Error).message} — using head truncation`,
@@ -602,29 +756,40 @@ export async function runAnalysis(
       }
     }
   }
-  const corpus = picked
-    .map((row, i) => {
-      const text = row.transcript ?? "";
-      const d = digests.get(row.id);
-      if (d) {
-        const k = Math.max(1, Math.round(text.length / 1000));
-        return `[${i + 1}] (${row.source}) ${row.title ?? ""}\n[DIGEST of ~${k}k chars]\n${d}`;
-      }
-      return `[${i + 1}] (${row.source}) ${row.title ?? ""}\n${text.slice(0, MAX_ASSET_CHARS)}`;
-    })
-    .join("\n\n---\n\n");
-
+  let active: AssetRow[] = picked;
+  let corpus = buildCorpus(active, digests);
   if (onProgress) onProgress(0, picked.length, `Analyzing ${picked.length} posts…`);
-  const resp = await client.responses.create(
+  let resp = await client.responses.create(
     {
       model: metaTextModel(),
       input: `${SYSTEM}\n\nCONTENT:\n${corpus}`,
-      max_output_tokens: 12000,
+      max_output_tokens: 24000,
     },
     { timeout: 240000 },
   );
-  if (onProgress) onProgress(0, picked.length, "Writing pillars + vault…");
-  const parsed = extractJson(resp.output_text);
+  // Escalation: an empty/incomplete answer usually means the output budget
+  // went to reasoning — retry once on half the batch. The dropped half stays
+  // unanalyzed and flows into the next batch, so nothing is lost.
+  if (!outputUsable(resp) && active.length > 1) {
+    if (onProgress) onProgress(0, picked.length, "Retrying with a smaller batch…");
+    active = active.slice(0, Math.max(1, Math.ceil(active.length / 2)));
+    corpus = buildCorpus(active, digests);
+    resp = await client.responses.create(
+      {
+        model: metaTextModel(),
+        input: `${SYSTEM}\n\nCONTENT:\n${corpus}\n\nYour previous response was empty. Return ONLY the JSON object, no other text.`,
+        max_output_tokens: 24000,
+      },
+      { timeout: 240000 },
+    );
+  }
+  if (!outputUsable(resp)) {
+    throw new Error(
+      `analysis model returned no usable output (status: ${String((resp as { status?: unknown }).status ?? "unknown")})`,
+    );
+  }
+  if (onProgress) onProgress(0, active.length, "Writing pillars + vault…");
+  const parsed = extractJson(resp.output_text, "analysis");
 
   const rawPillars = Array.isArray(parsed.pillars) ? parsed.pillars : [];
   const qa = Array.isArray(parsed.qa) ? parsed.qa : [];
@@ -718,23 +883,23 @@ export async function runAnalysis(
 
   const mark = db.prepare(`UPDATE assets SET analyzed_at = ? WHERE id = ?`);
   const ts = nowIso();
-  for (const row of picked) mark.run(ts, row.id);
+  for (const row of active) mark.run(ts, row.id);
 
   // Link every post to its pillar, then score every post against its
   // platform's average.
-  const links = mapAssignments(parsed.assignments, picked.length, nameToId);
+  const links = mapAssignments(parsed.assignments, active.length, nameToId);
   if (links.size > 0) {
     const link = db.prepare(`UPDATE assets SET pillar_id = ? WHERE id = ?`);
     for (const [index, pillarId] of links) {
-      const row = picked[index - 1];
+      const row = active[index - 1];
       if (row) link.run(pillarId, row.id);
     }
   }
-  if (onProgress) onProgress(picked.length, picked.length, "Scoring posts…");
+  if (onProgress) onProgress(active.length, active.length, "Scoring posts…");
   refreshMultipliers();
 
-  if (onProgress) onProgress(picked.length, picked.length, "Done");
-  return { assetsAnalyzed: picked.length, pillars: pillarCount, vaultDocs };
+  if (onProgress) onProgress(active.length, active.length, "Done");
+  return { assetsAnalyzed: active.length, pillars: pillarCount, vaultDocs };
 }
 
 // Full brain rebuild: wipe derived docs and re-analyze every asset.
@@ -748,7 +913,13 @@ export function resetBrain(): void {
 
 export async function runBrainRegenerate(
   onProgress?: AnalysisProgress,
-): Promise<{ analyzed: number; batches: number; merged: number; canonical: number }> {
+): Promise<{
+  analyzed: number;
+  batches: number;
+  merged: number;
+  canonical: number;
+  degraded?: string;
+}> {
   resetBrain();
   const total = countUnanalyzed();
   let analyzed = 0;
@@ -772,14 +943,32 @@ export async function runBrainRegenerate(
     if (res.assetsAnalyzed === 0) break;
   }
   if (onProgress) onProgress(analyzed, Math.max(total, analyzed), "Consolidating pillars…");
-  const consolidated = await consolidatePillars((stage) => {
-    if (onProgress) onProgress(analyzed, Math.max(total, analyzed), stage);
-  });
-  if (onProgress) onProgress(analyzed, Math.max(total, analyzed), "Done");
-  return {
-    analyzed,
-    batches,
-    merged: consolidated.merged,
-    canonical: consolidated.canonical,
-  };
+  try {
+    const consolidated = await consolidatePillars((stage) => {
+      if (onProgress) onProgress(analyzed, Math.max(total, analyzed), stage);
+    });
+    if (onProgress) onProgress(analyzed, Math.max(total, analyzed), "Done");
+    return {
+      analyzed,
+      batches,
+      merged: consolidated.merged,
+      canonical: consolidated.canonical,
+    };
+  } catch (error) {
+    // The analysis batches already committed — don't roll the whole job into a
+    // failure over consolidation. The deterministic merges inside
+    // consolidatePillars ran first; report degraded and let the user retry
+    // consolidation standalone.
+    const db = getDb();
+    const remaining = (
+      db.prepare(`SELECT COUNT(*) AS n FROM pillars WHERE confirmed = 0 OR confirmed IS NULL`).get() as {
+        n: number;
+      }
+    ).n;
+    const message = (error as Error).message;
+    if (onProgress) {
+      onProgress(analyzed, Math.max(total, analyzed), `Done (consolidation skipped: ${message})`);
+    }
+    return { analyzed, batches, merged: 0, canonical: remaining, degraded: message };
+  }
 }

@@ -216,7 +216,13 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           state?: string;
           failedReason?: string;
           progress?: { done?: number; total?: number; stage?: string };
-          result?: { analyzed?: number; batches?: number; merged?: number; canonical?: number };
+          result?: {
+            analyzed?: number;
+            batches?: number;
+            merged?: number;
+            canonical?: number;
+            degraded?: string;
+          };
         };
         const prog = data.progress ?? {};
         setRegen((r) => ({
@@ -231,6 +237,9 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
             `Brain rebuilt: ${res.analyzed ?? 0} assets in ${res.batches ?? 0} batches.` +
               (typeof res.merged === "number" && typeof res.canonical === "number"
                 ? ` ${res.merged} pillars merged into ${res.canonical}.`
+                : "") +
+              (typeof res.degraded === "string" && res.degraded
+                ? ` Consolidation needs a retry: ${res.degraded} Use Consolidate below.`
                 : ""),
           );
           break;
