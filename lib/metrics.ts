@@ -2,7 +2,7 @@
 // Pure math lives here so tests can pin the brief's rule: each post is
 // scored as a multiplier against its platform's average.
 import { randomUUID } from "node:crypto";
-import { getDb, nowIso } from "./db";
+import { getDb, nowIso, withTransaction } from "./db";
 import { loadKeys } from "./keys";
 import { zernioAnalyticsDelta, zernioPosts } from "./zernio";
 
@@ -469,4 +469,35 @@ export function pillarStats(): Record<string, PillarStat> {
     };
   }
   return out;
+}
+
+// Fill the 5 confirmed slots with the highest-multiple pillars, rank order.
+// Every other pillar is released back to suggestions (rows and user edits
+// are untouched — only the flag flips). Returns confirmed names in rank
+// order. Runs at the end of consolidation; manual swaps last until the
+// next consolidate/regenerate re-ranks.
+export function autoConfirmTopPillars(limit = 5): string[] {
+  const db = getDb();
+  const stats = pillarStats();
+  const pillars = db.prepare(`SELECT id, name FROM pillars`).all() as Array<{
+    id: string;
+    name: string;
+  }>;
+  const ranked = pillars
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      mult: stats[p.id]?.multiplier ?? null,
+      posts: stats[p.id]?.posts ?? 0,
+    }))
+    .sort(
+      (a, b) =>
+        (b.mult ?? -1) - (a.mult ?? -1) || b.posts - a.posts || a.name.localeCompare(b.name),
+    );
+  const winners = new Set(ranked.slice(0, limit).map((p) => p.id));
+  const setFlag = db.prepare(`UPDATE pillars SET confirmed = ? WHERE id = ?`);
+  withTransaction(() => {
+    for (const p of ranked) setFlag.run(winners.has(p.id) ? 1 : 0, p.id);
+  });
+  return ranked.filter((p) => winners.has(p.id)).map((p) => p.name);
 }

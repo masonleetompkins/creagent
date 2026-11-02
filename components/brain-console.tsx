@@ -221,6 +221,7 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
             batches?: number;
             merged?: number;
             canonical?: number;
+            confirmed?: string[];
             degraded?: string;
           };
         };
@@ -237,6 +238,9 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
             `Brain rebuilt: ${res.analyzed ?? 0} assets in ${res.batches ?? 0} batches.` +
               (typeof res.merged === "number" && typeof res.canonical === "number"
                 ? ` ${res.merged} pillars merged into ${res.canonical}.`
+                : "") +
+              (res.confirmed && res.confirmed.length > 0
+                ? ` Top ${res.confirmed.length} auto-confirmed: ${res.confirmed.join(", ")}.`
                 : "") +
               (typeof res.degraded === "string" && res.degraded
                 ? ` Consolidation needs a retry: ${res.degraded} Use Consolidate below.`
@@ -273,7 +277,7 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
           state?: string;
           failedReason?: string;
           progress?: { stage?: string };
-          result?: { merged?: number; canonical?: number; unmapped?: string[] };
+          result?: { merged?: number; canonical?: number; unmapped?: string[]; confirmed?: string[] };
         };
         const stage = data.progress?.stage;
         if (stage) setRegen((r) => ({ done: 0, total: 0, stage }));
@@ -284,6 +288,9 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
             `Consolidated: ${res.merged ?? 0} merged into ${res.canonical ?? 0} pillars.` +
               (res.unmapped && res.unmapped.length > 0
                 ? ` ${res.unmapped.length} left untouched (${res.unmapped.slice(0, 3).join(", ")}${res.unmapped.length > 3 ? "…" : ""}).`
+                : "") +
+              (res.confirmed && res.confirmed.length > 0
+                ? ` Top ${res.confirmed.length} auto-confirmed: ${res.confirmed.join(", ")}.`
                 : ""),
           );
           break;

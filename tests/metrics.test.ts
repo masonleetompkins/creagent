@@ -242,3 +242,42 @@ describe("median-based scoring", () => {
     });
   });
 });
+
+describe("autoConfirmTopPillars", () => {
+  it("fills the 5 slots with the highest multiples, rank order", async () => {
+    const { getDb } = await import("../lib/db");
+    const { autoConfirmTopPillars } = await import("../lib/metrics");
+    const db = getDb();
+    const mkpillar = db.prepare(
+      `INSERT INTO pillars (id, name, description, voice_notes, confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const mkasset = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const recent = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
+    const fixtures: Array<[string, string, number | null, number]> = [
+      ["ac1", "Rank A", 9, 0],
+      ["ac2", "Rank B", 7, 0],
+      ["ac3", "Rank C", 5, 0],
+      ["ac4", "Rank D", 3, 0],
+      ["ac5", "Rank E", 2, 0],
+      ["ac6", "Rank F", 1, 1], // pre-confirmed low scorer: must be released
+      ["ac7", "Rank G", null, 0], // unscored: ranks last, never wins a slot here
+    ];
+    for (const [id, name, mult, confirmed] of fixtures) {
+      mkpillar.run(id, name, "", "", confirmed, "2026-01-01T00:00:00.000Z");
+      mkasset.run(`a-${id}`, "x_posts", "x", "t", "", "{}", 0, id, mult, recent);
+    }
+    const names = autoConfirmTopPillars();
+    assert.deepEqual(names, ["Rank A", "Rank B", "Rank C", "Rank D", "Rank E"]);
+    const flag = (id: string): number =>
+      (db.prepare(`SELECT confirmed FROM pillars WHERE id = ?`).get(id) as { confirmed: number }).confirmed;
+    for (const id of ["ac1", "ac2", "ac3", "ac4", "ac5"]) assert.equal(flag(id), 1);
+    for (const id of ["ac6", "ac7", "pp1", "pp2"]) assert.equal(flag(id), 0);
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM pillars WHERE confirmed = 1`).get() as { n: number };
+    assert.equal(count.n, 5);
+    // Idempotent: re-ranking changes nothing.
+    assert.deepEqual(autoConfirmTopPillars(), names);
+  });
+});

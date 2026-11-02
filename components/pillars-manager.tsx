@@ -24,6 +24,19 @@ const PLATFORM_SHORT: Record<string, string> = {
   other: "other",
 };
 
+// Rank order, highest multiple first — mirrors autoConfirmTopPillars so the
+// confirmed slots and the suggestion bench both read top-down.
+export type Rankable = { name: string; multiplier?: number | null; posts?: number };
+
+export function rankPillars<T extends Rankable>(list: T[]): T[] {
+  return [...list].sort(
+    (a, b) =>
+      (b.multiplier ?? -1) - (a.multiplier ?? -1) ||
+      (b.posts ?? 0) - (a.posts ?? 0) ||
+      a.name.localeCompare(b.name),
+  );
+}
+
 type Draft = { name: string; description: string; voiceNotes: string };
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
@@ -140,8 +153,8 @@ export default function PillarsManager(): React.ReactNode {
 
   if (!loaded) return <p className="muted">Loading pillars…</p>;
 
-  const confirmed = pillars.filter((p) => p.confirmed);
-  const suggested = pillars.filter((p) => !p.confirmed);
+  const confirmed = rankPillars(pillars.filter((p) => p.confirmed));
+  const suggested = rankPillars(pillars.filter((p) => !p.confirmed));
   const emptySlots = Math.max(0, 5 - confirmed.length);
 
   const setDraft = (id: string, patch: Partial<Draft>): void => {

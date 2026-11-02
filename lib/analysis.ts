@@ -5,7 +5,7 @@ import { getDb, nowIso, withTransaction } from "./db";
 import { embedMany, vectorToBlob } from "./embeddings";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
-import { pillarStats, refreshMultipliers } from "./metrics";
+import { autoConfirmTopPillars, pillarStats, refreshMultipliers } from "./metrics";
 
 const MAX_ASSETS = 100;
 const MAX_ASSET_CHARS = 8000;
@@ -132,6 +132,9 @@ export type ConsolidationResult = {
   merged: number;
   canonical: number;
   unmapped: string[];
+  // Names auto-confirmed into the 5 slots, rank order. Empty when the caller
+  // is the pure transactional apply (it never touches confirmed flags).
+  confirmed: string[];
 };
 
 // Re-point every pillar link (posts, slots, templates) from one pillar to another.
@@ -312,7 +315,7 @@ export function applyConsolidation(entries: ConsolidationEntry[]): Consolidation
       canonical++;
     }
   });
-  return { merged, canonical, unmapped };
+  return { merged, canonical, unmapped, confirmed: [] };
 }
 
 // Embed pillar vault docs written without vectors (consolidation apply is
@@ -441,7 +444,14 @@ export async function consolidatePillars(
     if (candidates.length <= 15) {
       if (onProgress) onProgress("Embedding pillar docs…");
       await embedMissingPillarDocs();
-      return { merged, canonical: candidates.length, unmapped: unmapped.slice(0, 50) };
+      if (onProgress) onProgress("Ranking pillars…");
+      const confirmed = autoConfirmTopPillars();
+      return {
+        merged,
+        canonical: candidates.length,
+        unmapped: unmapped.slice(0, 50),
+        confirmed,
+      };
     }
     const chunks = chunkArray(candidates, CONSOLIDATE_CHUNK);
     for (let i = 0; i < chunks.length; i++) {
@@ -465,7 +475,9 @@ export async function consolidatePillars(
   }
   if (onProgress) onProgress("Embedding pillar docs…");
   await embedMissingPillarDocs();
-  return { merged, canonical: countSuggestions(), unmapped: unmapped.slice(0, 50) };
+  if (onProgress) onProgress("Ranking pillars…");
+  const confirmed = autoConfirmTopPillars();
+  return { merged, canonical: countSuggestions(), unmapped: unmapped.slice(0, 50), confirmed };
 }
 
 const SYSTEM = `You analyze a content creator's posts and videos. Study the CONTENT below and respond with ONLY a JSON object (no prose, no code fences) shaped exactly like:
@@ -918,6 +930,7 @@ export async function runBrainRegenerate(
   batches: number;
   merged: number;
   canonical: number;
+  confirmed: string[];
   degraded?: string;
 }> {
   resetBrain();
@@ -953,6 +966,7 @@ export async function runBrainRegenerate(
       batches,
       merged: consolidated.merged,
       canonical: consolidated.canonical,
+      confirmed: consolidated.confirmed,
     };
   } catch (error) {
     // The analysis batches already committed — don't roll the whole job into a
@@ -969,6 +983,6 @@ export async function runBrainRegenerate(
     if (onProgress) {
       onProgress(analyzed, Math.max(total, analyzed), `Done (consolidation skipped: ${message})`);
     }
-    return { analyzed, batches, merged: 0, canonical: remaining, degraded: message };
+    return { analyzed, batches, merged: 0, canonical: remaining, confirmed: [], degraded: message };
   }
 }
