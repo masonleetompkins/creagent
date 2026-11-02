@@ -44,6 +44,10 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
   const [editingVoice, setEditingVoice] = useState(false);
   const [voiceBody, setVoiceBody] = useState("");
   const [editingDoc, setEditingDoc] = useState<{ id: string; title: string; body: string } | null>(null);
+  const [regen, setRegen] = useState<{ done: number; total: number; stage: string } | null>(null);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenNote, setRegenNote] = useState<string | null>(null);
+  const [regenCount, setRegenCount] = useState(0);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -114,6 +118,58 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
     await loadVault();
   }
 
+  async function regenerate(): Promise<void> {
+    if (
+      !window.confirm(
+        "Rebuild the whole brain from your posts? This replaces the voice profile and vault entries and refreshes pillar suggestions. Confirmed pillars and your queue are kept.",
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setRegenNote(null);
+    setRegenBusy(true);
+    setRegen({ done: 0, total: 0, stage: "Starting…" });
+    try {
+      const started = (await (await fetch("/api/brain/regenerate", { method: "POST" })).json()) as {
+        jobId?: string;
+        error?: string;
+      };
+      if (!started.jobId) throw new Error(started.error ?? "regenerate failed to start");
+      for (;;) {
+        const data = (await (await fetch(`/api/jobs/${started.jobId}`)).json()) as {
+          state?: string;
+          failedReason?: string;
+          progress?: { done?: number; total?: number; stage?: string };
+          result?: { analyzed?: number; batches?: number };
+        };
+        const prog = data.progress ?? {};
+        setRegen((r) => ({
+          done: typeof prog.done === "number" ? prog.done : r?.done ?? 0,
+          total: typeof prog.total === "number" ? prog.total : r?.total ?? 0,
+          stage: typeof prog.stage === "string" && prog.stage ? prog.stage : r?.stage ?? "Working…",
+        }));
+        if (data.state === "completed" || data.state === "failed") {
+          if (data.state === "failed") throw new Error(data.failedReason ?? "regenerate failed");
+          const res = data.result ?? {};
+          setRegenNote(
+            `Brain rebuilt: ${res.analyzed ?? 0} assets in ${res.batches ?? 0} batches.`,
+          );
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      setRegenCount((n) => n + 1);
+      await loadOverview();
+      await loadVault();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRegenBusy(false);
+      setRegen(null);
+    }
+  }
+
   async function removeDoc(id: string): Promise<void> {
     if (!window.confirm("Delete this vault entry?")) return;
     const res = await fetch(`/api/brain/vault?id=${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -130,12 +186,43 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
   return (
     <div>
       {error !== "" && <p className="note err">{error}</p>}
+      <section className="keycard slim">
+        <div className="ingest-head" style={{ marginBottom: 4 }}>
+          <h2>Rebuild brain</h2>
+          <span className="muted">Voice, pillars, and vault regenerated from all posts</span>
+          <span className="ingest-head-actions">
+            <button disabled={regenBusy} onClick={() => void regenerate()}>
+              {regenBusy ? "Rebuilding…" : "Regenerate"}
+            </button>
+          </span>
+        </div>
+        {regen && (
+          <div className="progress-wrap slim">
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{
+                  width:
+                    regen.total > 0
+                      ? `${Math.min(100, Math.round((regen.done / regen.total) * 100))}%`
+                      : "0%",
+                }}
+              />
+            </div>
+            <p className="muted">
+              {regen.stage}
+              {regen.total > 0 ? ` · ${regen.done}/${regen.total}` : ""}
+            </p>
+          </div>
+        )}
+        {regenNote ? <p className="note ok">{regenNote}</p> : null}
+      </section>
       <h2>Voice profile</h2>
       {overview.voice ? (
         editingVoice ? (
           <>
             <textarea
-              rows={8}
+              rows={14}
               value={voiceBody}
               onChange={(e) => setVoiceBody(e.target.value)}
             />
@@ -164,7 +251,7 @@ export default function BrainConsole({ pillars }: { pillars?: React.ReactNode })
       ) : (
         <p className="muted">No voice profile yet — run ingest in Settings.</p>
       )}
-      {pillars}
+      <div key={regenCount}>{pillars}</div>
       <h2>Vault</h2>
       <div className="vtab">
         {TYPES.map((t) => (

@@ -1,0 +1,1 @@
+ALTER TABLE pillars ADD COLUMN voice_notes TEXT NOT NULL DEFAULT '';

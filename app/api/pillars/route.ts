@@ -8,7 +8,7 @@ export async function GET(): Promise<NextResponse> {
   try {
     const rows = getDb()
       .prepare(
-        `SELECT id, name, description, confirmed, created_at FROM pillars ORDER BY created_at ASC`,
+        `SELECT id, name, description, voice_notes, confirmed, created_at FROM pillars ORDER BY created_at ASC`,
       )
       .all();
     return NextResponse.json({ pillars: rows });
@@ -36,6 +36,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       id: randomUUID(),
       name: name.trim(),
       description: typeof description === "string" ? description : "",
+      voice_notes: "",
       confirmed: 0,
       created_at: nowIso(),
     };

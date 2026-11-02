@@ -106,6 +106,7 @@ describe("photo guards + empty strikes", () => {
   });
 });
 
+
 describe("endpointFor + detectVideo", () => {
   it("maps sources to endpoints and spots video items", async () => {
     const { endpointFor } = await import("../lib/transcript-backfill");

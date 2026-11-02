@@ -213,3 +213,19 @@ describe("agent usage and compaction", () => {
     assert.doesNotMatch(joined, /lorem ipsum/);
   });
 });
+
+describe("buildAgentSystem", () => {
+  it("injects the voice profile when one exists", async () => {
+    const { AGENT_SYSTEM, buildAgentSystem } = await import("../lib/agent");
+    const { getDb } = await import("../lib/db");
+    assert.equal(buildAgentSystem(), AGENT_SYSTEM);
+    getDb()
+      .prepare(
+        `INSERT INTO vault_docs (id, doc_type, title, body, created_at) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run("voice1", "voice", "Voice profile", "Write loud and short.", "2026-01-01T00:00:00.000Z");
+    const withVoice = buildAgentSystem();
+    assert.ok(withVoice.startsWith(AGENT_SYSTEM));
+    assert.match(withVoice, /Write loud and short\./);
+  });
+});

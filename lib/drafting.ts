@@ -1,6 +1,7 @@
 // Slot drafting: red slots get Meta-written drafts grounded in the vault,
 // then flip to orange for review.
 import { randomUUID } from "node:crypto";
+import { getVoice } from "./brain";
 import { CONTENT_TYPES, PLAYBOOK, type ContentType } from "./content";
 import { getDb, nowIso } from "./db";
 import { loadKeys } from "./keys";
@@ -19,6 +20,7 @@ type SlotRow = {
   pillar_id: string | null;
   pillar_name: string | null;
   pillar_desc: string | null;
+  pillar_voice: string | null;
   content_type: string;
   platforms: string;
 };
@@ -36,18 +38,27 @@ async function draftOne(slot: SlotRow): Promise<void> {
   const pillarLine = slot.pillar_name
     ? `Pillar: ${slot.pillar_name}${slot.pillar_desc ? ` — ${slot.pillar_desc}` : ""}`
     : "Pillar: (none assigned)";
+  const pillarVoice =
+    slot.pillar_voice && slot.pillar_voice.trim()
+      ? `\nPillar voice: ${slot.pillar_voice.trim()}`
+      : "";
+  // The voice profile is injected directly — never left to retrieval luck.
+  const voice = getVoice();
+  const voiceSection = voice
+    ? `VOICE PROFILE (match every rule below exactly):\n${voice.body.slice(0, 6000)}`
+    : "(no voice profile yet — write in a clear, confident creator voice)";
   const query = `${slot.pillar_name ?? ""} ${typeLabel} ${(slot.content_type as ContentType) ?? ""}`.trim();
   const hits = await searchVault(query || "voice", 5);
   const context =
     hits.length > 0
       ? hits.map((h) => `[${h.doc_type}] ${h.title ?? ""}\n${h.body}`).join("\n\n---\n\n")
-      : "(vault is empty — write in a clear, confident creator voice)";
+      : "(vault is empty)";
 
   const client = getMetaClient(metaKey);
   const resp = await client.responses.create(
     {
       model: metaTextModel(),
-      input: `You are the creator's ghostwriter. Match their voice exactly from the VAULT CONTEXT.\n\n${pillarLine}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`,
+      input: `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`,
       max_output_tokens: 3000,
     },
     { timeout: 120000 },
@@ -73,7 +84,8 @@ function loadSlot(id: string): SlotRow | null {
     (getDb()
       .prepare(
         `SELECT s.id, s.scheduled_at, s.pillar_id, p.name AS pillar_name,
-                p.description AS pillar_desc, s.content_type, s.platforms
+                p.description AS pillar_desc, p.voice_notes AS pillar_voice,
+                s.content_type, s.platforms
          FROM queue_slots s LEFT JOIN pillars p ON p.id = s.pillar_id
          WHERE s.id = ?`,
       )
@@ -102,7 +114,8 @@ export async function runDraftAll(
   const slots = getDb()
     .prepare(
       `SELECT s.id, s.scheduled_at, s.pillar_id, p.name AS pillar_name,
-              p.description AS pillar_desc, s.content_type, s.platforms
+              p.description AS pillar_desc, p.voice_notes AS pillar_voice,
+              s.content_type, s.platforms
        FROM queue_slots s LEFT JOIN pillars p ON p.id = s.pillar_id
        WHERE s.status = 'red' AND s.scheduled_at <= ?
        ORDER BY s.scheduled_at ASC LIMIT ?`,

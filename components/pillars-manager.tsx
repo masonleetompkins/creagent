@@ -6,9 +6,12 @@ type Pillar = {
   id: string;
   name: string;
   description: string;
+  voice_notes: string;
   confirmed: number;
   created_at: string;
 };
+
+type Draft = { name: string; description: string; voiceNotes: string };
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const data = (await res.json()) as Record<string, unknown>;
@@ -18,7 +21,7 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 
 export default function PillarsManager(): React.ReactNode {
   const [pillars, setPillars] = useState<Pillar[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, { name: string; description: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -29,8 +32,10 @@ export default function PillarsManager(): React.ReactNode {
       const data = await readJson(await fetch("/api/pillars"));
       const list = data.pillars as Pillar[];
       setPillars(list);
-      const next: Record<string, { name: string; description: string }> = {};
-      for (const p of list) next[p.id] = { name: p.name, description: p.description };
+      const next: Record<string, Draft> = {};
+      for (const p of list) {
+        next[p.id] = { name: p.name, description: p.description, voiceNotes: p.voice_notes ?? "" };
+      }
       setDrafts(next);
       setLoaded(true);
     } catch (e) {
@@ -46,11 +51,16 @@ export default function PillarsManager(): React.ReactNode {
   async function save(id: string): Promise<void> {
     setError(null);
     try {
+      const d = drafts[id] ?? { name: "", description: "", voiceNotes: "" };
       const data = await readJson(
         await fetch(`/api/pillars/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(drafts[id]),
+          body: JSON.stringify({
+            name: d.name,
+            description: d.description,
+            voice_notes: d.voiceNotes,
+          }),
         }),
       );
       const saved = data.pillar as Pillar;
@@ -100,7 +110,14 @@ export default function PillarsManager(): React.ReactNode {
       );
       const created = data.pillar as Pillar;
       setPillars((ps) => [...ps, created]);
-      setDrafts((d) => ({ ...d, [created.id]: { name: created.name, description: created.description } }));
+      setDrafts((d) => ({
+        ...d,
+        [created.id]: {
+          name: created.name,
+          description: created.description,
+          voiceNotes: created.voice_notes ?? "",
+        },
+      }));
       setNewName("");
       setNewDesc("");
     } catch (e) {
@@ -114,6 +131,18 @@ export default function PillarsManager(): React.ReactNode {
   const suggested = pillars.filter((p) => !p.confirmed);
   const emptySlots = Math.max(0, 5 - confirmed.length);
 
+  const setDraft = (id: string, patch: Partial<Draft>): void => {
+    setDrafts((d) => ({
+      ...d,
+      [id]: {
+        name: d[id]?.name ?? "",
+        description: d[id]?.description ?? "",
+        voiceNotes: d[id]?.voiceNotes ?? "",
+        ...patch,
+      },
+    }));
+  };
+
   const cell = (p: Pillar): React.ReactNode => (
     <div className={`pillar-cell${p.confirmed ? " yes" : ""}`} key={p.id}>
       <input
@@ -121,18 +150,21 @@ export default function PillarsManager(): React.ReactNode {
         aria-label="Pillar name"
         className="pillar-name"
         value={drafts[p.id]?.name ?? ""}
-        onChange={(e) =>
-          setDrafts((d) => ({ ...d, [p.id]: { name: e.target.value, description: d[p.id]?.description ?? "" } }))
-        }
+        onChange={(e) => setDraft(p.id, { name: e.target.value })}
       />
       <textarea
         aria-label="Pillar description"
-        rows={3}
+        rows={2}
         placeholder="What this pillar covers"
         value={drafts[p.id]?.description ?? ""}
-        onChange={(e) =>
-          setDrafts((d) => ({ ...d, [p.id]: { name: d[p.id]?.name ?? "", description: e.target.value } }))
-        }
+        onChange={(e) => setDraft(p.id, { description: e.target.value })}
+      />
+      <textarea
+        aria-label="Pillar voice notes"
+        rows={2}
+        placeholder="How your voice shifts for this pillar"
+        value={drafts[p.id]?.voiceNotes ?? ""}
+        onChange={(e) => setDraft(p.id, { voiceNotes: e.target.value })}
       />
       <div className="pillar-btns">
         <button onClick={() => void save(p.id)} title="Save edits">

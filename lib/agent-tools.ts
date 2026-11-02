@@ -185,12 +185,14 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "list_pillars",
-    description: "Content pillars with ids, names, and confirmed flags.",
+    description: "Content pillars with ids, names, descriptions, voice notes, and confirmed flags.",
     parameters: objParam({}),
     run: async () =>
       safe(async () => {
         const rows = getDb()
-          .prepare(`SELECT id, name, description, confirmed FROM pillars ORDER BY confirmed DESC, name ASC`)
+          .prepare(
+            `SELECT id, name, description, voice_notes, confirmed FROM pillars ORDER BY confirmed DESC, name ASC`,
+          )
           .all() as unknown[];
         return rows;
       }),

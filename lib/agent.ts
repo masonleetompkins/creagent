@@ -2,6 +2,7 @@
 // Runs inside the worker (agent_turn job). The chat client is injectable so
 // tests drive the loop without touching the Meta API.
 import { randomUUID } from "node:crypto";
+import { getVoice } from "./brain";
 import { getDb, nowIso, withTransaction } from "./db";
 import { loadKeys } from "./keys";
 import { META_CONTEXT_TOKENS, getMetaClient, metaTextModel, textCostUsd } from "./meta";
@@ -15,6 +16,20 @@ Rules you must follow:
 - Match the creator's voice using vault_search before writing anything user-facing.
 - Prefer small reversible edits; say what you changed and what to review.
 - Keep replies short. Name IDs you acted on.`;
+
+// The voice profile rides every turn directly — the agent must write in the
+// creator's voice even when it never thinks to search the vault.
+export function buildAgentSystem(): string {
+  try {
+    const voice = getVoice();
+    if (voice && voice.body.trim()) {
+      return `${AGENT_SYSTEM}\n\nCREATOR VOICE PROFILE (match in everything user-facing):\n${voice.body.slice(0, 6000)}`;
+    }
+  } catch {
+    /* brain unavailable — base prompt still works */
+  }
+  return AGENT_SYSTEM;
+}
 
 export type AgentMsg = {
   role: "user" | "assistant" | "tool";
@@ -241,7 +256,7 @@ export async function runAgentTurn(
   saveMessage(chatId, { role: "user", content: userText });
   const history = getMessages(chatId).filter((m) => m.role !== "tool" && !m.compacted);
   const messages: ChatMessage[] = [
-    { role: "system", content: AGENT_SYSTEM },
+    { role: "system", content: buildAgentSystem() },
     ...history.map((m): ChatMessage => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: m.content,

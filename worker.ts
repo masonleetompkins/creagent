@@ -1,6 +1,6 @@
 // Local job worker. Polls the embedded SQLite queue, no daemons.
 // Usage: npm run worker
-import { runAnalysis } from "./lib/analysis";
+import { runAnalysis, runBrainRegenerate } from "./lib/analysis";
 import { runCarouselCopy } from "./lib/carousel-copy";
 import { runCarouselImage } from "./lib/carousel-image";
 import { runAutopick, runPlanImages } from "./lib/carousel-plan";
@@ -71,6 +71,11 @@ async function dispatch(job: JobRow): Promise<unknown> {
   if (job.name === "analyze") {
     const { limit } = data;
     return runAnalysis(typeof limit === "number" ? limit : undefined, (done, total, stage) =>
+      updateProgress(job.id, { done, total, stage }),
+    );
+  }
+  if (job.name === "brain_regenerate") {
+    return runBrainRegenerate((done, total, stage) =>
       updateProgress(job.id, { done, total, stage }),
     );
   }

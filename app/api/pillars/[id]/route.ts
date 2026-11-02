@@ -17,9 +17,10 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const { name, description, confirmed } = body as {
+  const { name, description, voice_notes, confirmed } = body as {
     name?: unknown;
     description?: unknown;
+    voice_notes?: unknown;
     confirmed?: unknown;
   };
   if (name !== undefined && (typeof name !== "string" || !name.trim())) {
@@ -27,6 +28,9 @@ export async function PATCH(
   }
   if (description !== undefined && typeof description !== "string") {
     return NextResponse.json({ error: "description must be a string" }, { status: 400 });
+  }
+  if (voice_notes !== undefined && typeof voice_notes !== "string") {
+    return NextResponse.json({ error: "voice_notes must be a string" }, { status: 400 });
   }
   if (confirmed !== undefined && typeof confirmed !== "boolean") {
     return NextResponse.json({ error: "confirmed must be a boolean" }, { status: 400 });
@@ -48,12 +52,14 @@ export async function PATCH(
         `UPDATE pillars
          SET name = COALESCE(?, name),
              description = COALESCE(?, description),
+             voice_notes = COALESCE(?, voice_notes),
              confirmed = COALESCE(?, confirmed)
          WHERE id = ?`,
       )
       .run(
         typeof name === "string" ? name.trim() : null,
         typeof description === "string" ? description : null,
+        typeof voice_notes === "string" ? voice_notes : null,
         typeof confirmed === "boolean" ? (confirmed ? 1 : 0) : null,
         id,
       );
@@ -62,7 +68,7 @@ export async function PATCH(
     }
     const pillar = db
       .prepare(
-        `SELECT id, name, description, confirmed, created_at FROM pillars WHERE id = ?`,
+        `SELECT id, name, description, voice_notes, confirmed, created_at FROM pillars WHERE id = ?`,
       )
       .get(id);
     return NextResponse.json({ pillar });
