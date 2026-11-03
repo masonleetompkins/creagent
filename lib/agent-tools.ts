@@ -290,7 +290,7 @@ export const AGENT_TOOLS: ToolDef[] = [
         time: S("Posting time HH:MM, 24h"),
         pillar: S("Pillar name or id (optional)"),
         content_type: S("short_post|thread|video_trend|video_series|video_yap|carousel|article_blog|article_thread|long_video|clip"),
-        platforms: S("Comma-separated: x,threads,facebook,instagram,tiktok,youtube,linkedin,blog"),
+        platforms: S("Comma-separated: x,threads,facebook,instagram,tiktok,youtube,linkedin"),
         everyday: B("Add all 7 days (default false)"),
       },
       ["time", "content_type", "platforms"],

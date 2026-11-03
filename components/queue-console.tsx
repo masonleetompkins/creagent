@@ -184,7 +184,6 @@ const PLAT_LABEL: Record<string, string> = {
   tiktok: "TikTok",
   youtube: "YouTube",
   linkedin: "LinkedIn",
-  blog: "Blog",
 };
 
 function fitStat(

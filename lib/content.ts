@@ -87,7 +87,6 @@ export const PLATFORMS = [
   "tiktok",
   "youtube",
   "linkedin",
-  "blog",
 ] as const;
 
 export type SlotStatus = "red" | "orange" | "green" | "gray";
