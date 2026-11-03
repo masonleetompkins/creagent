@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvedBody, clampSelection, parseStructure, splitLegacyOptions } from "../lib/draft-structure";
+import { approvedBody, charCount, clampSelection, longestParagraph, parseStructure, splitLegacyOptions } from "../lib/draft-structure";
 
 process.env.SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "creagent-approval-")), "test.sqlite");
 
@@ -122,5 +122,22 @@ describe("resolveApproval", () => {
     assert.equal(cleared.approved_draft_id, null);
     assert.equal(cleared.approved_option, null);
     assert.equal(resolveApproval(randomUUID()), null);
+  });
+});
+
+describe("charCount", () => {
+  it("counts code points on trimmed text", () => {
+    assert.equal(charCount("hello"), 5);
+    assert.equal(charCount("  padded  "), 6);
+    assert.equal(charCount("👇".repeat(3)), 3);
+    assert.equal(charCount(""), 0);
+  });
+});
+
+describe("longestParagraph", () => {
+  it("returns the longest blank-line-separated paragraph", () => {
+    assert.equal(longestParagraph("short\n\nmuch longer here"), 16);
+    assert.equal(longestParagraph("single"), 6);
+    assert.equal(longestParagraph(""), 0);
   });
 });

@@ -45,6 +45,19 @@ export function clampSelection(selection: string | null | undefined, optionCount
   return Math.min(Math.max(0, Number.parseInt(selection ?? "", 10) || 0), Math.max(0, optionCount - 1));
 }
 
+// Character counts, code points so emoji don't cheat (matches the publish
+// preflight). Shared by review cards, the edit box, and the hero line.
+export function charCount(text: string): number {
+  return Array.from(text.trim()).length;
+}
+
+export function longestParagraph(text: string): number {
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => charCount(p))
+    .reduce((m, n) => Math.max(m, n), 0);
+}
+
 // The shippable post text: the picked option, plus the thread body when the
 // pick is a hook. Falls back to raw body for unstructured drafts.
 export function approvedBody(

@@ -6,7 +6,9 @@ import { CONTENT_TYPES, PLATFORM_POST_CAPS, PLATFORMS } from "@/lib/content";
 import DraftReview from "./draft-review";
 import {
   approvedBody,
+  charCount,
   clampSelection,
+  longestParagraph,
   parseStructure,
   splitLegacyOptions,
 } from "@/lib/draft-structure";
@@ -142,6 +144,19 @@ function parsePlatforms(raw: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+// Tightest single-post cap across the slot's platforms — the N/Total every
+// count is measured against. Null when no platform publishes a cap.
+function slotCap(platformsJson: string): number | null {
+  const caps = parsePlatforms(platformsJson)
+    .map((p) => PLATFORM_POST_CAPS[p])
+    .filter((n): n is number => n !== undefined);
+  return caps.length > 0 ? Math.min(...caps) : null;
+}
+
+function isThreadKind(contentType: string): boolean {
+  return contentType === "thread" || contentType === "article_thread";
 }
 
 function fmtTime(iso: string): string {
@@ -1278,21 +1293,29 @@ export default function QueueConsole(): React.ReactNode {
                 : clampSelection(pinned.selection, optionCountOf(pinned));
             const hero = approvedBody(pinned, heroIdx);
             const vnum = versions.length > 1 ? `Draft ${versions.indexOf(pinned) + 1} · ` : "";
-            const heroLen = Array.from(hero.trim()).length;
+            const heroThread = isThreadKind(selected.content_type);
+            const heroParas = hero.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+            const heroN = heroThread ? longestParagraph(hero) : charCount(hero);
+            const heroCap = slotCap(selected.platforms);
             const overCaps = parsePlatforms(selected.platforms).filter((p) => {
               const cap = PLATFORM_POST_CAPS[p];
-              return cap !== undefined && heroLen > cap;
+              if (cap === undefined) return false;
+              return heroThread
+                ? heroParas.some((para) => charCount(para) > cap)
+                : heroN > cap;
             });
             return (
               <div className="aphero">
                 <p className="dr-sub">
                   {selected.status === "gray" ? "Posted" : "Approved post"} · {vnum}Option {heroIdx + 1} ·{" "}
-                  {heroLen} chars
+                  {heroThread ? "longest " : ""}
+                  {heroN}
+                  {heroCap !== null ? `/${heroCap}` : ""}
+                  {heroThread ? "" : " chars"}
                   {overCaps.length > 0 ? (
                     <span className="overcap">
                       {" "}
-                      · over {(PLAT_LABEL[overCaps[0]] ?? overCaps[0]).toString()}&rsquo;s{" "}
-                      {PLATFORM_POST_CAPS[overCaps[0]]}
+                      · over {PLAT_LABEL[overCaps[0] ?? ""] ?? overCaps[0]}
                       {overCaps.length > 1 ? ` (+${overCaps.length - 1} more)` : ""}
                     </span>
                   ) : null}
@@ -1345,6 +1368,7 @@ export default function QueueConsole(): React.ReactNode {
                 body={d.body}
                 selection={picked}
                 nextStep={nextStep}
+                limit={slotCap(selected.platforms)}
                 onSelect={(idx) => void selectOption(d.id, idx)}
                 onEdit={() => setEditing({ id: d.id, body: d.body })}
                 onFeedback={() => setFeedback({ draftId: d.id, body: "", standing: false })}
@@ -1453,6 +1477,21 @@ export default function QueueConsole(): React.ReactNode {
                   value={editing.body}
                   onChange={(e) => setEditing({ id: editing.id, body: e.target.value })}
                 />
+                {(() => {
+                  const thread = isThreadKind(selected.content_type);
+                  const n = thread ? longestParagraph(editing.body) : charCount(editing.body);
+                  const cap = slotCap(selected.platforms);
+                  const over = cap !== null && n > cap;
+                  return (
+                    <p className={over ? "overcap" : "muted"}>
+                      {thread ? "longest post " : ""}
+                      {n}
+                      {cap !== null ? `/${cap}` : ""}
+                      {thread ? "" : " chars"}
+                      {over ? " — over the limit" : ""}
+                    </p>
+                  );
+                })()}
                 <div className="row">
                   <button className="primary" onClick={() => void saveEdit()}>
                     Save

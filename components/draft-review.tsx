@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { DraftStructureView } from "@/lib/draft-structure";
-import { splitLegacyOptions } from "@/lib/draft-structure";
+import { charCount, splitLegacyOptions } from "@/lib/draft-structure";
 
 // DraftReview: the guided draft-reading surface. Renders a code-assembled
 // structure (option cards + a one-line next step) when present, clean prose
@@ -24,10 +24,17 @@ type Props = {
   body: string;
   selection: number;
   nextStep: string | null;
+  // Tightest platform cap for N/Total counts; null shows bare counts.
+  limit?: number | null;
   onSelect: (index: number) => void;
   onEdit: () => void;
   onFeedback: () => void;
 };
+
+function Count({ n, limit }: { n: number; limit: number | null | undefined }): React.ReactNode {
+  const over = limit != null && n > limit;
+  return <span className={`charcount${over ? " over" : ""}`}>{limit != null ? `${n}/${limit}` : `${n}`}</span>;
+}
 
 export default function DraftReview(props: Props): React.ReactNode {
   const { draftId, title, edited, structure, body, selection, nextStep } = props;
@@ -119,7 +126,7 @@ export default function DraftReview(props: Props): React.ReactNode {
               {...bankProps(i)}
             >
               <span className="dr-tag">
-                {o.label}
+                {o.label} · <Count n={charCount(o.body)} limit={props.limit} />
                 {selection === i ? " · picked" : ""}
                 {banked[i] ? " · banked" : ""}
               </span>
@@ -145,7 +152,7 @@ export default function DraftReview(props: Props): React.ReactNode {
                 {...bankProps(i)}
               >
                 <span className="dr-tag">
-                  {o.label}
+                  {o.label} · <Count n={charCount(o.body)} limit={props.limit} />
                   {selection === i ? " · picked" : ""}
                   {banked[i] ? " · banked" : ""}
                 </span>
@@ -158,7 +165,9 @@ export default function DraftReview(props: Props): React.ReactNode {
               <p className="dr-sub">Thread — pairs with your picked hook</p>
               <div className="dr-prose">
                 {paragraphs(threadBody).map((p, i) => (
-                  <p key={i}>{p}</p>
+                  <p key={i}>
+                    {p} <Count n={charCount(p)} limit={props.limit} />
+                  </p>
                 ))}
               </div>
             </>
@@ -168,7 +177,9 @@ export default function DraftReview(props: Props): React.ReactNode {
       {layout === "prose" ? (
         <div className="dr-prose">
           {paragraphs(body).map((p, i) => (
-            <p key={i}>{p}</p>
+            <p key={i}>
+              {p} <Count n={charCount(p)} limit={props.limit} />
+            </p>
           ))}
         </div>
       ) : null}
