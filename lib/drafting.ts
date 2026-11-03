@@ -7,6 +7,12 @@ import { getDb, nowIso } from "./db";
 import { rulesFor, saveFeedback } from "./feedback";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
+import {
+  buildFitSection,
+  isWeakFit,
+  parseSlotPlatforms,
+  platformFitFor,
+} from "./platform-fit";
 import { searchVault } from "./vault";
 
 export type DraftResult = {
@@ -28,6 +34,31 @@ type SlotRow = {
 
 function guideFor(contentType: string): string {
   return PLAYBOOK[contentType] ?? "Write the content for this slot.";
+}
+
+// Measured pillar×platform fit for the prompt, plus a human-readable
+// platform list (slots store JSON like ["x","threads"]).
+function fitForSlot(slot: SlotRow): { platformsLine: string; fitSection: string; weak: boolean } {
+  const platforms = parseSlotPlatforms(slot.platforms);
+  const fits = platformFitFor(slot.pillar_id, platforms, slot.content_type);
+  const fitSection = buildFitSection(fits, slot.pillar_name);
+  return {
+    platformsLine: platforms.length > 0 ? platforms.join(", ") : "(no platforms set)",
+    fitSection: fitSection ? `\n\n${fitSection}` : "",
+    weak: fits.some(isWeakFit),
+  };
+}
+
+// On a weak platform fit the voice mandate gets an explicit exception at
+// its own site: a distant paragraph can't override identity-level habits
+// ("opens almost everything with…") on its own (probed live).
+function voiceSectionFor(weak: boolean): string {
+  const voice = getVoice();
+  if (!voice) return "(no voice profile yet — write in a clear, confident creator voice)";
+  const framing = weak
+    ? "VOICE PROFILE (match every rule below exactly, with ONE exception: PLATFORM FIT flags a WEAK FIT for this draft — drop your default opener habit for this draft and open like that platform's winners instead)"
+    : "VOICE PROFILE (match every rule below exactly)";
+  return `${framing}:\n${voice.body.slice(0, 6000)}`;
 }
 
 export type VaultHit = { doc_type: string; title?: string | null; body: string };
@@ -57,10 +88,8 @@ async function draftOne(slot: SlotRow): Promise<void> {
       ? `\nPillar voice: ${slot.pillar_voice.trim()}`
       : "";
   // The voice profile is injected directly — never left to retrieval luck.
-  const voice = getVoice();
-  const voiceSection = voice
-    ? `VOICE PROFILE (match every rule below exactly):\n${voice.body.slice(0, 6000)}`
-    : "(no voice profile yet — write in a clear, confident creator voice)";
+  const fit = fitForSlot(slot);
+  const voiceSection = voiceSectionFor(fit.weak);
   const query = `${slot.pillar_name ?? ""} ${typeLabel} ${(slot.content_type as ContentType) ?? ""}`.trim();
   const hits = await searchVault(query || "voice", 5);
   const context = buildDraftContext(
@@ -75,7 +104,7 @@ async function draftOne(slot: SlotRow): Promise<void> {
   // Medium effort, uncapped output: capped budgets starve the draft when
   // reasoning runs long (probed live), and drafts deserve full quality.
   const client = getMetaClient(metaKey);
-  const input = `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}${rulesSection}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`;
+  const input = `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${fit.platformsLine}${rulesSection}${fit.fitSection}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`;
   const call = (text: string) =>
     client.responses.create(
       {
@@ -147,6 +176,7 @@ export function buildRedraftInput(
   typeLabel: string,
   platforms: string,
   rulesSection: string,
+  fitSection = "",
 ): string {
   return `You are the creator's ghostwriter revising a draft.
 
@@ -154,7 +184,7 @@ ${voiceSection}
 
 ${pillarLine}
 Content type: ${typeLabel}
-Platforms: ${platforms}${rulesSection}
+Platforms: ${platforms}${rulesSection}${fitSection}
 
 PREVIOUS DRAFT:
 ${previous}
@@ -182,10 +212,8 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
   if (!prev) throw new Error("draft this slot before giving feedback");
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
-  const voice = getVoice();
-  const voiceSection = voice
-    ? `VOICE PROFILE (match every rule below exactly):\n${voice.body.slice(0, 6000)}`
-    : "(no voice profile yet — write in a clear, confident creator voice)";
+  const fit = fitForSlot(slot);
+  const voiceSection = voiceSectionFor(fit.weak);
   const pillarLine = slot.pillar_name ? `Pillar: ${slot.pillar_name}` : "Pillar: (none assigned)";
   const typeLabel =
     (CONTENT_TYPES as Record<string, { label: string }>)[slot.content_type]?.label ??
@@ -202,8 +230,9 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
     voiceSection,
     pillarLine,
     typeLabel,
-    slot.platforms,
+    fit.platformsLine,
     rulesSection,
+    fit.fitSection,
   );
   const call = (text: string) =>
     client.responses.create(
