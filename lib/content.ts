@@ -21,7 +21,7 @@ export function isContentType(value: string): value is ContentType {
 // Platform playbook: the per-type production guide the agent drafts from.
 // Shared with the Brain page so the user sees the same instructions.
 export const PLAYBOOK: Record<string, string> = {
-  short_post: "Write exactly one punchy post under 280 characters. Output only the post, no preamble, no variants.",
+  short_post: "Write exactly one standalone post, hard limit 280 characters. Never a thread hook: no numbered parts, no 'thread below', no 'everything interesting' roundup openers. Output only the post, no preamble, no variants.",
   thread: "Write thread posts 2 through N (6-9 posts total including the hook, which goes above — do NOT write the hook). Number each post, keep each under 280 characters, end with a takeaway or question. Output only the posts.",
   video_trend: "Write a short-form video script: HOOK (first 2 seconds), 3-5 beats with what to say and show, and a CTA. Keep it under 45 seconds spoken.",
   video_series: "Write an episode script for a recurring series: cold open that states the series premise in one line, the episode content in beats, and a consistent sign-off.",

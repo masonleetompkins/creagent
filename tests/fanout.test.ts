@@ -36,6 +36,9 @@ describe("buildFanoutPrompts", () => {
     assert.ok(calls[2].prompt.includes("curiosity gap"));
     // No call asks for variants or JSON — one post each.
     assert.ok(calls.every((c) => !c.prompt.includes("alternate variants")));
+    // Single-post scope overrides thread-heavy platform guides.
+    assert.ok(calls.every((c) => c.prompt.includes("ONE standalone post")));
+    assert.ok(calls.every((c) => c.prompt.includes("ignore all thread advice")));
   });
 
   it("fans thread into 3 hook calls plus a hookless body call", async () => {
@@ -100,6 +103,17 @@ describe("assembleStructure", () => {
     assert.equal(ok?.structure.layout, "prose");
     assert.equal(ok?.body, "slides here");
     assert.equal(assembleStructure("carousel", new Map()), null);
+  });
+});
+
+describe("overLimit", () => {
+  it("counts code points against the kind limit", async () => {
+    const { overLimit } = await import("../lib/drafting");
+    assert.equal(overLimit("short_post", "x".repeat(280)), 0);
+    assert.equal(overLimit("short_post", "x".repeat(281)), 1);
+    assert.equal(overLimit("short_post", "👇".repeat(280)), 0);
+    assert.equal(overLimit("short_post", "👇".repeat(281)), 1);
+    assert.equal(overLimit("carousel", "x".repeat(5000)), 0);
   });
 });
 

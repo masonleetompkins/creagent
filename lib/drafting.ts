@@ -119,7 +119,7 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
       key: `variant-${i}`,
       label: a.label,
       role: "option" as const,
-      prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}${vault}`,
+      prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}\nSCOPE: this slot drafts ONE standalone post. The platform rules above may describe threads — ignore all thread advice for this slot; apply only single-post hook rules.${vault}`,
     }));
   }
   if (kind === "thread") {
@@ -267,11 +267,46 @@ async function callText(client: MetaClient, prompt: string): Promise<string> {
   return body;
 }
 
-async function runFanout(client: MetaClient, calls: FanoutCall[]): Promise<Map<string, string>> {
+// Hard character limits, enforced in code — a "stay under N" line in the
+// prompt is a suggestion the model ignores (probed live: thread-length
+// "short posts"). Counts code points so emoji don't cheat.
+const CHAR_LIMITS: Record<string, number> = { short_post: 280, thread: 280 };
+
+export function overLimit(kind: string, text: string): number {
+  const limit = CHAR_LIMITS[kind];
+  if (!limit) return 0;
+  return Math.max(0, Array.from(text.trim()).length - limit);
+}
+
+async function runFanout(
+  client: MetaClient,
+  kind: string,
+  calls: FanoutCall[],
+): Promise<Map<string, string>> {
   const entries = await Promise.all(
     calls.map(async (c) => [c.key, await callText(client, c.prompt)] as const),
   );
-  return new Map(entries);
+  const out = new Map(entries);
+  // Repair pass: over-limit options get one retry with the overage stated,
+  // then are dropped. Limits apply to options only — thread bodies are
+  // multi-post by design (each post carries its own limit in-prompt).
+  const limit = CHAR_LIMITS[kind];
+  if (limit) {
+    for (const c of calls.filter((x) => x.role === "option")) {
+      const body = (out.get(c.key) ?? "").trim();
+      if (!body || overLimit(kind, body) === 0) continue;
+      const over = overLimit(kind, body);
+      const fixed = (
+        await callText(
+          client,
+          `${c.prompt}\n\nYour post was ${over} characters over the ${limit} limit. Rewrite it under ${limit} characters — same angle, tighter. Output only the post.`,
+        )
+      ).trim();
+      if (fixed && overLimit(kind, fixed) === 0) out.set(c.key, fixed);
+      else out.delete(c.key);
+    }
+  }
+  return out;
 }
 
 async function draftOne(slot: SlotRow): Promise<void> {
@@ -280,7 +315,7 @@ async function draftOne(slot: SlotRow): Promise<void> {
   const client = getMetaClient(metaKey);
   const ctx = await buildFanoutContext(slot);
   const calls = buildFanoutPrompts(slot.content_type, ctx);
-  const assembled = assembleStructure(slot.content_type, await runFanout(client, calls));
+  const assembled = assembleStructure(slot.content_type, await runFanout(client, slot.content_type, calls));
   if (!assembled) {
     throw new Error(`model returned an empty draft (all ${calls.length} calls came back empty)`);
   }
@@ -352,7 +387,7 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
   const client = getMetaClient(metaKey);
   const ctx = await buildFanoutContext(slot, prev.body, note);
   const calls = buildFanoutPrompts(slot.content_type, ctx);
-  const assembled = assembleStructure(slot.content_type, await runFanout(client, calls));
+  const assembled = assembleStructure(slot.content_type, await runFanout(client, slot.content_type, calls));
   if (!assembled) {
     throw new Error(`model returned an empty redraft (all ${calls.length} calls came back empty)`);
   }
