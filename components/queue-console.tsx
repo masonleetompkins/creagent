@@ -50,7 +50,11 @@ type Template = {
   platforms: string;
 };
 
-type Pillar = { id: string; name: string };
+type Pillar = {
+  id: string;
+  name: string;
+  byPlatform?: Record<string, { posts: number; multiplier: number | null }>;
+};
 
 type HistoryAsset = {
   id: string;
@@ -131,6 +135,43 @@ function typeLabel(t: string): string {
   return (CONTENT_TYPES as Record<string, { label: string }>)[t]?.label ?? t;
 }
 
+const QUARTERS: string[] = Array.from({ length: 96 }, (_, i) => {
+  const h = String(Math.floor(i / 4)).padStart(2, "0");
+  const m = String((i % 4) * 15).padStart(2, "0");
+  return `${h}:${m}`;
+});
+
+const PLAT_LABEL: Record<string, string> = {
+  x: "X",
+  threads: "Threads",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  youtube: "YouTube",
+  linkedin: "LinkedIn",
+  blog: "Blog",
+};
+
+function fitStat(
+  pillars: Pillar[],
+  pillarId: string | null,
+  platform: string,
+): { posts: number; multiplier: number | null } | null {
+  if (!pillarId) return null;
+  return pillars.find((p) => p.id === pillarId)?.byPlatform?.[platform] ?? null;
+}
+
+function fitMark(pillars: Pillar[], pillarId: string, platform: string): string {
+  const st = fitStat(pillars, pillarId, platform);
+  if (!st || st.multiplier === null) return " · no data";
+  const flag = st.multiplier < 0.7 && st.posts > 0 ? " ⚠" : "";
+  return ` · ${st.multiplier}x${flag}`;
+}
+
+function isWeakStat(st: { posts: number; multiplier: number | null } | null): boolean {
+  return !!st && st.multiplier !== null && st.posts > 0 && st.multiplier < 0.7;
+}
+
 export default function QueueConsole(): React.ReactNode {
   const [view, setView] = useState<"week" | "month">("week");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -170,12 +211,12 @@ export default function QueueConsole(): React.ReactNode {
     [],
   );
   const [feedback, setFeedback] = useState<{ draftId: string; body: string } | null>(null);
-  const [form, setForm] = useState({
+  const [adding, setAdding] = useState<string | null>(null);
+  const [draft, setDraft] = useState({
     weekday: "1",
     time: "09:00",
     pillar_id: "",
     content_type: "short_post",
-    platforms: "x",
   });
 
   const weekStart = useCallback(() => {
@@ -468,10 +509,10 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
-  async function addTemplate(): Promise<void> {
+  async function addTemplate(platform: string): Promise<void> {
     const days =
-      form.weekday === "all" ? [0, 1, 2, 3, 4, 5, 6] : [Number(form.weekday)];
-    const plats = form.platforms.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+      draft.weekday === "all" ? [0, 1, 2, 3, 4, 5, 6] : [Number(draft.weekday)];
+    const plats = [platform];
     let created = 0;
     let skipped = 0;
     try {
@@ -479,10 +520,10 @@ export default function QueueConsole(): React.ReactNode {
         if (templates.some(
           (t) =>
             t.weekday === weekday &&
-            t.time === form.time &&
-            (t.pillar_id ?? "") === (form.pillar_id || "") &&
-            t.content_type === form.content_type &&
-            JSON.stringify(parsePlatforms(t.platforms).slice().sort()) === JSON.stringify(plats.slice().sort()),
+            t.time === draft.time &&
+            (t.pillar_id ?? "") === (draft.pillar_id || "") &&
+            t.content_type === draft.content_type &&
+            JSON.stringify(parsePlatforms(t.platforms).slice().sort()) === JSON.stringify(plats),
         )) {
           skipped++;
           continue;
@@ -493,9 +534,9 @@ export default function QueueConsole(): React.ReactNode {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               weekday,
-              time: form.time,
-              pillar_id: form.pillar_id || null,
-              content_type: form.content_type,
+              time: draft.time,
+              pillar_id: draft.pillar_id || null,
+              content_type: draft.content_type,
               platforms: plats,
             }),
           }),
@@ -507,6 +548,7 @@ export default function QueueConsole(): React.ReactNode {
           ? "Those slots already exist — nothing added."
           : `Added ${created} slot${created === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} already existed)` : ""}.`,
       );
+      if (created > 0) setAdding(null);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -561,7 +603,7 @@ export default function QueueConsole(): React.ReactNode {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: `Set up my posting queue as follows: ${text}\n\nRules: weekdays are 0=Sunday..6=Saturday. First call list_templates to see the current schedule and list_pillars for pillar names. Use add_template for each slot (everyday=true for daily cadences) and delete_template to remove ones I no longer want. Always assign every slot the best-fit confirmed pillar, even when I don't name one — never leave pillar blank unless I have no confirmed pillars. When the templates are right, call run_planner once to materialize slots, then reply with a short summary of the schedule including which pillar each slot uses.`,
+            message: `Set up my posting queue as follows: ${text}\n\nRules: weekdays are 0=Sunday..6=Saturday. First call list_templates to see the current schedule, list_pillars for pillar names, and pillar_fit for measured pillar×platform multiples. Use add_template for each slot (everyday=true for daily cadences) and delete_template to remove ones I no longer want. Always assign every slot the best-fit confirmed pillar, even when I don't name one — never leave pillar blank unless I have no confirmed pillars. Prefer pillar×platform combos at or above 1.0x; if I ask for a combo under 0.7x, schedule it but warn me about the multiple. When the templates are right, call run_planner once to materialize slots, then reply with a short summary of the schedule including which pillar each slot uses.`,
           }),
         }),
       )) as { jobId: string };
@@ -998,8 +1040,10 @@ export default function QueueConsole(): React.ReactNode {
             </button>
           </div>
           <p className="muted">
-            Posting times per day, with a pillar, content type, and platforms
-            for each. The planner materializes these into calendar slots.
+            Posting times per platform, broken down by day. Pillar multiples
+            are measured against each platform&apos;s median (1.0x = average);
+            ⚠ marks combos under 0.7x. The planner materializes these into
+            calendar slots.
           </p>
           <section className="keycard slim">
             <div className="row">
@@ -1031,137 +1075,205 @@ export default function QueueConsole(): React.ReactNode {
             {agentBusy ? <p className="muted">The agent is setting up your queue…</p> : null}
             {agentNote ? <p className="note ok">{agentNote}</p> : null}
           </section>
-          {(() => {
-        const groups = new Map<string, typeof templates>();
-        for (const t of templates) {
-          const key = `${t.time}|${t.pillar_id ?? ""}|${t.content_type}|${parsePlatforms(t.platforms).slice().sort().join(",")}`;
-          const g = groups.get(key) ?? [];
-          g.push(t);
-          groups.set(key, g);
-        }
-        const rows: React.ReactNode[] = [];
-        const card = (
-          key: string,
-          label: string,
-          t: { content_type: string; pillar_id: string | null; platforms: string },
-          ids: string[],
-          onDelete: () => void,
-          deleteLabel: string,
-        ): React.ReactNode => (
-          <section className="keycard" key={key}>
-            <p>
-              <strong>{label}</strong> · {typeLabel(t.content_type)} ·{" "}
-              {parsePlatforms(t.platforms).join(", ") || "no platforms"}
-            </p>
-            <div className="row">
-              <select
-                aria-label="Pillar"
-                value={t.pillar_id ?? ""}
-                onChange={(e) => void setTemplatePillar(ids, e.target.value)}
-              >
-                <option value="">No pillar</option>
-                {pillars.map((pl) => (
-                  <option key={pl.id} value={pl.id}>
-                    {pl.name}
-                  </option>
-                ))}
-              </select>
-              <button className="danger" onClick={() => void onDelete()}>
-                {deleteLabel}
-              </button>
-            </div>
-          </section>
-        );
-        for (const g of [...groups.values()].sort((a, b) => (a[0]?.time ?? "").localeCompare(b[0]?.time ?? ""))) {
-          const first = g[0];
-          if (!first) continue;
-          if (new Set(g.map((t) => t.weekday)).size === 7) {
-            rows.push(
-              card(
-                `daily-${first.id}`,
-                `Every day ${first.time}`,
-                first,
-                g.map((t) => t.id),
-                () => removeDaily(g.map((t) => t.id)),
-                "Delete all 7",
-              ),
-            );
-          } else {
-            for (const t of g.slice().sort((a, b) => a.weekday - b.weekday)) {
-              rows.push(card(t.id, `${DAYS[t.weekday]} ${t.time}`, t, [t.id], () => removeTemplate(t.id), "Delete"));
+          {PLATFORMS.map((pl) => {
+            const label = PLAT_LABEL[pl] ?? pl;
+            const mine = templates.filter((t) => parsePlatforms(t.platforms).includes(pl));
+            const groups = new Map<string, Template[]>();
+            for (const t of mine) {
+              const key = `${t.time}|${t.pillar_id ?? ""}|${t.content_type}|${parsePlatforms(t.platforms).slice().sort().join(",")}`;
+              const g = groups.get(key) ?? [];
+              g.push(t);
+              groups.set(key, g);
             }
-          }
-        }
-        return rows;
-      })()}
-      <section className="keycard">
-        <h2>Add a template</h2>
-        <div className="row">
-          <select
-            aria-label="Weekday"
-            value={form.weekday}
-            onChange={(e) => setForm((f) => ({ ...f, weekday: e.target.value }))}
-          >
-            <option value="all">Every day</option>
-            {DAYS.map((d, i) => (
-              <option key={d} value={String(i)}>
-                {d}
-              </option>
-            ))}
-          </select>
-          <input
-            type="time"
-            aria-label="Posting time"
-            value={form.time}
-            onChange={(e) => setForm((f) => ({ ...f, time: e.target.value }))}
-          />
-          <select
-            aria-label="Pillar"
-            value={form.pillar_id}
-            onChange={(e) => setForm((f) => ({ ...f, pillar_id: e.target.value }))}
-          >
-            <option value="">No pillar</option>
-            {pillars.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Content type"
-            value={form.content_type}
-            onChange={(e) => setForm((f) => ({ ...f, content_type: e.target.value }))}
-          >
-            {Object.entries(CONTENT_TYPES).map(([id, t]) => (
-              <option key={id} value={id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-          <div className="ppills" role="group" aria-label="Platforms">
-            {PLATFORMS.map((pl) => {
-              const on = form.platforms.split(",").map((x) => x.trim()).includes(pl);
+            const rows: React.ReactNode[] = [];
+            const card = (
+              key: string,
+              labelText: string,
+              t: Template,
+              ids: string[],
+              onDelete: () => void,
+              deleteLabel: string,
+            ): React.ReactNode => {
+              const others = parsePlatforms(t.platforms).filter((p) => p !== pl);
+              const st = fitStat(pillars, t.pillar_id, pl);
+              const weak = isWeakStat(st);
+              const pillarName = pillars.find((p) => p.id === t.pillar_id)?.name ?? "This pillar";
               return (
-                <button
-                  key={pl}
-                  className={on ? "on" : ""}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const cur = form.platforms.split(",").map((x) => x.trim()).filter(Boolean);
-                    const next = on ? cur.filter((x) => x !== pl) : [...cur, pl];
-                    setForm((f) => ({ ...f, platforms: next.join(",") }));
-                  }}
-                >
-                  {pl}
-                </button>
+                <section className="keycard slim" key={key}>
+                  <p>
+                    <strong>{labelText}</strong> · {typeLabel(t.content_type)}
+                    {others.length > 0 ? ` · also: ${others.join(", ")}` : ""}
+                  </p>
+                  {weak && st && st.multiplier !== null ? (
+                    <p className="note warn">
+                      ⚠ {pillarName} scores {st.multiplier}x on {label} across {st.posts} posts
+                    </p>
+                  ) : null}
+                  <div className="row">
+                    <select
+                      aria-label="Pillar"
+                      value={t.pillar_id ?? ""}
+                      onChange={(e) => void setTemplatePillar(ids, e.target.value)}
+                    >
+                      <option value="">No pillar</option>
+                      {pillars.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {fitMark(pillars, p.id, pl)}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="danger" onClick={() => void onDelete()}>
+                      {deleteLabel}
+                    </button>
+                  </div>
+                </section>
               );
-            })}
-            <button className="on solid" onClick={() => void addTemplate()}>
-              + Add
-            </button>
-          </div>
-        </div>
-      </section>
+            };
+            for (const g of [...groups.values()].sort((a, b) =>
+              (a[0]?.time ?? "").localeCompare(b[0]?.time ?? ""),
+            )) {
+              const first = g[0];
+              if (!first) continue;
+              if (new Set(g.map((t) => t.weekday)).size === 7) {
+                rows.push(
+                  card(
+                    `daily-${pl}-${first.id}`,
+                    `Every day ${first.time}`,
+                    first,
+                    g.map((t) => t.id),
+                    () => removeDaily(g.map((t) => t.id)),
+                    "Delete all 7",
+                  ),
+                );
+              } else {
+                for (const t of g.slice().sort((a, b) => a.weekday - b.weekday)) {
+                  rows.push(
+                    card(`${pl}-${t.id}`, `${DAYS[t.weekday]} ${t.time}`, t, [t.id], () => removeTemplate(t.id), "Delete"),
+                  );
+                }
+              }
+            }
+            const draftStat = fitStat(pillars, draft.pillar_id || null, pl);
+            const draftWeak = adding === pl && isWeakStat(draftStat);
+            const draftPillar = pillars.find((p) => p.id === draft.pillar_id)?.name ?? "This pillar";
+            return (
+              <section className="keycard" key={pl}>
+                <h2>
+                  {label} ({mine.length})
+                </h2>
+                {rows}
+                {adding === pl ? (
+                  <>
+                    <div className="row">
+                      <select
+                        aria-label="Weekday"
+                        value={draft.weekday}
+                        onChange={(e) => setDraft((f) => ({ ...f, weekday: e.target.value }))}
+                      >
+                        <option value="all">Every day</option>
+                        {DAYS.map((d, i) => (
+                          <option key={d} value={String(i)}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="Posting time"
+                        value={draft.time}
+                        onChange={(e) => setDraft((f) => ({ ...f, time: e.target.value }))}
+                      >
+                        {QUARTERS.map((q) => (
+                          <option key={q} value={q}>
+                            {q}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="Pillar"
+                        value={draft.pillar_id}
+                        onChange={(e) => setDraft((f) => ({ ...f, pillar_id: e.target.value }))}
+                      >
+                        <option value="">No pillar</option>
+                        {pillars.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                            {fitMark(pillars, p.id, pl)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="Content type"
+                        value={draft.content_type}
+                        onChange={(e) => setDraft((f) => ({ ...f, content_type: e.target.value }))}
+                      >
+                        {Object.entries(CONTENT_TYPES).map(([id, t]) => (
+                          <option key={id} value={id}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {draftWeak && draftStat && draftStat.multiplier !== null ? (
+                      <p className="note warn">
+                        ⚠ {draftPillar} scores {draftStat.multiplier}x on {label} across{" "}
+                        {draftStat.posts} posts — save anyway to push into it deliberately.
+                      </p>
+                    ) : null}
+                    <div className="row">
+                      <button className="primary" onClick={() => void addTemplate(pl)}>
+                        Save
+                      </button>
+                      <button onClick={() => setAdding(null)}>Cancel</button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="row">
+                    <button
+                      onClick={() => {
+                        setDraft({ weekday: "1", time: "09:00", pillar_id: "", content_type: "short_post" });
+                        setAdding(pl);
+                      }}
+                    >
+                      + Add {label} time
+                    </button>
+                  </div>
+                )}
+              </section>
+            );
+          })}
+          {(() => {
+            const known = new Set<string>([...PLATFORMS]);
+            const orphans = templates.filter((t) => {
+              const ps = parsePlatforms(t.platforms);
+              return ps.length === 0 || !ps.some((p) => known.has(p));
+            });
+            if (orphans.length === 0) return null;
+            return (
+              <section className="keycard" key="unassigned">
+                <h2>Unassigned ({orphans.length})</h2>
+                {orphans
+                  .slice()
+                  .sort((a, b) => a.weekday - b.weekday || a.time.localeCompare(b.time))
+                  .map((t) => (
+                    <section className="keycard slim" key={t.id}>
+                      <p>
+                        <strong>
+                          {DAYS[t.weekday]} {t.time}
+                        </strong>{" "}
+                        · {typeLabel(t.content_type)} ·{" "}
+                        {parsePlatforms(t.platforms).join(", ") || "no platforms"}
+                      </p>
+                      <div className="row">
+                        <button className="danger" onClick={() => void removeTemplate(t.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    </section>
+                  ))}
+              </section>
+            );
+          })()}
             </div>
             </div>,
             document.body,

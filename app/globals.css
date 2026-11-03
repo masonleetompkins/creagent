@@ -765,6 +765,10 @@ button:disabled {
   color: var(--bad);
 }
 
+.note.warn {
+  color: var(--warn);
+}
+
 .ved {
   display: flex;
   flex-direction: column;

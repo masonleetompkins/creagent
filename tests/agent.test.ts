@@ -108,6 +108,35 @@ describe("queue template tools", () => {
     const pillars = await run("list_pillars", {});
     assert.equal(pillars.ok, true);
   });
+
+  it("reports pillar multiples per platform for queue planning", async () => {
+    const { AGENT_TOOLS } = await import("../lib/agent-tools");
+    const { getDb, nowIso } = await import("../lib/db");
+    const { randomUUID } = await import("node:crypto");
+    const db = getDb();
+    const pillarId = randomUUID();
+    db.prepare(`INSERT INTO pillars (id, name, confirmed, created_at) VALUES (?, 'Fit Test', 1, ?)`).run(
+      pillarId,
+      nowIso(),
+    );
+    db.prepare(
+      `INSERT INTO assets (id, source, title, created_at, is_reply, pillar_id, multiplier)
+       VALUES (?, 'zernio_tiktok', 'flop', ?, 0, ?, 0.4)`,
+    ).run(randomUUID(), nowIso(), pillarId);
+    db.prepare(
+      `INSERT INTO assets (id, source, title, created_at, is_reply, pillar_id, multiplier)
+       VALUES (?, 'zernio_twitter', 'banger', ?, 0, ?, 2.2)`,
+    ).run(randomUUID(), nowIso(), pillarId);
+    const tool = AGENT_TOOLS.find((t) => t.name === "pillar_fit");
+    if (!tool) throw new Error("missing tool pillar_fit");
+    const res = await tool.run({});
+    assert.equal(res.ok, true);
+    const row = (res.data as Array<{ name: string; byPlatform: Record<string, { multiplier: number | null }> }>).find(
+      (r) => r.name === "Fit Test",
+    );
+    assert.equal(row?.byPlatform["tiktok"]?.multiplier, 0.4);
+    assert.equal(row?.byPlatform["x"]?.multiplier, 2.2);
+  });
 });
 
 describe("agent tool guards", () => {

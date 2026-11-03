@@ -8,6 +8,7 @@ import { getDb, nowIso } from "./db";
 import { enqueue, getJob } from "./queue";
 import { brainOverview } from "./brain";
 import { isContentType, PLATFORMS } from "./content";
+import { pillarStats } from "./metrics";
 import { searchVault } from "./vault";
 import { isIngestSource } from "./ingest";
 
@@ -226,9 +227,27 @@ export const AGENT_TOOLS: ToolDef[] = [
       }),
   },
   {
+    name: "pillar_fit",
+    description:
+      "Each pillar's measured multiple per platform (1.0 = platform median). Call before add_template: prefer pillars at or above 1.0x for the target platform, warn the user about combos under 0.7x instead of silently scheduling them.",
+    parameters: objParam({}),
+    run: async () =>
+      safe(async () => {
+        const stats = pillarStats();
+        const pillars = getDb()
+          .prepare(`SELECT id, name, confirmed FROM pillars ORDER BY name ASC`)
+          .all() as Array<{ id: string; name: string; confirmed: number }>;
+        return pillars.map((p) => ({
+          name: p.name,
+          confirmed: p.confirmed === 1,
+          byPlatform: stats[p.id]?.byPlatform ?? {},
+        }));
+      }),
+  },
+  {
     name: "add_template",
     description:
-      "Add a posting time to the weekly queue. Weekdays: 0=Sun..6=Sat. Set everyday=true to add the same slot all 7 days. Pillar accepts a name (matched case-insensitively) or id. Always assign the best-fit confirmed pillar; leave it blank only when the user has none.",
+      "Add a posting time to the weekly queue. Weekdays: 0=Sun..6=Sat. Set everyday=true to add the same slot all 7 days. Pillar accepts a name (matched case-insensitively) or id. Always assign the best-fit confirmed pillar; leave it blank only when the user has none. Check pillar_fit first and prefer pillar×platform combos at or above 1.0x — never silently schedule a combo under 0.7x.",
     parameters: objParam(
       {
         weekday: N("0=Sunday .. 6=Saturday (ignored when everyday=true)"),
