@@ -697,6 +697,29 @@ button:hover:not(:disabled) {
   background: var(--hover-strong);
 }
 
+input[type="file"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+input[type="file"]::file-selector-button {
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--glass);
+  color: var(--ink);
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+input[type="file"]::file-selector-button:hover {
+  background: var(--hover-strong);
+}
+
 button.ghost {
   background: transparent;
   border-color: transparent;
@@ -763,6 +786,7 @@ button:disabled {
 
 .dr {
   margin-top: 10px;
+  margin-bottom: 18px;
 }
 
 .dr-next {
@@ -780,8 +804,20 @@ button:disabled {
 
 .dr-opts {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.dr-opts > .dr-opt {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .dr-opts {
+    flex-direction: column;
+  }
 }
 
 .dr-opt {
