@@ -197,6 +197,31 @@ export const AGENT_TOOLS: ToolDef[] = [
       })),
   },
   {
+    name: "bank_option",
+    description: "Save a draft's non-winning option (0-based index) for later slots.",
+    parameters: objParam({ draftId: S("Draft UUID"), optionIndex: N("Option index (default 1)") }),
+    run: async (a) =>
+      safe(async () => {
+        const { bankOption } = await import("./bank");
+        return {
+          bankId: bankOption(
+            uuid(a.draftId, "draftId"),
+            a.optionIndex === undefined ? 1 : num(a.optionIndex, "optionIndex"),
+          ),
+        };
+      }),
+  },
+  {
+    name: "bank_fill",
+    description: "Place banked options into matching red slots, spaced 3+ days apart.",
+    parameters: objParam({}),
+    run: async () =>
+      safe(async () => {
+        const { fillBanked } = await import("./bank");
+        return fillBanked();
+      }),
+  },
+  {
     name: "list_pillars",
     description: "Content pillars with ids, names, descriptions, voice notes, and confirmed flags.",
     parameters: objParam({}),

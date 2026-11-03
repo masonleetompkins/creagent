@@ -196,6 +196,7 @@ export default function QueueConsole(): React.ReactNode {
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentNote, setAgentNote] = useState<string | null>(null);
   const [anyRed, setAnyRed] = useState(true);
+  const [bankCount, setBankCount] = useState(0);
   const [jobProgress, setJobProgress] = useState<{ done: number; total: number } | null>(null);
   const agentBoxRef = useRef<HTMLTextAreaElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -246,15 +247,17 @@ export default function QueueConsole(): React.ReactNode {
       const horizonRange = `from=${encodeURIComponent(new Date().toISOString())}&to=${encodeURIComponent(
         new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
       )}`;
-      const [slotData, tmplData, pillarData, assetData, horizonData] = await Promise.all([
+      const [slotData, tmplData, pillarData, assetData, horizonData, bankData] = await Promise.all([
         readJson(await fetch(`/api/slots?${range}`)),
         readJson(await fetch("/api/templates")),
         readJson(await fetch("/api/pillars")),
         readJson(await fetch(`/api/assets?${range}&limit=500`)),
         readJson(await fetch(`/api/slots?${horizonRange}`)),
+        readJson(await fetch("/api/bank")),
       ]);
       setSlots(slotData.slots as Slot[]);
       setAnyRed(((horizonData.slots as Slot[]) ?? []).some((sl) => sl.status === "red"));
+      setBankCount(typeof bankData.count === "number" ? bankData.count : 0);
       setTemplates(tmplData.templates as Template[]);
       setPillars((pillarData.pillars as Pillar[]) ?? []);
       setHistory((assetData.assets as HistoryAsset[]) ?? []);
@@ -448,6 +451,28 @@ export default function QueueConsole(): React.ReactNode {
       await openSlot(selected.id);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function fillFromBank(): Promise<void> {
+    setBusy(true);
+    setNote(null);
+    setError(null);
+    try {
+      const data = await readJson(await fetch("/api/bank/fill", { method: "POST" }));
+      const placed = typeof data.placed === "number" ? data.placed : 0;
+      const skipped = typeof data.skipped === "number" ? data.skipped : 0;
+      setNote(
+        placed === 0
+          ? "No matching red slots — banked posts need the same content type, spaced 3+ days apart."
+          : `Placed ${placed} banked post${placed === 1 ? "" : "s"} into upcoming slots${skipped > 0 ? ` (${skipped} still banked)` : ""}.`,
+      );
+      await refresh();
+      if (selected) await openSlot(selected.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -761,6 +786,20 @@ export default function QueueConsole(): React.ReactNode {
         ) : null}
         <button
           disabled={busy}
+          aria-disabled={bankCount === 0}
+          className={bankCount === 0 ? "ghosted" : ""}
+          onClick={() => {
+            if (bankCount === 0) {
+              showToast("Bank is empty — open a draft, toggle Bank options, right-click runners-up.");
+              return;
+            }
+            void fillFromBank();
+          }}
+        >
+          {`Fill from bank${bankCount > 0 ? ` (${bankCount})` : ""}`}
+        </button>
+        <button
+          disabled={busy}
           onClick={() => setSetupOpen(true)}
           className={setupOpen ? "primary" : ""}
         >
@@ -965,15 +1004,21 @@ export default function QueueConsole(): React.ReactNode {
               versionCount > 1
                 ? `Draft ${i + 1} (${typeLabel(d.kind)})`
                 : `Draft (${typeLabel(d.kind)})`;
-            const nextStep =
+            const nextStepBase =
               layout === "pick-one"
                 ? "Pick the post to run with — then Approve above."
                 : layout === "hooks-plus-body"
                   ? "Pick a hook — it tops the thread below. Then Approve above."
                   : "Review — then Approve above, or Edit / Feedback to revise.";
+            const nextStep =
+              parsePlatforms(selected.platforms).includes("x") &&
+              (d.kind === "short_post" || d.kind === "thread")
+                ? `${nextStepBase} Reply to early comments — the algorithm's top signal.`
+                : nextStepBase;
             return (
             <div key={d.id}>
               <DraftReview
+                draftId={d.id}
                 title={title}
                 edited={d.status === "edited"}
                 structure={structure}

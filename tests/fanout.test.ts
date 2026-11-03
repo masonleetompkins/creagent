@@ -16,6 +16,7 @@ const CTX = {
   pillarLine: "Pillar: Test",
   pillarVoice: "",
   typeLabel: "Short post",
+  platforms: ["x"],
   platformsLine: "x",
   rulesSection: "",
   fitSection: "",
@@ -39,6 +40,9 @@ describe("buildFanoutPrompts", () => {
     // Single-post scope overrides thread-heavy platform guides.
     assert.ok(calls.every((c) => c.prompt.includes("ONE standalone post")));
     assert.ok(calls.every((c) => c.prompt.includes("ignore all thread advice")));
+    // Ranked craft rules ride along for X.
+    assert.ok(calls.every((c) => c.prompt.includes("POST CRAFT")));
+    assert.ok(calls.every((c) => c.prompt.includes("Replies rule")));
   });
 
   it("fans thread into 3 hook calls plus a hookless body call", async () => {
@@ -103,6 +107,18 @@ describe("assembleStructure", () => {
     assert.equal(ok?.structure.layout, "prose");
     assert.equal(ok?.body, "slides here");
     assert.equal(assembleStructure("carousel", new Map()), null);
+  });
+});
+
+describe("craftBlock", () => {
+  it("covers X and Threads short forms only", async () => {
+    const { craftBlock } = await import("../lib/social-craft");
+    assert.match(craftBlock(["x"], "short_post"), /Replies rule/);
+    assert.match(craftBlock(["x"], "thread"), /Replies rule/);
+    assert.match(craftBlock(["threads"], "short_post"), /poignant idea/);
+    assert.equal(craftBlock(["linkedin"], "short_post"), "");
+    assert.equal(craftBlock(["x"], "carousel"), "");
+    assert.equal(craftBlock([], "short_post"), "");
   });
 });
 

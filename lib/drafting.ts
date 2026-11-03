@@ -13,6 +13,7 @@ import {
   parseSlotPlatforms,
   platformFitFor,
 } from "./platform-fit";
+import { craftBlock } from "./social-craft";
 import { searchVault } from "./vault";
 
 export type DraftResult = {
@@ -91,6 +92,7 @@ export type FanoutContext = {
   pillarLine: string;
   pillarVoice: string;
   typeLabel: string;
+  platforms: string[];
   platformsLine: string;
   rulesSection: string;
   fitSection: string;
@@ -114,12 +116,14 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
   const revising = !!ctx.feedback;
   const header = headerFor(ctx, revising);
   const vault = `\n\nVAULT CONTEXT:\n${ctx.vaultContext}`;
+  const craft = craftBlock(ctx.platforms, kind);
+  const craftSection = craft ? `\n\n${craft}` : "";
   if (kind === "short_post") {
     return VARIANT_ANGLES.map((a, i) => ({
       key: `variant-${i}`,
       label: a.label,
       role: "option" as const,
-      prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}\nSCOPE: this slot drafts ONE standalone post. The platform rules above may describe threads — ignore all thread advice for this slot; apply only single-post hook rules.${vault}`,
+      prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}\nSCOPE: this slot drafts ONE standalone post. The platform rules above may describe threads — ignore all thread advice for this slot; apply only single-post hook rules.${craftSection}${vault}`,
     }));
   }
   if (kind === "thread") {
@@ -127,13 +131,13 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
       key: `hook-${i}`,
       label: a.label,
       role: "option" as const,
-      prompt: `${header}\n\nWrite exactly ONE hook post under 280 characters for a thread on this brief. Make it ${a.instruction} Output only the hook, no preamble, no numbering.${vault}`,
+      prompt: `${header}\n\nWrite exactly ONE hook post under 280 characters for a thread on this brief. Make it ${a.instruction} Output only the hook, no preamble, no numbering.${craftSection}${vault}`,
     }));
     hooks.push({
       key: "thread-body",
       label: "Thread",
       role: "body" as const,
-      prompt: `${header}\n\n${guideFor(kind)}${vault}`,
+      prompt: `${header}\n\n${guideFor(kind)}${craftSection}${vault}`,
     });
     return hooks;
   }
@@ -228,6 +232,7 @@ async function buildFanoutContext(
     pillarLine,
     pillarVoice,
     typeLabel,
+    platforms: parseSlotPlatforms(slot.platforms),
     platformsLine: fit.platformsLine,
     rulesSection:
       rules.length > 0

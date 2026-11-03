@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 // DraftReview: the guided draft-reading surface. Renders a code-assembled
 // structure (option cards + a one-line next step) when present, clean prose
 // otherwise. No queue imports — carousel slides, video scripts, and any
@@ -53,6 +55,7 @@ function paragraphs(text: string): string[] {
 }
 
 type Props = {
+  draftId: string;
   title: string;
   edited: boolean;
   structure: DraftStructureView | null;
@@ -65,11 +68,71 @@ type Props = {
 };
 
 export default function DraftReview(props: Props): React.ReactNode {
-  const { title, edited, structure, body, selection, nextStep } = props;
+  const { draftId, title, edited, structure, body, selection, nextStep } = props;
   const legacy = structure ? null : splitLegacyOptions(body);
   const layout = structure?.layout ?? (legacy ? "pick-one" : "prose");
   const options = structure?.options ?? legacy ?? [];
   const threadBody = structure?.layout === "hooks-plus-body" ? structure.body : undefined;
+  const bankable = layout !== "prose" && options.length > 1;
+  const [bankMode, setBankMode] = useState(false);
+  const [banked, setBanked] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    if (!bankable) return;
+    let live = true;
+    fetch("/api/bank")
+      .then((r) => r.json())
+      .then((data: { items?: Array<{ id: string; label: string; source_draft_id: string | null; status: string }> }) => {
+        if (!live) return;
+        const mine: Record<number, string> = {};
+        for (const item of data.items ?? []) {
+          if (item.source_draft_id !== draftId || item.status !== "banked") continue;
+          const idx = options.findIndex((o) => o.label === item.label);
+          if (idx >= 0) mine[idx] = item.id;
+        }
+        setBanked(mine);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [bankable, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function toggleBank(index: number): Promise<void> {
+    const existing = banked[index];
+    try {
+      if (existing) {
+        const res = await fetch(`/api/bank/${existing}`, { method: "DELETE" });
+        if (!res.ok) return;
+        setBanked((b) => {
+          const next = { ...b };
+          delete next[index];
+          return next;
+        });
+      } else {
+        const res = await fetch("/api/bank", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draftId, optionIndex: index }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { id: string };
+        setBanked((b) => ({ ...b, [index]: data.id }));
+      }
+    } catch {
+      /* bank stays local-only on failure; fill reports the truth */
+    }
+  }
+
+  function bankProps(index: number): { onContextMenu?: (e: React.MouseEvent) => void } {
+    if (!bankMode) return {};
+    return {
+      onContextMenu: (e: React.MouseEvent) => {
+        e.preventDefault();
+        void toggleBank(index);
+      },
+    };
+  }
 
   return (
     <div className="dr">
@@ -77,7 +140,11 @@ export default function DraftReview(props: Props): React.ReactNode {
         {title}
         {edited ? " — edited" : ""}
       </h2>
-      {nextStep ? <p className="dr-next">{nextStep}</p> : null}
+      {nextStep || bankMode ? (
+        <p className="dr-next">
+          {bankMode ? "Bank mode — right-click options to save them for later slots." : nextStep}
+        </p>
+      ) : null}
       {layout === "pick-one" ? (
         <div className="dr-opts" role="radiogroup" aria-label="Draft options">
           {options.map((o, i) => (
@@ -85,12 +152,14 @@ export default function DraftReview(props: Props): React.ReactNode {
               key={i}
               role="radio"
               aria-checked={selection === i}
-              className={`dr-opt${selection === i ? " sel" : ""}`}
+              className={`dr-opt${selection === i ? " sel" : ""}${banked[i] ? " banked" : ""}`}
               onClick={() => props.onSelect(i)}
+              {...bankProps(i)}
             >
               <span className="dr-tag">
                 {o.label}
                 {selection === i ? " · picked" : ""}
+                {banked[i] ? " · banked" : ""}
               </span>
               {paragraphs(o.body).map((p, j) => (
                 <span key={j} className="dr-line">
@@ -109,12 +178,14 @@ export default function DraftReview(props: Props): React.ReactNode {
                 key={i}
                 role="radio"
                 aria-checked={selection === i}
-                className={`dr-opt hook${selection === i ? " sel" : ""}`}
+                className={`dr-opt hook${selection === i ? " sel" : ""}${banked[i] ? " banked" : ""}`}
                 onClick={() => props.onSelect(i)}
+                {...bankProps(i)}
               >
                 <span className="dr-tag">
                   {o.label}
                   {selection === i ? " · picked" : ""}
+                  {banked[i] ? " · banked" : ""}
                 </span>
                 <span className="dr-line">{o.body.trim()}</span>
               </button>
@@ -142,6 +213,15 @@ export default function DraftReview(props: Props): React.ReactNode {
       <div className="row">
         <button onClick={props.onEdit}>Edit</button>
         <button onClick={props.onFeedback}>Feedback</button>
+        {bankable ? (
+          <button
+            aria-pressed={bankMode}
+            className={bankMode ? "primary" : ""}
+            onClick={() => setBankMode((m) => !m)}
+          >
+            {bankMode ? "Banking: on" : "Bank options"}
+          </button>
+        ) : null}
       </div>
     </div>
   );

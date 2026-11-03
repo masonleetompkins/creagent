@@ -844,6 +844,16 @@ button:disabled {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+.dr-opt.banked {
+  border-color: #e8820c;
+  box-shadow: 0 0 0 1px #e8820c;
+}
+
+.dr-opt.banked .dr-tag {
+  color: #e8820c;
+  opacity: 1;
+}
+
 .dr-tag {
   font-size: 11.5px;
   font-weight: 700;
