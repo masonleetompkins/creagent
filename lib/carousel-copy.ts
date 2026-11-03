@@ -91,10 +91,9 @@ ${context}`;
       {
         model: metaTextModel(),
         input: text,
-        max_output_tokens: 8000,
-        reasoning: { effort: "low" },
+        reasoning: { effort: "medium" },
       },
-      { timeout: 120000 },
+      { timeout: 180000 },
     );
   let resp = await call(input);
   let slides = extractSlidesJson(resp.output_text).slice(0, numSlides);

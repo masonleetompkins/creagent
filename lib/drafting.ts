@@ -66,8 +66,8 @@ async function draftOne(slot: SlotRow): Promise<void> {
     hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
   );
 
-  // Muse-spark reasons hard: without low effort the whole output budget
-  // goes to reasoning and the draft comes back empty (probed live).
+  // Medium effort, uncapped output: capped budgets starve the draft when
+  // reasoning runs long (probed live), and drafts deserve full quality.
   const client = getMetaClient(metaKey);
   const input = `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`;
   const call = (text: string) =>
@@ -75,10 +75,9 @@ async function draftOne(slot: SlotRow): Promise<void> {
       {
         model: metaTextModel(),
         input: text,
-        max_output_tokens: 8000,
-        reasoning: { effort: "low" },
+        reasoning: { effort: "medium" },
       },
-      { timeout: 120000 },
+      { timeout: 180000 },
     );
   let resp = await call(input);
   let body = resp.output_text.trim();
