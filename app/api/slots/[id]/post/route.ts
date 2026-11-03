@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { hasLiveScheduled } from "@/lib/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,18 @@ export async function POST(
 ): Promise<NextResponse> {
   const { id } = await params;
   if (!UUID.test(id)) return NextResponse.json({ error: "bad id" }, { status: 400 });
+  // Marking posted while Zernio still holds a scheduled copy would fire it
+  // on top of the manual post — cancel there first (mirrors the UI guard).
+  try {
+    if (hasLiveScheduled(id)) {
+      return NextResponse.json(
+        { error: "still scheduled on Zernio — cancel the scheduled post first" },
+        { status: 422 },
+      );
+    }
+  } catch {
+    /* schedule check is best-effort; the manual mark stands */
+  }
   try {
     const result = getDb()
       .prepare(`UPDATE queue_slots SET status = 'gray' WHERE id = ? AND status != 'gray'`)

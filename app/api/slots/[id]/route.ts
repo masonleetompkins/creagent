@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isContentType, isSlotStatus, PLATFORMS } from "@/lib/content";
 import { getDb } from "@/lib/db";
 import { clearApproval, pinApproval } from "@/lib/draft-approval";
+import { hasLiveScheduled } from "@/lib/publish";
 import { enqueue } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,21 @@ export async function PATCH(
     platformsJson = JSON.stringify(
       platforms.filter((p): p is string => typeof p === "string" && allowed.has(p)),
     );
+  }
+  // Reopening while a Zernio post is still scheduled would ship the old
+  // text — cancel it there first. Checked before the update so a refusal
+  // changes nothing (same guard the UI shows; the agent PATCHes too).
+  if (status === "red" || status === "orange") {
+    try {
+      if (hasLiveScheduled(id)) {
+        return NextResponse.json(
+          { error: "still scheduled on Zernio — cancel the scheduled post first" },
+          { status: 422 },
+        );
+      }
+    } catch {
+      /* schedule check is best-effort; the reopening stands */
+    }
   }
   try {
     const result = getDb()

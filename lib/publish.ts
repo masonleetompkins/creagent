@@ -345,7 +345,7 @@ export async function publishSlot(
   } catch {
     /* unreachable Zernio just leaves the rows stale */
   }
-  const live = liveScheduled(slot.id);
+  const live = hasLiveScheduled(slot.id);
   if (live && scheduledFor) {
     return {
       ok: false,
@@ -481,8 +481,9 @@ export function fmtWhen(iso: string): string {
 
 // A confirmed Zernio post still in flight for this slot (rows with a post id
 // and an in-flight status). Pre-send 'sending' rows don't count — those are
-// unconfirmed and reuse their key on retry.
-function liveScheduled(slotId: string): boolean {
+// unconfirmed and reuse their key on retry. Exported so the status routes
+// enforce the same guard the UI shows (the agent PATCHes statuses too).
+export function hasLiveScheduled(slotId: string): boolean {
   const inflight = [...IN_FLIGHT].map((s) => `'${s}'`).join(",");
   const row = getDb()
     .prepare(
