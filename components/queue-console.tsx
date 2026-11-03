@@ -1431,7 +1431,7 @@ export default function QueueConsole(): React.ReactNode {
       {setupOpen
         ? createPortal(
             <div className="modal-backdrop" onClick={() => setSetupOpen(false)}>
-          <div className="modal" role="dialog" aria-label="Queue setup" onClick={(e) => e.stopPropagation()}>
+          <div className="modal wide" role="dialog" aria-label="Queue setup" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <h2>Queue setup</h2>
             <button onClick={() => setSetupOpen(false)} aria-label="Close">
@@ -1439,10 +1439,8 @@ export default function QueueConsole(): React.ReactNode {
             </button>
           </div>
           <p className="muted">
-            Posting times, broken down by day. Each row ships one post to
-            every checked platform. Pillar multiples are measured per platform
-            (1.0x = average); ⚠ marks combos under 0.7x. The planner
-            materializes these into calendar slots.
+            Each row ships one post to every checked platform. ⚠ marks
+            pillar×platform combos under 0.7x.
           </p>
           <section className="keycard slim">
             <div className="row">
@@ -1515,7 +1513,7 @@ export default function QueueConsole(): React.ReactNode {
                   <p>
                     <strong>{labelText}</strong> · {typeLabel(t.content_type)}
                   </p>
-                  <div className="ppills" role="group" aria-label="Platforms for this time">
+                  <div className="ppills compact" role="group" aria-label="Platforms for this time">
                     {PLATFORMS.map((pl) => (
                       <button
                         key={pl}
@@ -1601,55 +1599,64 @@ export default function QueueConsole(): React.ReactNode {
                 {adding ? (
                   <section className="keycard" key="add">
                     <h2>New posting time</h2>
-                    <div className="row">
-                      <select
-                        aria-label="Weekday"
-                        value={draft.weekday}
-                        onChange={(e) => setDraft((f) => ({ ...f, weekday: e.target.value }))}
-                      >
-                        <option value="all">Every day</option>
-                        {DAYS.map((d, i) => (
-                          <option key={d} value={String(i)}>
-                            {d}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        aria-label="Posting time"
-                        value={draft.time}
-                        onChange={(e) => setDraft((f) => ({ ...f, time: e.target.value }))}
-                      >
-                        {QUARTERS.map((q) => (
-                          <option key={q} value={q}>
-                            {q}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        aria-label="Pillar"
-                        value={draft.pillar_id}
-                        onChange={(e) => setDraft((f) => ({ ...f, pillar_id: e.target.value }))}
-                      >
-                        <option value="">No pillar</option>
-                        {pillars.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        aria-label="Content type"
-                        value={draft.content_type}
-                        onChange={(e) => setDraft((f) => ({ ...f, content_type: e.target.value }))}
-                      >
-                        {Object.entries(CONTENT_TYPES).map(([id, t]) => (
-                          <option key={id} value={id}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className="tform-grid">
+                      <label>
+                        Day
+                        <select
+                          value={draft.weekday}
+                          onChange={(e) => setDraft((f) => ({ ...f, weekday: e.target.value }))}
+                        >
+                          <option value="all">Every day</option>
+                          {DAYS.map((d, i) => (
+                            <option key={d} value={String(i)}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Time
+                        <select
+                          value={draft.time}
+                          onChange={(e) => setDraft((f) => ({ ...f, time: e.target.value }))}
+                        >
+                          {QUARTERS.map((q) => (
+                            <option key={q} value={q}>
+                              {q}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Pillar
+                        <select
+                          value={draft.pillar_id}
+                          onChange={(e) => setDraft((f) => ({ ...f, pillar_id: e.target.value }))}
+                        >
+                          <option value="">No pillar</option>
+                          {pillars.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Post type
+                        <select
+                          value={draft.content_type}
+                          onChange={(e) => setDraft((f) => ({ ...f, content_type: e.target.value }))}
+                        >
+                          {Object.entries(CONTENT_TYPES).map(([id, t]) => (
+                            <option key={id} value={id}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
-                    <div className="ppills" role="group" aria-label="Platforms for this time">
+                    <p className="dr-sub">Platforms</p>
+                    <div className="ppills compact" role="group" aria-label="Platforms for this time">
                       {PLATFORMS.map((pl) => (
                         <button
                           key={pl}
