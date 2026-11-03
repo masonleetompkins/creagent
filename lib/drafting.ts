@@ -9,6 +9,7 @@ import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
 import {
   buildFitSection,
+  buildPillarSection,
   isWeakFit,
   parseSlotPlatforms,
   platformFitFor,
@@ -39,27 +40,47 @@ function guideFor(contentType: string): string {
 
 // Measured pillar×platform fit for the prompt, plus a human-readable
 // platform list (slots store JSON like ["x","threads"]).
-function fitForSlot(slot: SlotRow): { platformsLine: string; fitSection: string; weak: boolean } {
+function fitForSlot(slot: SlotRow): {
+  platformsLine: string;
+  fitSection: string;
+  pillarSection: string;
+  weak: boolean;
+  pillarFormat: boolean;
+} {
   const platforms = parseSlotPlatforms(slot.platforms);
   const fits = platformFitFor(slot.pillar_id, platforms, slot.content_type);
   const fitSection = buildFitSection(fits, slot.pillar_name);
+  const pillar = buildPillarSection(slot.pillar_id, slot.pillar_name, platforms);
   return {
     platformsLine: platforms.length > 0 ? platforms.join(", ") : "(no platforms set)",
     fitSection: fitSection ? `\n\n${fitSection}` : "",
+    pillarSection: pillar.section ? `\n\n${pillar.section}` : "",
     weak: fits.some(isWeakFit),
+    pillarFormat: pillar.hasFormat,
   };
 }
 
-// On a weak platform fit the voice mandate gets an explicit exception at
-// its own site: a distant paragraph can't override identity-level habits
-// ("opens almost everything with…") on its own (probed live).
-function voiceSectionFor(weak: boolean): string {
+// Voice mandate with composed exceptions at its own site: a distant
+// paragraph can't override identity-level habits ("opens almost everything
+// with…") on its own (probed live) — and the pillar's own format beats
+// global habits whenever the pillar has one.
+export function voiceFraming(weak: boolean, pillarFormat: boolean): string {
+  let framing = "VOICE PROFILE (match every rule below exactly";
+  if (weak) {
+    framing +=
+      ", with ONE exception: PLATFORM FIT flags a WEAK FIT for this draft — drop your default opener habit for this draft and open like that platform's winners instead";
+  }
+  if (pillarFormat) {
+    framing +=
+      ", and where THIS PILLAR'S WINNERS show this pillar doing it differently, the pillar's format wins over any global habit";
+  }
+  return `${framing})`;
+}
+
+function voiceSectionFor(weak: boolean, pillarFormat: boolean): string {
   const voice = getVoice();
   if (!voice) return "(no voice profile yet — write in a clear, confident creator voice)";
-  const framing = weak
-    ? "VOICE PROFILE (match every rule below exactly, with ONE exception: PLATFORM FIT flags a WEAK FIT for this draft — drop your default opener habit for this draft and open like that platform's winners instead)"
-    : "VOICE PROFILE (match every rule below exactly)";
-  return `${framing}:\n${voice.body.slice(0, 6000)}`;
+  return `${voiceFraming(weak, pillarFormat)}:\n${voice.body.slice(0, 6000)}`;
 }
 
 export type DraftOption = { label: string; body: string };
@@ -96,6 +117,7 @@ export type FanoutContext = {
   platformsLine: string;
   rulesSection: string;
   fitSection: string;
+  pillarSection: string;
   vaultContext: string;
   previous?: string;
   feedback?: string;
@@ -103,7 +125,7 @@ export type FanoutContext = {
 
 function headerFor(ctx: FanoutContext, revising: boolean): string {
   const role = revising ? "revising a draft" : "the creator's ghostwriter";
-  let out = `You are ${role}.\n\n${ctx.voiceSection}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}`;
+  let out = `You are ${role}.\n\n${ctx.voiceSection}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}`;
   if (revising && ctx.previous) out += `\n\nPREVIOUS DRAFT:\n${ctx.previous}`;
   if (revising && ctx.feedback) {
     out += `\n\nCREATOR FEEDBACK (address every point):\n${ctx.feedback}\n\nKeep what the feedback doesn't touch; change everything it does.`;
@@ -228,7 +250,7 @@ async function buildFanoutContext(
   const hits = await searchVault(query || "voice", 5);
   const rules = rulesFor(slot.pillar_id, slot.content_type);
   return {
-    voiceSection: voiceSectionFor(fit.weak),
+    voiceSection: voiceSectionFor(fit.weak, fit.pillarFormat),
     pillarLine,
     pillarVoice,
     typeLabel,
@@ -239,6 +261,7 @@ async function buildFanoutContext(
         ? `\n\nHOUSE RULES (distilled from your past feedback — follow every one):\n${rules.map((r) => `- ${r.rule}`).join("\n")}`
         : "",
     fitSection: fit.fitSection,
+    pillarSection: fit.pillarSection,
     vaultContext: buildDraftContext(
       hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
     ),

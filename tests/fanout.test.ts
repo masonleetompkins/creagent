@@ -20,6 +20,7 @@ const CTX = {
   platformsLine: "x",
   rulesSection: "",
   fitSection: "",
+  pillarSection: "",
   vaultContext: "(vault is empty)",
 };
 
@@ -119,6 +120,17 @@ describe("craftBlock", () => {
     assert.equal(craftBlock(["linkedin"], "short_post"), "");
     assert.equal(craftBlock(["x"], "carousel"), "");
     assert.equal(craftBlock([], "short_post"), "");
+  });
+});
+
+describe("voiceFraming", () => {
+  it("composes weak-fit and pillar-format exceptions", async () => {
+    const { voiceFraming } = await import("../lib/drafting");
+    assert.equal(voiceFraming(false, false), "VOICE PROFILE (match every rule below exactly)");
+    assert.match(voiceFraming(true, false), /WEAK FIT/);
+    assert.match(voiceFraming(false, true), /pillar's format wins/);
+    const both = voiceFraming(true, true);
+    assert.ok(both.includes("WEAK FIT") && both.includes("pillar's format wins"));
   });
 });
 

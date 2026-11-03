@@ -70,6 +70,76 @@ function winnersByPlatform(): Map<string, PlatformWinner[]> {
   return byPlatform;
 }
 
+// Pillar exemplars: this pillar's own winners, so drafts match THIS pillar's
+// format instead of mixing in every other pillar's tics. Platform-preferred,
+// backfilled pillar-wide.
+export type PillarExemplar = { title: string; multiple: number; platform: string };
+
+export function pillarExemplars(
+  pillarId: string | null,
+  platforms: string[],
+  limit = 2,
+): PillarExemplar[] {
+  if (!pillarId) return [];
+  const rows = getDb()
+    .prepare(
+      `SELECT source, title, transcript, multiplier FROM assets
+       WHERE pillar_id = ? AND is_reply = 0 AND multiplier IS NOT NULL
+       ORDER BY multiplier DESC LIMIT 25`,
+    )
+    .all(pillarId) as Array<{
+    source: string;
+    title: string | null;
+    transcript: string | null;
+    multiplier: number;
+  }>;
+  const mapped = rows.map((r) => ({
+    title: trimText(r.title ?? r.transcript ?? "", 120) || "(untitled post)",
+    multiple: r.multiplier,
+    platform: platformForSource(r.source),
+  }));
+  const preferred = mapped.filter((m) => platforms.includes(m.platform));
+  const rest = mapped.filter((m) => !platforms.includes(m.platform));
+  return [...preferred, ...rest].slice(0, limit);
+}
+
+// Tic quarantine, determined from data: a tic the pillar's own scored posts
+// never use is banned for that pillar. ELI5 opens 41/169 ELI5-pillar posts
+// and ~0 everywhere else (probed live) — the canonical case.
+const TIC_DEFS = [{ name: "the 'Explain like I'm five' opener", pattern: /explain like i['’]?m five/i }];
+
+export function pillarTicBans(pillarId: string | null): string[] {
+  if (!pillarId) return [];
+  const rows = getDb()
+    .prepare(
+      `SELECT title, transcript FROM assets
+       WHERE pillar_id = ? AND is_reply = 0 AND multiplier IS NOT NULL LIMIT 50`,
+    )
+    .all(pillarId) as Array<{ title: string | null; transcript: string | null }>;
+  if (rows.length < 5) return [];
+  const corpus = rows.map((r) => `${r.title ?? ""}\n${r.transcript ?? ""}`).join("\n");
+  return TIC_DEFS.filter((t) => !t.pattern.test(corpus)).map((t) => t.name);
+}
+
+export function buildPillarSection(
+  pillarId: string | null,
+  pillarName: string | null,
+  platforms: string[],
+): { section: string; hasFormat: boolean } {
+  if (!pillarId || !pillarName) return { section: "", hasFormat: false };
+  const exemplars = pillarExemplars(pillarId, platforms);
+  const bans = pillarTicBans(pillarId);
+  if (exemplars.length === 0 && bans.length === 0) return { section: "", hasFormat: false };
+  const lines = [`THIS PILLAR'S WINNERS ("${pillarName}" — match THIS format; your other pillars' formats don't apply here):`];
+  for (const e of exemplars) {
+    lines.push(`- "${e.title}" (${e.multiple}x).`);
+  }
+  for (const ban of bans) {
+    lines.push(`- HARD RULE: this pillar never uses ${ban} — do not use it here.`);
+  }
+  return { section: lines.join("\n"), hasFormat: exemplars.length > 0 };
+}
+
 export function parseSlotPlatforms(raw: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(raw || "[]") as unknown;

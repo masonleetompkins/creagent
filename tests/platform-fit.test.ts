@@ -99,3 +99,41 @@ describe("buildFitSection", () => {
     assert.equal(buildFitSection([], "ELI5 Money"), "");
   });
 });
+
+describe("pillar exemplars and tic bans", () => {
+  it("shows pillar winners and bans tics the pillar never uses", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { buildPillarSection, pillarTicBans } = await import("../lib/platform-fit");
+    const db = getDb();
+    const pillar = randomUUID();
+    db.prepare(`INSERT INTO pillars (id, name, created_at) VALUES (?, 'News', ?)`).run(pillar, nowIso());
+    for (let i = 0; i < 6; i++) {
+      db.prepare(
+        `INSERT INTO assets (id, source, title, created_at, is_reply, pillar_id, multiplier)
+         VALUES (?, 'zernio_twitter', ?, ?, 0, ?, ?)`,
+      ).run(randomUUID(), `news post ${i}`, nowIso(), pillar, 2 + i * 0.1);
+    }
+    assert.deepEqual(pillarTicBans(pillar), ["the 'Explain like I'm five' opener"]);
+    const { section, hasFormat } = buildPillarSection(pillar, "News", ["x"]);
+    assert.equal(hasFormat, true);
+    assert.match(section, /THIS PILLAR'S WINNERS/);
+    assert.match(section, /news post 5.*2\.5x/);
+    assert.match(section, /HARD RULE: this pillar never uses/);
+  });
+
+  it("leaves ELI5 pillars alone and stays silent without data", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { buildPillarSection, pillarTicBans } = await import("../lib/platform-fit");
+    const db = getDb();
+    const pillar = randomUUID();
+    db.prepare(`INSERT INTO pillars (id, name, created_at) VALUES (?, 'ELI5', ?)`).run(pillar, nowIso());
+    for (let i = 0; i < 5; i++) {
+      db.prepare(
+        `INSERT INTO assets (id, source, title, created_at, is_reply, pillar_id, multiplier)
+         VALUES (?, 'zernio_twitter', ?, ?, 0, ?, 1.5)`,
+      ).run(randomUUID(), `Explain like I'm five: thing ${i}`, nowIso(), pillar);
+    }
+    assert.deepEqual(pillarTicBans(pillar), []);
+    assert.equal(buildPillarSection(randomUUID(), null, ["x"]).section, "");
+  });
+});
