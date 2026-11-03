@@ -846,3 +846,96 @@ export async function runZernioAnalyticsBackfill(
   }
   return { entries, assets, merged, skipped };
 }
+
+export type MonidFillResult = {
+  lookedUp: number;
+  filled: number;
+  skipped: number;
+  spendUsd: number;
+};
+
+// Native video ID from a post URL for per-video metric lookups. YouTube and
+// TikTok only — the platforms whose views are publicly scrapable but missing
+// from our providers' feed endpoints.
+export function nativeVideoId(url: string, platform: string): string | null {
+  if (platform === "youtube") {
+    const m =
+      url.match(/[?&]v=([A-Za-z0-9_-]{11})/) ??
+      url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) ??
+      url.match(/\/(?:shorts|live|embed)\/([A-Za-z0-9_-]{11})/);
+    return m?.[1] ?? null;
+  }
+  if (platform === "tiktok") {
+    return url.match(/\/video\/(\d+)/)?.[1] ?? null;
+  }
+  return null;
+}
+
+// Fill views for YouTube/TikTok posts whose providers never reported them,
+// one $0.001 TikHub lookup per video. Self-limiting: only viewless rows are
+// attempted, so reruns cost nothing once filled. Per-video failures are
+// counted as skipped (retried next sync), never fatal.
+export async function runMonidMetricsFill(
+  opts: {
+    limit?: number;
+    onProgress?: (done: number, total: number) => Promise<void> | void;
+  } = {},
+): Promise<MonidFillResult> {
+  const apiKey = loadKeys().monid;
+  if (!apiKey) throw new Error("save a Monid key in Settings first");
+  const limit = opts.limit ?? 200;
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT m.asset_id, m.platform, a.source_url FROM post_metrics m
+       JOIN assets a ON a.id = m.asset_id
+       WHERE m.views IS NULL AND m.platform IN ('youtube', 'tiktok')
+       ORDER BY m.collected_at DESC LIMIT ?`,
+    )
+    .all(limit) as Array<{ asset_id: string; platform: string; source_url: string | null }>;
+  let lookedUp = 0;
+  let filled = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const id = row.source_url ? nativeVideoId(row.source_url, row.platform) : null;
+    if (!id) {
+      skipped++;
+      continue;
+    }
+    lookedUp++;
+    try {
+      const res =
+        row.platform === "youtube"
+          ? await monidRunAndWait(
+              apiKey,
+              "tikhub",
+              "/api/v1/youtube/web_v2/get_video_info_v2",
+              { queryParams: { video_id: id } },
+              { timeoutMs: 120000 },
+            )
+          : await monidRunAndWait(
+              apiKey,
+              "tikhub",
+              "/api/v1/tiktok/analytics/fetch_video_metrics",
+              { queryParams: { item_id: id } },
+              { timeoutMs: 120000 },
+            );
+      const eng = extractEngagement(res.output ?? res.providerResponse);
+      if (eng.views === null) {
+        skipped++;
+        continue;
+      }
+      upsertMetricForAsset(row.asset_id, row.platform, row.source_url, eng, res.output);
+      filled++;
+    } catch {
+      skipped++;
+    }
+    if (opts.onProgress) await opts.onProgress(lookedUp + skipped, rows.length);
+  }
+  return {
+    lookedUp,
+    filled,
+    skipped,
+    spendUsd: Math.round(lookedUp * 0.001 * 1000) / 1000,
+  };
+}

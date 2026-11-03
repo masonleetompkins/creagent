@@ -349,3 +349,29 @@ describe("extended engagement merge", () => {
     assert.equal(count.n, 1);
   });
 });
+
+describe("provider shape tolerance", () => {
+  it("coerces pure numeric strings, rejects formatted text", () => {
+    assert.deepEqual(
+      extractEngagement({ view_count: "1780", like_count: "40", comment_count: "1" }),
+      { likes: 40, comments: 1, shares: null, views: 1780, reach: null, saves: null },
+    );
+    assert.deepEqual(
+      extractEngagement({ view_count_text: "1,780 views", likes: "lots" }),
+      { likes: null, comments: null, shares: null, views: null, reach: null, saves: null },
+    );
+  });
+
+  it("attributes {metric: {value}} nests to the parent key", () => {
+    assert.deepEqual(
+      extractEngagement({
+        item_id: "7424931654021582126",
+        video_views: { message: { status: 1 }, value: 13356 },
+        likes: { value: 655 },
+        comments: { value: 7 },
+        favorites: { value: 288 },
+      }),
+      { likes: 655, comments: 7, shares: null, views: 13356, reach: null, saves: 288 },
+    );
+  });
+});

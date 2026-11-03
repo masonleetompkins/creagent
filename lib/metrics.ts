@@ -58,12 +58,34 @@ function normKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z]/g, "");
 }
 
-const LIKE_KEYS = new Set(["likes", "like", "likecount", "favorites", "favourites", "diggcount"]);
+const LIKE_KEYS = new Set(["likes", "like", "likecount", "diggcount"]);
 const COMMENT_KEYS = new Set(["comments", "comment", "commentcount", "replies", "replycount"]);
 const SHARE_KEYS = new Set(["shares", "share", "sharecount", "reposts", "repost", "repostcount", "retweets", "retweetcount"]);
 const VIEW_KEYS = new Set(["views", "view", "viewcount", "plays", "playcount", "videoviews"]);
 const REACH_KEYS = new Set(["reach", "reachcount"]);
-const SAVE_KEYS = new Set(["saves", "save", "savecount", "bookmarks", "bookmark"]);
+// "favorites" means saves on modern providers (TikTok favorites); legacy
+// Twitter used it for likes but no current provider emits that shape.
+const SAVE_KEYS = new Set(["saves", "save", "savecount", "bookmarks", "bookmark", "favorites", "favourites"]);
+
+function assignMetric(out: Engagement, key: string, val: number): void {
+  const k = normKey(key);
+  if (LIKE_KEYS.has(k) && out.likes === null) out.likes = Math.round(val);
+  else if (COMMENT_KEYS.has(k) && out.comments === null) out.comments = Math.round(val);
+  else if (SHARE_KEYS.has(k) && out.shares === null) out.shares = Math.round(val);
+  else if (VIEW_KEYS.has(k) && out.views === null) out.views = Math.round(val);
+  else if (REACH_KEYS.has(k) && out.reach === null) out.reach = Math.round(val);
+  else if (SAVE_KEYS.has(k) && out.saves === null) out.saves = Math.round(val);
+}
+
+// Plain numbers plus pure numeric strings ("1780", never "1,780 views").
+function toNumber(val: unknown): number | null {
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val.trim())) {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
 
 function walk(value: unknown, depth: number, out: Engagement): void {
   if (depth <= 0 || value === null || typeof value !== "object") return;
@@ -72,14 +94,15 @@ function walk(value: unknown, depth: number, out: Engagement): void {
     return;
   }
   for (const [key, val] of Object.entries(value)) {
-    if (typeof val === "number" && Number.isFinite(val)) {
-      const k = normKey(key);
-      if (LIKE_KEYS.has(k) && out.likes === null) out.likes = Math.round(val);
-      else if (COMMENT_KEYS.has(k) && out.comments === null) out.comments = Math.round(val);
-      else if (SHARE_KEYS.has(k) && out.shares === null) out.shares = Math.round(val);
-      else if (VIEW_KEYS.has(k) && out.views === null) out.views = Math.round(val);
-      else if (REACH_KEYS.has(k) && out.reach === null) out.reach = Math.round(val);
-      else if (SAVE_KEYS.has(k) && out.saves === null) out.saves = Math.round(val);
+    const num = toNumber(val);
+    if (num !== null) {
+      assignMetric(out, key, num);
+    } else if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+      // {metric: {value: N}} shapes (TikHub analytics): attribute the inner
+      // value to the parent metric key before the generic recursion.
+      const inner = toNumber((val as Record<string, unknown>)["value"]);
+      if (inner !== null) assignMetric(out, key, inner);
+      walk(val, depth - 1, out);
     } else if (val !== null && typeof val === "object") {
       walk(val, depth - 1, out);
     }

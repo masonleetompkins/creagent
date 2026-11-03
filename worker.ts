@@ -8,7 +8,13 @@ import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
 import { runDraftAll, runDraftSlot } from "./lib/drafting";
 import { runMigrations } from "./scripts/migrate";
-import { isIngestSource, runIngest, runZernioAnalyticsBackfill, runZernioIngest } from "./lib/ingest";
+import {
+  isIngestSource,
+  runIngest,
+  runMonidMetricsFill,
+  runZernioAnalyticsBackfill,
+  runZernioIngest,
+} from "./lib/ingest";
 import { metaChatClient, runAgentTurn } from "./lib/agent";
 import { runSlotAutoEdit } from "./lib/autoedit";
 import { requestKey, runKeyingSetup } from "./lib/corridorkey";
@@ -107,8 +113,18 @@ async function dispatch(job: JobRow): Promise<unknown> {
     } catch (error) {
       backfill = { error: (error as Error).message };
     }
+    let monidFill: unknown = null;
+    try {
+      monidFill = await runMonidMetricsFill({
+        limit: 100,
+        onProgress: (done, total) =>
+          updateProgress(job.id, { done, total, stage: "Monid video metrics" }),
+      });
+    } catch (error) {
+      monidFill = { error: (error as Error).message };
+    }
     const synced = await runMetricsSync();
-    return { ...synced, zernioBackfill: backfill };
+    return { ...synced, zernioBackfill: backfill, monidFill };
   }
   if (job.name === "transcribe_backfill") {
     const { limit, concurrency } = data;

@@ -300,3 +300,20 @@ describe("analyticsEntryToAssetInput", () => {
     assert.equal(analyticsEntryToAssetInput({ platform: "threads" }), null);
   });
 });
+
+describe("nativeVideoId", () => {
+  it("parses YouTube and TikTok URLs, rejects the rest", async () => {
+    const { nativeVideoId } = await import("../lib/ingest");
+    assert.equal(nativeVideoId("https://www.youtube.com/watch?v=sOq2tAfrG68", "youtube"), "sOq2tAfrG68");
+    assert.equal(nativeVideoId("https://youtu.be/sOq2tAfrG68?t=3", "youtube"), "sOq2tAfrG68");
+    assert.equal(nativeVideoId("https://www.youtube.com/shorts/sOq2tAfrG68", "youtube"), "sOq2tAfrG68");
+    assert.equal(nativeVideoId("https://www.youtube.com/live/sOq2tAfrG68", "youtube"), "sOq2tAfrG68");
+    assert.equal(
+      nativeVideoId("https://www.tiktok.com/@u/video/7424931654021582126?x=1", "tiktok"),
+      "7424931654021582126",
+    );
+    assert.equal(nativeVideoId("https://www.youtube.com/watch?v=short", "youtube"), null);
+    assert.equal(nativeVideoId("https://x.com/u/status/1", "x"), null);
+    assert.equal(nativeVideoId("not a url", "youtube"), null);
+  });
+});
