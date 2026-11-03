@@ -76,6 +76,26 @@ type HistoryAsset = {
   created_at: string;
 };
 
+type PublishReceipt = {
+  platform: string;
+  username: string;
+  payload: string;
+  status: string;
+  postUrl: string | null;
+  error: string | null;
+};
+
+type PublishHistoryRow = {
+  attempt: number;
+  platform: string;
+  username: string;
+  payload: string;
+  status: string;
+  postUrl: string | null;
+  error: string | null;
+  createdAt: string;
+};
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const SOURCE_SHORT: Record<string, string> = {
@@ -215,6 +235,13 @@ export default function QueueConsole(): React.ReactNode {
   const [bankCount, setBankCount] = useState(0);
   const [draftingIds, setDraftingIds] = useState<Set<string>>(new Set());
   const [jobProgress, setJobProgress] = useState<{ done: number; total: number } | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<{
+    ok: boolean;
+    error?: string;
+    receipts?: PublishReceipt[];
+  } | null>(null);
+  const [publishHistory, setPublishHistory] = useState<PublishHistoryRow[]>([]);
   const agentBoxRef = useRef<HTMLTextAreaElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -373,12 +400,15 @@ export default function QueueConsole(): React.ReactNode {
   async function openSlot(id: string): Promise<void> {
     setVersionsOpen(null);
     setCopied(false);
+    setPublishResult(null);
     try {
-      const [data, files, reqs] = await Promise.all([
+      const [data, files, reqs, pubs] = await Promise.all([
         readJson(await fetch(`/api/slots/${id}/drafts`)),
         readJson(await fetch(`/api/slots/${id}/attachments`)),
         readJson(await fetch(`/api/slots/${id}/gen-requests`)),
+        readJson(await fetch(`/api/slots/${id}/publish`)),
       ]);
+      setPublishHistory((pubs.history as PublishHistoryRow[]) ?? []);
       setSelected({ ...((data.slot as Slot) ?? {}), drafts: (data.drafts as Draft[]) ?? [] } as Slot & {
         drafts: Draft[];
       });
@@ -449,6 +479,25 @@ export default function QueueConsole(): React.ReactNode {
       await openSlot(id);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function publishNow(id: string): Promise<void> {
+    setPublishing(true);
+    setPublishResult(null);
+    try {
+      const data = await readJson(await fetch(`/api/slots/${id}/publish`, { method: "POST" }));
+      setPublishResult({
+        ok: data.ok === true,
+        error: typeof data.error === "string" ? data.error : undefined,
+        receipts: (data.receipts as PublishReceipt[]) ?? [],
+      });
+      await refresh();
+      if (data.ok === true) await openSlot(id);
+    } catch (e) {
+      setPublishResult({ ok: false, error: (e as Error).message });
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -1051,7 +1100,16 @@ export default function QueueConsole(): React.ReactNode {
               </button>
             ) : null}
             {selected.status === "green" ? (
-              <button className="primary" onClick={() => void markPosted(selected.id)}>
+              <button
+                className="primary"
+                disabled={publishing}
+                onClick={() => void publishNow(selected.id)}
+              >
+                {publishing ? "Posting…" : "Post via Zernio"}
+              </button>
+            ) : null}
+            {selected.status === "green" ? (
+              <button onClick={() => void markPosted(selected.id)} title="Posted it outside Creagent — just mark the slot done">
                 Mark posted
               </button>
             ) : null}
@@ -1078,6 +1136,46 @@ export default function QueueConsole(): React.ReactNode {
           </div>
           {draftingIds.has(selected.id) ? (
             <p className="note">Drafting this slot — options appear below when done.</p>
+          ) : null}
+          {publishing ? (
+            <p className="note">Posting via Zernio — receipts appear below.</p>
+          ) : null}
+          {publishResult && !publishResult.ok ? (
+            <p className="note err">{publishResult.error ?? "Posting failed."}</p>
+          ) : null}
+          {publishResult?.receipts && publishResult.receipts.length > 0 ? (
+            <div className="pub-receipts">
+              {publishResult.receipts.map((r) => (
+                <div key={r.platform} className="pub-receipt">
+                  <span className="pub-plat">{r.platform}</span>
+                  {r.username ? <span className="muted"> @{r.username}</span> : null}
+                  <span className="muted"> · {r.payload}</span>
+                  {r.status === "published" && r.postUrl ? (
+                    <a href={r.postUrl} target="_blank" rel="noreferrer"> · view ✓</a>
+                  ) : (
+                    <span> · {r.error ?? r.status}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {selected.status === "gray" &&
+          publishHistory.some((h) => h.status === "published") ? (
+            <div className="pub-receipts">
+              <p className="dr-sub">Posted via Zernio</p>
+              {publishHistory
+                .filter((h) => h.status === "published")
+                .map((h) => (
+                  <div key={`${h.attempt}-${h.platform}`} className="pub-receipt">
+                    <span className="pub-plat">{h.platform}</span>
+                    {h.username ? <span className="muted"> @{h.username}</span> : null}
+                    <span className="muted"> · {h.payload}</span>
+                    {h.postUrl ? (
+                      <a href={h.postUrl} target="_blank" rel="noreferrer"> · view ✓</a>
+                    ) : null}
+                  </div>
+                ))}
+            </div>
           ) : null}
           {(() => {
             if (selected.status !== "green" && selected.status !== "gray") return null;

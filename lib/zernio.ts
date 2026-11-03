@@ -8,12 +8,14 @@ async function zernioRequest(
   method: "GET" | "POST",
   path: string,
   body?: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<unknown> {
   const res = await fetchWithRetry(`${ZERNIO_BASE_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
+      ...extraHeaders,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(60000),
@@ -100,6 +102,20 @@ export async function zernioAccountPosts(
   const raw = data["posts"] ?? data["data"];
   const list = Array.isArray(raw) ? raw : [];
   return list.filter(isObj);
+}
+
+// Publish (or schedule) one post across accounts. Retries MUST reuse the
+// same idempotency key — Zernio returns the original post instead of
+// double-posting. Docs: docs.zernio.com/posts/create-post
+export async function zernioCreatePost(
+  apiKey: string,
+  body: Record<string, unknown>,
+  idempotencyKey: string,
+): Promise<unknown> {
+  return zernioRequest(apiKey, "POST", "/v1/posts", body, {
+    "Idempotency-Key": idempotencyKey,
+    "x-request-id": idempotencyKey,
+  });
 }
 
 export async function testZernio(apiKey: string): Promise<string> {

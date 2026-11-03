@@ -919,6 +919,22 @@ button:disabled {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+.pub-receipts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.pub-receipt {
+  font-size: 13px;
+}
+
+.pub-plat {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
 .ved {
   display: flex;
   flex-direction: column;
