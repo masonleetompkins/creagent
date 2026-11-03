@@ -153,7 +153,7 @@ export default function DataConsole(): React.ReactNode {
       {note ? <p className="note ok">{note}</p> : null}
       {error ? <p className="note err">{error}</p> : null}
 
-      <h2>Averages</h2>
+      <h2>Typical performance</h2>
       {platforms.length === 0 ? (
         <div className="empty">No metrics yet — sync to pull them in.</div>
       ) : (

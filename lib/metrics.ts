@@ -162,6 +162,8 @@ function multiplier(value: number | null, avg: number | null): number | null {
   return Math.round((value / avg) * 100) / 100;
 }
 
+// Named "averages" for the UI's colloquial sense; every value is a median,
+// so a creator's own viral hits can't inflate their own baseline.
 export function computeAverages(posts: MetricPost[]): Averages {
   return {
     count: posts.length,
