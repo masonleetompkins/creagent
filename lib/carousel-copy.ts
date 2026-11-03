@@ -1,6 +1,7 @@
 // Carousel copy fill: model writes per-slide heading/body/layout as JSON.
 import { getDb } from "./db";
 import { addSlide, deleteSlide, getProject, isLayout, listSlides, updateSlide } from "./carousel";
+import { buildDraftContext } from "./drafting";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
 import { searchVault } from "./vault";
@@ -69,16 +70,12 @@ export async function runCarouselCopy(
     }
   }
   const hits = await searchVault(`${project.title} ${brief} carousel`.trim() || "voice", 5);
-  const context =
-    hits.length > 0
-      ? hits.map((h) => `[${h.doc_type}] ${h.title ?? ""}\n${h.body}`).join("\n\n---\n\n")
-      : "(vault is empty — write in a clear, confident creator voice)";
+  const context = buildDraftContext(
+    hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
+  );
 
   const client = getMetaClient(metaKey);
-  const resp = await client.responses.create(
-    {
-      model: metaTextModel(),
-      input: `You write Instagram carousel copy for a creator. Match their voice from the VAULT CONTEXT.
+  const input = `You write Instagram carousel copy for a creator. Match their voice from the VAULT CONTEXT.
 
 Carousel title: ${project.title}
 ${pillarLine}
@@ -88,13 +85,28 @@ Write exactly ${numSlides} slides. Slide 1 is the cover hook, the last slide is 
 [{"heading": "short punchy line", "body": "1-3 supporting lines", "layout": "cover|content|photo|cta", "image_idea": "one-line visual idea for this slide"}]
 
 VAULT CONTEXT:
-${context}`,
-      max_output_tokens: 3000,
-    },
-    { timeout: 120000 },
-  );
-  const slides = extractSlidesJson(resp.output_text).slice(0, numSlides);
-  if (slides.length === 0) throw new Error("model returned no slides");
+${context}`;
+  const call = (text: string) =>
+    client.responses.create(
+      {
+        model: metaTextModel(),
+        input: text,
+        max_output_tokens: 8000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: 120000 },
+    );
+  let resp = await call(input);
+  let slides = extractSlidesJson(resp.output_text).slice(0, numSlides);
+  if (slides.length === 0) {
+    resp = await call(`${input}\n\nYour previous response was empty. Respond with ONLY the JSON array.`);
+    slides = extractSlidesJson(resp.output_text).slice(0, numSlides);
+  }
+  if (slides.length === 0) {
+    throw new Error(
+      `model returned no slides (status: ${String((resp as { status?: unknown }).status ?? "unknown")})`,
+    );
+  }
 
   const replaced = options.replace === true;
   if (replaced) {

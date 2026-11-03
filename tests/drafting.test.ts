@@ -75,3 +75,23 @@ describe("planner sync", () => {
     assert.equal(orange.pillar_id, pillarA);
   });
 });
+
+describe("buildDraftContext", () => {
+  it("bounds total size and marks truncation", async () => {
+    const { buildDraftContext } = await import("../lib/drafting");
+    assert.equal(buildDraftContext([]), "(vault is empty)");
+    const short = buildDraftContext([{ doc_type: "principle", title: "T", body: "abc" }]);
+    assert.ok(short.includes("[principle] T"));
+    assert.ok(short.includes("abc"));
+    const long = buildDraftContext(
+      [
+        { doc_type: "a", title: "T1", body: "x".repeat(5000) },
+        { doc_type: "b", title: "T2", body: "y".repeat(5000) },
+      ],
+      1000,
+    );
+    assert.ok(long.length <= 1000 + 20);
+    assert.ok(long.endsWith("…[truncated]"));
+    assert.ok(long.includes("[a] T1") && long.includes("[b] T2"));
+  });
+});

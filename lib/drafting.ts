@@ -29,6 +29,19 @@ function guideFor(contentType: string): string {
   return PLAYBOOK[contentType] ?? "Write the content for this slot.";
 }
 
+export type VaultHit = { doc_type: string; title?: string | null; body: string };
+
+// Join vault hits into bounded context: full bodies would let one long doc
+// swallow the prompt, so each hit is capped and the total is capped.
+export function buildDraftContext(hits: VaultHit[], maxChars = 4000): string {
+  if (hits.length === 0) return "(vault is empty)";
+  const perHit = Math.max(500, Math.floor(maxChars / hits.length));
+  const full = hits
+    .map((h) => `[${h.doc_type}] ${h.title ?? ""}\n${h.body.slice(0, perHit)}`)
+    .join("\n\n---\n\n");
+  return full.length > maxChars ? `${full.slice(0, maxChars)}…[truncated]` : full;
+}
+
 async function draftOne(slot: SlotRow): Promise<void> {
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
@@ -49,22 +62,35 @@ async function draftOne(slot: SlotRow): Promise<void> {
     : "(no voice profile yet — write in a clear, confident creator voice)";
   const query = `${slot.pillar_name ?? ""} ${typeLabel} ${(slot.content_type as ContentType) ?? ""}`.trim();
   const hits = await searchVault(query || "voice", 5);
-  const context =
-    hits.length > 0
-      ? hits.map((h) => `[${h.doc_type}] ${h.title ?? ""}\n${h.body}`).join("\n\n---\n\n")
-      : "(vault is empty)";
-
-  const client = getMetaClient(metaKey);
-  const resp = await client.responses.create(
-    {
-      model: metaTextModel(),
-      input: `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`,
-      max_output_tokens: 3000,
-    },
-    { timeout: 120000 },
+  const context = buildDraftContext(
+    hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
   );
-  const body = resp.output_text.trim();
-  if (!body) throw new Error("model returned an empty draft");
+
+  // Muse-spark reasons hard: without low effort the whole output budget
+  // goes to reasoning and the draft comes back empty (probed live).
+  const client = getMetaClient(metaKey);
+  const input = `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`;
+  const call = (text: string) =>
+    client.responses.create(
+      {
+        model: metaTextModel(),
+        input: text,
+        max_output_tokens: 8000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: 120000 },
+    );
+  let resp = await call(input);
+  let body = resp.output_text.trim();
+  if (!body) {
+    resp = await call(`${input}\n\nYour previous response was empty. Write the draft now — no preamble.`);
+    body = resp.output_text.trim();
+  }
+  if (!body) {
+    throw new Error(
+      `model returned an empty draft (status: ${String((resp as { status?: unknown }).status ?? "unknown")})`,
+    );
+  }
   saveDraft(slot.id, slot.content_type, body);
 }
 

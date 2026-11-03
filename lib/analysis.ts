@@ -50,6 +50,7 @@ export async function digestLongTranscript(
       model: metaTextModel(),
       input: `${DIGEST_SYSTEM}\n\nTITLE: ${title}\n\nTRANSCRIPT:\n${transcript.slice(0, DIGEST_INPUT_CLAMP)}`,
       max_output_tokens: 1200,
+      reasoning: { effort: "low" },
     },
     { timeout: 180000 },
   );
