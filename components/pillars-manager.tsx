@@ -37,6 +37,13 @@ export function rankPillars<T extends Rankable>(list: T[]): T[] {
   );
 }
 
+function primaryPlatform(byPlatform?: Record<string, { posts: number }>): string | null {
+  const entries = Object.entries(byPlatform ?? {});
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => b[1].posts - a[1].posts || a[0].localeCompare(b[0]));
+  return entries[0][0];
+}
+
 type Draft = { name: string; description: string; voiceNotes: string };
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
@@ -203,7 +210,11 @@ export default function PillarsManager(): React.ReactNode {
         {typeof p.multiplier === "number" && (
           <span
             className={`mult-badge${p.multiplier >= 1.5 ? " hot" : ""}`}
-            title="Views-based average on this pillar's primary platform vs that platform's typical views"
+            title={
+              primaryPlatform(p.byPlatform) === "linkedin"
+                ? "Reactions-based average — LinkedIn has no public view counts"
+                : "Views-based average on this pillar's primary platform vs that platform's typical views"
+            }
           >
             {p.multiplier.toFixed(1)}x avg
           </span>

@@ -303,10 +303,13 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "run_ingest",
-    description: "Ingest a creator source. Sources: x_posts, tiktok_videos, instagram_posts (handle without @), youtube_transcript (video URL), instagram_reel (reel URL).",
+    description: "Ingest a creator source. Sources: x_posts, tiktok_videos, instagram_posts (handle without @), youtube_transcript (video URL), instagram_reel (reel URL), linkedin_posts (profile URL).",
     parameters: objParam({ source: S("Source key"), value: S("Handle or URL") }, ["source", "value"]),
     run: async (a) => {
       const source = str(a.source, "source");
+      if (source === "linkedin_posts") {
+        return safe(async () => ({ jobId: enqueue("ingest_linkedin", { identifier: str(a.value, "value") }) }));
+      }
       if (!isIngestSource(source)) return { ok: false, error: `bad source: ${source}` };
       return safe(async () => ({ jobId: enqueue("ingest", { source, value: str(a.value, "value") }) }));
     },

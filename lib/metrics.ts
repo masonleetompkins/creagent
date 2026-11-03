@@ -58,7 +58,7 @@ function normKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z]/g, "");
 }
 
-const LIKE_KEYS = new Set(["likes", "like", "likecount", "diggcount"]);
+const LIKE_KEYS = new Set(["likes", "like", "likecount", "reactions", "reactioncount", "diggcount"]);
 const COMMENT_KEYS = new Set(["comments", "comment", "commentcount", "replies", "replycount"]);
 const SHARE_KEYS = new Set(["shares", "share", "sharecount", "reposts", "repost", "repostcount", "retweets", "retweetcount"]);
 const VIEW_KEYS = new Set(["views", "view", "viewcount", "plays", "playcount", "videoviews"]);
@@ -190,7 +190,7 @@ export function platformForSource(source: string): string {
   if (source.startsWith("instagram_") || source === "zernio_instagram") return "instagram";
   if (source.startsWith("youtube_") || source === "zernio_youtube") return "youtube";
   if (source === "zernio_threads") return "threads";
-  if (source === "zernio_linkedin") return "linkedin";
+  if (source === "zernio_linkedin" || source.startsWith("linkedin_")) return "linkedin";
   return "other";
 }
 
@@ -362,12 +362,17 @@ export function listPlatforms(): string[] {
   return rows.map((r) => r.platform);
 }
 
-// Score every linked asset against its platform's views median and store
-// it. Views are the only basis: likes-only posts go NULL (unscored) rather
-// than scoring on a lesser metric — the product optimizes for views. The
-// median uses non-replies with reported views only (replies perform on a
-// different curve); replies with views are still scored against that bar.
-// Idempotent — rerun whenever metrics change.
+// Platforms whose views are structurally unavailable (LinkedIn exposes no
+// public view counts anywhere) score on likes instead — an explicit,
+// labeled exception to views-only scoring. Everywhere else, likes-only
+// posts go NULL rather than scoring on a lesser metric.
+const LIKES_BASIS_PLATFORMS = new Set(["linkedin"]);
+
+// Score every linked asset against its platform's median and store it.
+// Basis is views, except LIKES_BASIS_PLATFORMS which use likes. The median
+// uses non-replies reporting the basis metric only (replies perform on a
+// different curve); replies are still scored against that bar. Idempotent —
+// rerun whenever metrics change.
 export function refreshMultipliers(): number {
   syncFromAssets();
   backfillMetricPlatforms();
@@ -378,25 +383,28 @@ export function refreshMultipliers(): number {
   const update = db.prepare(`UPDATE assets SET multiplier = ? WHERE id = ?`);
   let updated = 0;
   for (const { platform } of platforms) {
+    const useLikes = LIKES_BASIS_PLATFORMS.has(platform);
     const rows = db
       .prepare(
-        `SELECT m.asset_id, m.views, COALESCE(a.is_reply, 0) AS is_reply
+        `SELECT m.asset_id, m.likes, m.views, COALESCE(a.is_reply, 0) AS is_reply
          FROM post_metrics m LEFT JOIN assets a ON a.id = m.asset_id
          WHERE m.platform = ?`,
       )
       .all(platform) as Array<{
       asset_id: string | null;
+      likes: number | null;
       views: number | null;
       is_reply: number;
     }>;
-    const medViews = median(
-      rows.filter((r) => !r.is_reply).map((r) => r.views),
+    const med = median(
+      rows.filter((r) => !r.is_reply).map((r) => (useLikes ? r.likes : r.views)),
     );
     for (const row of rows) {
       if (!row.asset_id) continue;
+      const value = useLikes ? row.likes : row.views;
       const scored =
-        row.views !== null && medViews !== null && medViews > 0
-          ? Math.round((row.views / medViews) * 100) / 100
+        value !== null && med !== null && med > 0
+          ? Math.round((value / med) * 100) / 100
           : null;
       update.run(scored, row.asset_id);
       updated++;

@@ -11,6 +11,7 @@ import { runMigrations } from "./scripts/migrate";
 import {
   isIngestSource,
   runIngest,
+  runLinkedInIngest,
   runMonidMetricsFill,
   runZernioAnalyticsBackfill,
   runZernioIngest,
@@ -72,6 +73,23 @@ async function dispatch(job: JobRow): Promise<unknown> {
       (assets) => {
         updateProgress(job.id, { assets });
       },
+    );
+  }
+  if (job.name === "ingest_linkedin") {
+    const { identifier, since, until, maxPages } = data;
+    if (typeof identifier !== "string" || !identifier.trim()) {
+      throw new Error("ingest input is empty");
+    }
+    return runLinkedInIngest(
+      identifier,
+      (assets, pages, info) => {
+        updateProgress(job.id, { assets, pages, ...info });
+      },
+      {
+        since: typeof since === "string" ? since : undefined,
+        until: typeof until === "string" ? until : undefined,
+      },
+      typeof maxPages === "number" ? maxPages : undefined,
     );
   }
   if (job.name === "analyze") {

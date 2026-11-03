@@ -22,7 +22,8 @@ type Account = { id: string; platform: string; username: string };
 type Range = { from: string; to: string };
 type Target =
   | { kind: "zernio"; key: string; label: string; icon: string; accountId: string }
-  | { kind: "monid"; key: string; label: string; icon: string; source: string; handle: string };
+  | { kind: "monid"; key: string; label: string; icon: string; source: string; handle: string }
+  | { kind: "linkedin"; key: string; label: string; icon: string; identifier: string };
 type TargetState = {
   key: string;
   label: string;
@@ -179,6 +180,16 @@ export default function IngestConsole(): React.ReactNode {
         });
       }
     }
+    const linkedin = (handles.linkedin ?? "").trim();
+    if (linkedin) {
+      out.push({
+        kind: "linkedin",
+        key: "m:linkedin_posts",
+        label: linkedin,
+        icon: "linkedin",
+        identifier: linkedin,
+      });
+    }
     return out;
   }
 
@@ -204,20 +215,33 @@ export default function IngestConsole(): React.ReactNode {
     setTargets((ts) => ts.map((x) => (x.key === t.key ? st : x)));
     try {
       const { since, until } = rangeWindow();
+      const endpoint =
+        t.kind === "zernio"
+          ? "/api/ingest/zernio"
+          : t.kind === "linkedin"
+            ? "/api/ingest/linkedin"
+            : "/api/ingest";
       const started = await readJson(
-        await fetch(t.kind === "zernio" ? "/api/ingest/zernio" : "/api/ingest", {
+        await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
             t.kind === "zernio"
               ? { accountIds: [(t as { accountId: string }).accountId], since, until }
-              : {
-                  source: (t as { source: string }).source,
-                  value: (t as { handle: string }).handle,
-                  since,
-                  until,
-                  maxPages: depth === "full" ? 0 : depth === "deep" ? 20 : 5,
-                },
+              : t.kind === "linkedin"
+                ? {
+                    identifier: (t as { identifier: string }).identifier,
+                    since,
+                    until,
+                    maxPages: depth === "full" ? 0 : depth === "deep" ? 20 : 5,
+                  }
+                : {
+                    source: (t as { source: string }).source,
+                    value: (t as { handle: string }).handle,
+                    since,
+                    until,
+                    maxPages: depth === "full" ? 0 : depth === "deep" ? 20 : 5,
+                  },
           ),
         }),
       );
@@ -541,6 +565,20 @@ export default function IngestConsole(): React.ReactNode {
                 />
               </label>
             ))}
+            <label
+              className={`src-row${(handles.linkedin ?? "").trim() ? " on" : ""}`}
+              title="LinkedIn — paste a profile URL (~$0.0045/post, no public view counts)"
+            >
+              <PlatformIcon platform="linkedin" />
+              <input
+                type="text"
+                spellCheck={false}
+                aria-label="LinkedIn profile URL"
+                placeholder="LinkedIn profile URL"
+                value={handles.linkedin ?? ""}
+                onChange={(e) => setHandle("linkedin", e.target.value)}
+              />
+            </label>
           </div>
         </div>
         <div className="src-group">

@@ -259,7 +259,7 @@ export function detectVideo(source: string, item: Record<string, unknown>): bool
   return false;
 }
 
-function itemToAsset(item: Record<string, unknown>): {
+export function itemToAsset(item: Record<string, unknown>): {
   title: string;
   transcript: string;
   sourceUrl: string | null;
@@ -276,7 +276,16 @@ function itemToAsset(item: Record<string, unknown>): {
   );
   const title =
     pick(item, "title", "name") || text.slice(0, 80) || "(untitled)";
-  const url = pick(item, "url", "link", "permalink", "video_url", "post_url");
+  const url = pick(
+    item,
+    "url",
+    "link",
+    "permalink",
+    "video_url",
+    "post_url",
+    "postUrl",
+    "linkedinUrl",
+  );
   return {
     title: title.slice(0, 300),
     transcript: text.slice(0, MAX_TRANSCRIPT_CHARS),
@@ -304,11 +313,27 @@ const DATE_KEYS = [
   "takenAt",
   "upload_date",
   "uploadDate",
+  "postedAt",
+  "posted_at",
 ];
 
 export function parsePostedAt(item: Record<string, unknown>): string | null {
   for (const key of DATE_KEYS) {
     const value = item[key];
+    if (isObj(value)) {
+      // Nested shapes ({timestamp}, {date}) as Apify returns them.
+      const nested = value as Record<string, unknown>;
+      const ts = nested["timestamp"];
+      if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
+        const d = new Date(ts < 1e12 ? ts * 1000 : ts);
+        if (!Number.isNaN(d.getTime())) return d.toISOString();
+      }
+      const dt = nested["date"];
+      if (typeof dt === "string" && dt.trim()) {
+        const d = new Date(dt);
+        if (!Number.isNaN(d.getTime())) return d.toISOString();
+      }
+    }
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       // Heuristic: seconds (< 1e12) vs milliseconds.
       const ms = value < 1e12 ? value * 1000 : value;
@@ -938,4 +963,100 @@ export async function runMonidMetricsFill(
     skipped,
     spendUsd: Math.round(lookedUp * 0.001 * 1000) / 1000,
   };
+}
+
+export type LinkedInIngestResult = {
+  assets: number;
+  skipped: number;
+  duplicates: number;
+  pages: number;
+  stalled: boolean;
+  stopReason: string | null;
+};
+
+// LinkedIn profile posts via Monid/Apify (public scrape, no auth): full
+// post text, URL, date, and likes/comments/shares. LinkedIn exposes no
+// public view counts, so rows arrive without views and score on reactions.
+// maxPosts 0 scrapes the entire history (~$0.0045/post); the run reports
+// progress per 25 stored posts and is resume-safe via URL dedupe.
+export async function runLinkedInIngest(
+  identifier: string,
+  onProgress?: (
+    assets: number,
+    pages: number,
+    info?: { duplicates: number; skipped: number },
+  ) => Promise<void> | void,
+  window?: IngestWindow,
+  maxPages = MAX_PAGES,
+): Promise<LinkedInIngestResult> {
+  const apiKey = loadKeys().monid;
+  if (!apiKey) throw new Error("save a Monid key in Settings first");
+  const id = identifier.trim();
+  if (!id) throw new Error("ingest input is empty");
+  const sinceMs = window?.since ? Date.parse(window.since) : Number.NaN;
+  const untilMs = window?.until ? Date.parse(window.until) : Number.NaN;
+  const db = getDb();
+  const maxPosts = maxPages <= 0 ? 0 : Math.max(1, Math.min(maxPages * 20, 1000));
+  const findAssetId = db.prepare(
+    `SELECT id FROM assets WHERE source_url = ? OR url_norm = ? LIMIT 1`,
+  );
+  let assets = 0;
+  let skipped = 0;
+  let duplicates = 0;
+  const attempt = await monidRunAndWait(
+    apiKey,
+    "apify",
+    "/harvestapi/linkedin-profile-posts",
+    { body: { targetUrls: [id], maxPosts, postedLimit: "any" } },
+    { timeoutMs: 600000 },
+  );
+  if (attempt.status !== "COMPLETED") {
+    throw new Error(`monid run ${attempt.runId}: ${attempt.status}`);
+  }
+  const payload = runPayload(attempt);
+  const payloadError = monidPayloadError(payload, "profile");
+  if (payloadError) throw new Error(payloadError);
+  const items = findItems(payload);
+  let done = 0;
+  for (const item of items) {
+    const asset = itemToAsset(item);
+    if (asset.postedAt) {
+      const ms = Date.parse(asset.postedAt);
+      if (
+        (!Number.isNaN(sinceMs) && ms < sinceMs) ||
+        (!Number.isNaN(untilMs) && ms > untilMs)
+      ) {
+        skipped++;
+        continue;
+      }
+    }
+    const stored = storeAsset(db, {
+      source: "linkedin_posts",
+      sourceUrl: asset.sourceUrl,
+      title: asset.title,
+      transcript: asset.transcript,
+      metadata: { runId: attempt.runId, raw: truncateRaw(item, 4) },
+      postedAt: asset.postedAt,
+      isReply: detectReply(item) || detectRetweet(item),
+      isVideo: detectVideo("linkedin_posts", item),
+      transcribedAt: null,
+    });
+    if (stored === "merged") duplicates++;
+    else assets++;
+    const eng = extractEngagement(item);
+    if (!engagementEmpty(eng) && asset.sourceUrl) {
+      const row = findAssetId.get(asset.sourceUrl, normalizeUrl(asset.sourceUrl) || "\0") as
+        | { id: string }
+        | undefined;
+      if (row) {
+        upsertMetricForAsset(row.id, "linkedin", asset.sourceUrl, eng, item);
+      }
+    }
+    done++;
+    if (onProgress && (done % 25 === 0 || done === items.length)) {
+      await onProgress(assets, 1, { duplicates, skipped });
+    }
+  }
+  if (onProgress) await onProgress(assets, 1, { duplicates, skipped });
+  return { assets, skipped, duplicates, pages: 1, stalled: false, stopReason: null };
 }

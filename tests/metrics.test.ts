@@ -375,3 +375,39 @@ describe("provider shape tolerance", () => {
     );
   });
 });
+
+describe("linkedin shapes", () => {
+  it("reads reaction counts as likes", () => {
+    assert.deepEqual(
+      extractEngagement({ reactionCount: 42, commentCount: 5, shareCount: 2 }),
+      { likes: 42, comments: 5, shares: 2, views: null, reach: null, saves: null },
+    );
+  });
+
+  it("maps linkedin sources to the linkedin platform", () => {
+    assert.equal(platformForSource("linkedin_posts"), "linkedin");
+  });
+});
+
+describe("linkedin reactions basis", () => {
+  it("scores linkedin on likes while other platforms stay views-only", async () => {
+    const { getDb } = await import("../lib/db");
+    const { refreshMultipliers } = await import("../lib/metrics");
+    const db = getDb();
+    const insert = db.prepare(
+      `INSERT INTO assets (id, source, kind, title, transcript, metadata, is_reply, pillar_id, multiplier, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const raw = (o: unknown): string => JSON.stringify({ raw: o });
+    const recent = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    insert.run("l1", "linkedin_posts", "li", "t", "", raw({ likes: 10 }), 0, null, null, recent);
+    insert.run("l2", "linkedin_posts", "li", "t", "", raw({ likes: 30 }), 0, null, null, recent);
+    refreshMultipliers();
+    const mult = (id: string): number | null =>
+      (db.prepare(`SELECT multiplier FROM assets WHERE id = ?`).get(id) as { multiplier: number | null }).multiplier;
+    // Linkedin likes median = 20 → scored; instagram likes-only rows stay NULL.
+    assert.equal(mult("l1"), 0.5);
+    assert.equal(mult("l2"), 1.5);
+    assert.equal(mult("g4"), null);
+  });
+});

@@ -317,3 +317,24 @@ describe("nativeVideoId", () => {
     assert.equal(nativeVideoId("not a url", "youtube"), null);
   });
 });
+
+describe("linkedin item mapping", () => {
+  it("maps Apify items to asset fields", async () => {
+    const { itemToAsset, parsePostedAt } = await import("../lib/ingest");
+    const mapped = itemToAsset({
+      type: "post",
+      id: "7516175392571871232",
+      linkedinUrl: "https://www.linkedin.com/posts/u_x-activity-1-Ryxt",
+      content: "hello linkedin world",
+      postedAt: { timestamp: 1791995857375, date: "2026-10-14T16:37:37.375Z" },
+      engagement: { likes: 9, comments: 2, shares: 1 },
+    });
+    assert.equal(mapped.sourceUrl, "https://www.linkedin.com/posts/u_x-activity-1-Ryxt");
+    assert.equal(mapped.transcript, "hello linkedin world");
+    assert.equal(mapped.postedAt, "2026-10-14T16:37:37.375Z");
+    assert.equal(
+      parsePostedAt({ postedAt: { timestamp: 1791995857 } }),
+      "2026-10-14T16:37:37.000Z",
+    );
+  });
+});
