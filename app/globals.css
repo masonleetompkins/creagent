@@ -294,6 +294,19 @@ select option {
   border-radius: 12px;
 }
 
+@keyframes slot-working {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.slot.working {
+  animation: slot-working 1.2s ease-in-out infinite;
+}
+
+.slot.working .dot {
+  background: var(--accent);
+}
+
 a {
   color: var(--accent);
 }

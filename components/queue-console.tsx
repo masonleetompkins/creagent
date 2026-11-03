@@ -197,6 +197,7 @@ export default function QueueConsole(): React.ReactNode {
   const [agentNote, setAgentNote] = useState<string | null>(null);
   const [anyRed, setAnyRed] = useState(true);
   const [bankCount, setBankCount] = useState(0);
+  const [draftingIds, setDraftingIds] = useState<Set<string>>(new Set());
   const [jobProgress, setJobProgress] = useState<{ done: number; total: number } | null>(null);
   const agentBoxRef = useRef<HTMLTextAreaElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -292,6 +293,13 @@ export default function QueueConsole(): React.ReactNode {
     setBusy(true);
     setNote(null);
     setError(null);
+    const targetSlot =
+      typeof body === "object" && body !== null && typeof (body as { slotId?: unknown }).slotId === "string"
+        ? ((body as { slotId: string }).slotId as string)
+        : null;
+    if (targetSlot) {
+      setDraftingIds((prev) => new Set(prev).add(targetSlot));
+    }
     try {
       const started = await readJson(
         await fetch(url, {
@@ -309,12 +317,20 @@ export default function QueueConsole(): React.ReactNode {
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
       reportResult(label, done.result);
       await refresh();
-      setSelected(null);
+      if (targetSlot) await openSlot(targetSlot);
+      else setSelected(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
       setJobProgress(null);
+      if (targetSlot) {
+        setDraftingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(targetSlot);
+          return next;
+        });
+      }
     }
   }
 
@@ -929,7 +945,7 @@ export default function QueueConsole(): React.ReactNode {
               {shown.map((s) => (
                 <button
                   key={s.id}
-                  className={`slot st-${s.status}${selected?.id === s.id ? " sel" : ""}`}
+                  className={`slot st-${s.status}${selected?.id === s.id ? " sel" : ""}${draftingIds.has(s.id) ? " working" : ""}`}
                   onClick={() => void openSlot(s.id)}
                 >
                   <span className={`dot d-${s.status}`} />
@@ -937,8 +953,9 @@ export default function QueueConsole(): React.ReactNode {
                   <span className="slotmain">{typeLabel(s.content_type)}</span>
                   {view === "week" ? (
                     <span className="slotsub">
-                      {s.pillar_name ?? "no pillar"}
-                      {s.draft_count > 0 ? ` · ${s.draft_count} draft${s.draft_count === 1 ? "" : "s"}` : ""}
+                      {draftingIds.has(s.id)
+                        ? "Drafting…"
+                        : `${s.pillar_name ?? "no pillar"}${s.draft_count > 0 ? ` · ${s.draft_count} draft${s.draft_count === 1 ? "" : "s"}` : ""}`}
                     </span>
                   ) : null}
                 </button>
@@ -995,7 +1012,7 @@ export default function QueueConsole(): React.ReactNode {
                 disabled={busy}
                 onClick={() => void runJob("/api/draft/run", { slotId: selected.id }, "Drafted")}
               >
-                Draft now
+                {draftingIds.has(selected.id) ? "Drafting…" : "Draft now"}
               </button>
             ) : null}
             {selected.status === "orange" ? (
@@ -1029,6 +1046,9 @@ export default function QueueConsole(): React.ReactNode {
             <button onClick={() => void removeSlot(selected.id)}>Delete</button>
             <button onClick={() => setSelected(null)}>Close</button>
           </div>
+          {draftingIds.has(selected.id) ? (
+            <p className="note">Drafting this slot — options appear below when done.</p>
+          ) : null}
           {(selected.drafts ?? []).map((d, i) => {
             const structure = parseStructure(d.structure);
             const optionCount =
