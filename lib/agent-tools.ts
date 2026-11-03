@@ -146,8 +146,11 @@ export const AGENT_TOOLS: ToolDef[] = [
       }
       return safe(async () => {
         const id = uuid(a.slotId, "slotId");
+        const { clearApproval, pinApproval } = await import("./draft-approval");
         const r = getDb().prepare(`UPDATE queue_slots SET status = ? WHERE id = ?`).run(status, id);
         if (r.changes === 0) throw new Error("slot not found");
+        if (status === "green") pinApproval(id);
+        else clearApproval(id);
         return { slotId: id, status };
       });
     },

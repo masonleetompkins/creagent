@@ -1,51 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { DraftStructureView } from "@/lib/draft-structure";
+import { splitLegacyOptions } from "@/lib/draft-structure";
 
 // DraftReview: the guided draft-reading surface. Renders a code-assembled
 // structure (option cards + a one-line next step) when present, clean prose
 // otherwise. No queue imports — carousel slides, video scripts, and any
 // future surface can reuse it by passing options + body.
-
-export type DraftOptionView = { label: string; body: string };
-
-export type DraftStructureView = {
-  layout: "pick-one" | "hooks-plus-body" | "prose";
-  options: DraftOptionView[];
-  body?: string;
-};
-
-export function parseStructure(raw: string | null | undefined): DraftStructureView | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<DraftStructureView>;
-    if (!parsed || !Array.isArray(parsed.options) || parsed.options.length === 0) return null;
-    if (!parsed.options.every((o) => typeof o?.body === "string" && o.body.trim())) return null;
-    const layout =
-      parsed.layout === "pick-one" || parsed.layout === "hooks-plus-body" ? parsed.layout : "prose";
-    return {
-      layout,
-      options: parsed.options.map((o) => ({
-        label: typeof o.label === "string" && o.label ? o.label : "Option",
-        body: o.body,
-      })),
-      body: typeof parsed.body === "string" && parsed.body.trim() ? parsed.body : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// Legacy drafts (pre-structure) joined variants as "Variant 1:" / "Option 2:"
-// soup. Split best-effort so old drafts also get cards; null → prose.
-export function splitLegacyOptions(body: string): DraftOptionView[] | null {
-  const parts = body
-    .split(/^(?:Variant|Option)\s+\d+\s*(?:\([^)]*\))?\s*:?\s*$/gim)
-    .map((p) => p.replace(/^\s*---\s*$/gm, "").trim())
-    .filter(Boolean);
-  if (parts.length < 2) return null;
-  return parts.map((p, i) => ({ label: `Option ${i + 1}`, body: p }));
-}
 
 function paragraphs(text: string): string[] {
   return text

@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CONTENT_TYPES, PLATFORMS } from "@/lib/content";
-import DraftReview, { parseStructure, splitLegacyOptions } from "./draft-review";
+import DraftReview from "./draft-review";
+import {
+  approvedBody,
+  clampSelection,
+  parseStructure,
+  splitLegacyOptions,
+} from "@/lib/draft-structure";
 
 type Slot = {
   id: string;
@@ -14,6 +20,8 @@ type Slot = {
   platforms: string;
   status: string;
   draft_count: number;
+  approved_draft_id?: string | null;
+  approved_option?: number | null;
 };
 
 type Draft = {
@@ -175,6 +183,14 @@ function isWeakStat(st: { posts: number; multiplier: number | null } | null): bo
   return !!st && st.multiplier !== null && st.posts > 0 && st.multiplier < 0.7;
 }
 
+function isDone(status: string): boolean {
+  return status === "green" || status === "gray";
+}
+
+function optionCountOf(d: Draft): number {
+  return parseStructure(d.structure)?.options.length ?? splitLegacyOptions(d.body)?.length ?? 1;
+}
+
 export default function QueueConsole(): React.ReactNode {
   const [view, setView] = useState<"week" | "month">("week");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -219,6 +235,8 @@ export default function QueueConsole(): React.ReactNode {
     null,
   );
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState<boolean | null>(null);
+  const [copied, setCopied] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     weekday: "1",
@@ -353,6 +371,8 @@ export default function QueueConsole(): React.ReactNode {
   }
 
   async function openSlot(id: string): Promise<void> {
+    setVersionsOpen(null);
+    setCopied(false);
     try {
       const [data, files, reqs] = await Promise.all([
         readJson(await fetch(`/api/slots/${id}/drafts`)),
@@ -429,6 +449,16 @@ export default function QueueConsole(): React.ReactNode {
       await openSlot(id);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function copyPost(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Copy failed — select the text manually.");
     }
   }
 
@@ -1049,14 +1079,45 @@ export default function QueueConsole(): React.ReactNode {
           {draftingIds.has(selected.id) ? (
             <p className="note">Drafting this slot — options appear below when done.</p>
           ) : null}
-          {(selected.drafts ?? []).map((d, i) => {
-            const structure = parseStructure(d.structure);
-            const optionCount =
-              structure?.options.length ?? splitLegacyOptions(d.body)?.length ?? 1;
-            const picked = Math.min(
-              Math.max(0, Number.parseInt(d.selection ?? "", 10) || 0),
-              Math.max(0, optionCount - 1),
+          {(() => {
+            if (selected.status !== "green" && selected.status !== "gray") return null;
+            const versions = selected.drafts ?? [];
+            if (versions.length === 0) return null;
+            const pinned =
+              versions.find((dd) => dd.id === selected.approved_draft_id) ??
+              versions[versions.length - 1];
+            const heroIdx =
+              pinned.id === selected.approved_draft_id
+                ? clampSelection(String(selected.approved_option ?? 0), optionCountOf(pinned))
+                : clampSelection(pinned.selection, optionCountOf(pinned));
+            const hero = approvedBody(pinned, heroIdx);
+            const vnum = versions.length > 1 ? `Draft ${versions.indexOf(pinned) + 1} · ` : "";
+            return (
+              <div className="aphero">
+                <p className="dr-sub">
+                  {selected.status === "gray" ? "Posted" : "Approved post"} · {vnum}Option {heroIdx + 1}
+                </p>
+                <div className="dr-prose">
+                  <p>{hero}</p>
+                </div>
+                <div className="row">
+                  <button onClick={() => void copyPost(hero)}>{copied ? "Copied ✓" : "Copy post"}</button>
+                </div>
+              </div>
             );
+          })()}
+          {(selected.drafts ?? []).length > 0 ? (
+            <div className="row">
+              <button onClick={() => setVersionsOpen((v) => !(v ?? !isDone(selected.status)))}>
+                {(versionsOpen ?? !isDone(selected.status)) ? "▾" : "▸"} Versions ({(selected.drafts ?? []).length})
+              </button>
+            </div>
+          ) : null}
+          {(versionsOpen ?? !isDone(selected.status))
+            ? (selected.drafts ?? []).map((d, i) => {
+            const structure = parseStructure(d.structure);
+            const optionCount = optionCountOf(d);
+            const picked = clampSelection(d.selection, optionCount);
             const layout = structure?.layout ?? (optionCount > 1 ? "pick-one" : "prose");
             const versionCount = (selected.drafts ?? []).length;
             const title =
@@ -1130,7 +1191,8 @@ export default function QueueConsole(): React.ReactNode {
               ) : null}
             </div>
             );
-          })}
+          })
+            : null}
           {genRequests.length > 0 ? (
             <>
               <h2>Image requests ({genRequests.filter((r) => r.status === "pending").length} pending)</h2>

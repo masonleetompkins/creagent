@@ -911,6 +911,14 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.aphero {
+  margin: 10px 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .ved {
   display: flex;
   flex-direction: column;

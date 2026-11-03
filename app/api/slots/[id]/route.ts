@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isContentType, isSlotStatus, PLATFORMS } from "@/lib/content";
 import { getDb } from "@/lib/db";
+import { clearApproval, pinApproval } from "@/lib/draft-approval";
 import { enqueue } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
@@ -66,8 +67,13 @@ export async function PATCH(
       return NextResponse.json({ error: "slot not found" }, { status: 404 });
     }
     if (status === "green") {
-      // Approving banks the slot's revision feedback into style rules
-      // (async — the click stays instant).
+      // Approving pins the shipped post (latest version's pick) and banks
+      // the slot's revision feedback into style rules (async — instant click).
+      try {
+        pinApproval(id);
+      } catch {
+        /* pin is best-effort; the approval stands */
+      }
       try {
         const n = (
           getDb()
@@ -77,6 +83,13 @@ export async function PATCH(
         if (n > 0) enqueue("distill_feedback", { slotId: id });
       } catch {
         /* distill is best-effort; the approval stands */
+      }
+    }
+    if (status === "red" || status === "orange") {
+      try {
+        clearApproval(id);
+      } catch {
+        /* reopening stands regardless */
       }
     }
     return NextResponse.json({ ok: true });

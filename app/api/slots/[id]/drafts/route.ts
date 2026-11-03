@@ -15,7 +15,8 @@ export async function GET(
     const slot = getDb()
       .prepare(
         `SELECT s.id, s.scheduled_at, s.pillar_id, p.name AS pillar_name,
-                s.content_type, s.platforms, s.status, s.created_at
+                s.content_type, s.platforms, s.status, s.created_at,
+                s.approved_draft_id, s.approved_option
          FROM queue_slots s LEFT JOIN pillars p ON p.id = s.pillar_id
          WHERE s.id = ?`,
       )
