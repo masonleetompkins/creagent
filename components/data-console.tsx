@@ -161,11 +161,23 @@ export default function DataConsole(): React.ReactNode {
           {platforms.map((p) => (
             <div className="tile" key={p.platform}>
               <div className="t">{p.platform}</div>
-              <div className="big">{fmtAvg(p.averages.views)} views</div>
-              <div className="d">
-                from {p.averages.count} posts · likes {fmtAvg(p.averages.likes)} ·
-                comments {fmtAvg(p.averages.comments)} · shares {fmtAvg(p.averages.shares)}
-              </div>
+              {p.platform === "linkedin" ? (
+                <>
+                  <div className="big">{fmtAvg(p.averages.likes)} reactions</div>
+                  <div className="d">
+                    from {p.averages.count} posts · comments {fmtAvg(p.averages.comments)} ·
+                    shares {fmtAvg(p.averages.shares)}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="big">{fmtAvg(p.averages.views)} views</div>
+                  <div className="d">
+                    from {p.averages.count} posts · likes {fmtAvg(p.averages.likes)} ·
+                    comments {fmtAvg(p.averages.comments)} · shares {fmtAvg(p.averages.shares)}
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>
