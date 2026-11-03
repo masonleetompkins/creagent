@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CONTENT_TYPES, PLATFORMS } from "@/lib/content";
+import DraftReview, { parseStructure, splitLegacyOptions } from "./draft-review";
 
 type Slot = {
   id: string;
@@ -20,6 +21,8 @@ type Draft = {
   kind: string;
   body: string;
   status: string;
+  structure: string | null;
+  selection: string | null;
   created_at: string;
 };
 
@@ -402,6 +405,30 @@ export default function QueueConsole(): React.ReactNode {
       await readJson(await fetch(`/api/slots/${id}/post`, { method: "POST" }));
       await refresh();
       await openSlot(id);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function selectOption(draftId: string, index: number): Promise<void> {
+    try {
+      await readJson(
+        await fetch(`/api/drafts/${draftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ selection: String(index) }),
+        }),
+      );
+      setSelected((prev) =>
+        prev
+          ? {
+              ...prev,
+              drafts: (prev.drafts ?? []).map((d) =>
+                d.id === draftId ? { ...d, selection: String(index) } : d,
+              ),
+            }
+          : prev,
+      );
     } catch (e) {
       setError((e as Error).message);
     }
@@ -924,17 +951,39 @@ export default function QueueConsole(): React.ReactNode {
             <button onClick={() => void removeSlot(selected.id)}>Delete</button>
             <button onClick={() => setSelected(null)}>Close</button>
           </div>
-          {(selected.drafts ?? []).map((d, i) => (
+          {(selected.drafts ?? []).map((d, i) => {
+            const structure = parseStructure(d.structure);
+            const optionCount =
+              structure?.options.length ?? splitLegacyOptions(d.body)?.length ?? 1;
+            const picked = Math.min(
+              Math.max(0, Number.parseInt(d.selection ?? "", 10) || 0),
+              Math.max(0, optionCount - 1),
+            );
+            const layout = structure?.layout ?? (optionCount > 1 ? "pick-one" : "prose");
+            const versionCount = (selected.drafts ?? []).length;
+            const title =
+              versionCount > 1
+                ? `Draft ${i + 1} (${typeLabel(d.kind)})`
+                : `Draft (${typeLabel(d.kind)})`;
+            const nextStep =
+              layout === "pick-one"
+                ? "Pick the post to run with — then Approve above."
+                : layout === "hooks-plus-body"
+                  ? "Pick a hook — it tops the thread below. Then Approve above."
+                  : "Review — then Approve above, or Edit / Feedback to revise.";
+            return (
             <div key={d.id}>
-              <h2>
-                Draft{(selected.drafts ?? []).length > 1 ? ` ${i + 1}` : ""} ({typeLabel(d.kind)})
-                {d.status === "edited" ? " — edited" : ""}
-              </h2>
-              <p className="draftbody">{d.body}</p>
-              <div className="row">
-                <button onClick={() => setEditing({ id: d.id, body: d.body })}>Edit</button>
-                <button onClick={() => setFeedback({ draftId: d.id, body: "" })}>Feedback</button>
-              </div>
+              <DraftReview
+                title={title}
+                edited={d.status === "edited"}
+                structure={structure}
+                body={d.body}
+                selection={picked}
+                nextStep={nextStep}
+                onSelect={(idx) => void selectOption(d.id, idx)}
+                onEdit={() => setEditing({ id: d.id, body: d.body })}
+                onFeedback={() => setFeedback({ draftId: d.id, body: "" })}
+              />
               {feedback && feedback.draftId === d.id ? (
                 <div className="feedback-form">
                   <textarea
@@ -955,7 +1004,8 @@ export default function QueueConsole(): React.ReactNode {
                 </div>
               ) : null}
             </div>
-          ))}
+            );
+          })}
           {genRequests.length > 0 ? (
             <>
               <h2>Image requests ({genRequests.filter((r) => r.status === "pending").length} pending)</h2>

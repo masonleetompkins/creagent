@@ -160,7 +160,7 @@ export const AGENT_TOOLS: ToolDef[] = [
       safe(async () => {
         const id = uuid(a.draftId, "draftId");
         const r = getDb()
-          .prepare(`UPDATE drafts SET body = ?, status = 'edited' WHERE id = ?`)
+          .prepare(`UPDATE drafts SET body = ?, status = 'edited', structure = NULL WHERE id = ?`)
           .run(str(a.body, "body"), id);
         if (r.changes === 0) throw new Error("draft not found");
         return { draftId: id };

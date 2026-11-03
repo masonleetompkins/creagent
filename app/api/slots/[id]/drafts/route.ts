@@ -23,7 +23,7 @@ export async function GET(
     if (!slot) return NextResponse.json({ error: "slot not found" }, { status: 404 });
     const drafts = getDb()
       .prepare(
-        `SELECT id, kind, body, status, created_at FROM drafts
+        `SELECT id, kind, body, status, structure, selection, created_at FROM drafts
          WHERE slot_id = ? ORDER BY created_at ASC`,
       )
       .all(id);
