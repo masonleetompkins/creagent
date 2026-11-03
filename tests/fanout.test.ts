@@ -135,6 +135,59 @@ describe("voiceFraming", () => {
   });
 });
 
+describe("refineTarget + buildRefinePrompt", () => {
+  it("targets the picked option and carries thread bodies", async () => {
+    const { refineTarget, buildRefinePrompt } = await import("../lib/drafting");
+    const t = refineTarget(
+      "short_post",
+      "joined",
+      JSON.stringify({
+        layout: "pick-one",
+        options: [
+          { label: "Contrarian", body: "AAA" },
+          { label: "Proof", body: "BBB" },
+        ],
+      }),
+      "1",
+    );
+    assert.equal(t.text, "BBB");
+    assert.equal(t.label, "Proof");
+    assert.equal(t.layout, "pick-one");
+    const h = refineTarget(
+      "thread",
+      "joined",
+      JSON.stringify({
+        layout: "hooks-plus-body",
+        options: [{ label: "Bold claim", body: "HOOK" }],
+        body: "2. post two",
+      }),
+      "5",
+    );
+    assert.equal(h.text, "HOOK");
+    assert.equal(h.threadBody, "2. post two");
+    // Legacy/edited drafts without structure refine whole-body.
+    const legacy = refineTarget("short_post", "plain old draft", null, null);
+    assert.equal(legacy.text, "plain old draft");
+    assert.equal(legacy.layout, "prose");
+    const broken = refineTarget("short_post", "fallback", "{oops", "0");
+    assert.equal(broken.text, "fallback");
+  });
+
+  it("builds single-piece prompts with feedback and news context", async () => {
+    const { buildRefinePrompt } = await import("../lib/drafting");
+    const prompt = buildRefinePrompt(
+      "short_post",
+      { ...CTX, previous: "old", feedback: "more specific facts" },
+      { text: "PIECE", label: "Proof", layout: "pick-one" },
+    );
+    assert.ok(prompt.includes("more specific facts"));
+    assert.ok(prompt.includes("PIECE TO REVISE"));
+    assert.ok(prompt.includes("PIECE"));
+    assert.ok(prompt.includes("Output only the revised piece"));
+    assert.ok(!prompt.includes("alternate variants"));
+  });
+});
+
 describe("overLimit", () => {
   it("counts code points against the kind limit", async () => {
     const { overLimit } = await import("../lib/drafting");

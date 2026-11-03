@@ -372,13 +372,22 @@ export function saveDraft(
   kind: string,
   body: string,
   structure?: DraftStructure | null,
+  selection?: string | null,
 ): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO drafts (id, slot_id, kind, body, status, structure, created_at)
-     VALUES (?, ?, ?, ?, 'draft', ?, ?)`,
-  ).run(id, slotId, kind, body, structure ? JSON.stringify(structure) : null, nowIso());
+    `INSERT INTO drafts (id, slot_id, kind, body, status, structure, selection, created_at)
+     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
+  ).run(
+    id,
+    slotId,
+    kind,
+    body,
+    structure ? JSON.stringify(structure) : null,
+    selection ?? null,
+    nowIso(),
+  );
   db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slotId);
   return id;
 }
@@ -410,16 +419,85 @@ export async function runDraftSlot(slotId: string): Promise<void> {
   await draftOne(slot);
 }
 
-function latestDraft(slotId: string): { id: string; body: string } | null {
+function latestDraft(slotId: string): {
+  id: string;
+  body: string;
+  structure: string | null;
+  selection: string | null;
+} | null {
   return (
     (getDb()
-      .prepare(`SELECT id, body FROM drafts WHERE slot_id = ? ORDER BY created_at DESC LIMIT 1`)
-      .get(slotId) as { id: string; body: string } | undefined) ?? null
+      .prepare(
+        `SELECT id, body, structure, selection FROM drafts WHERE slot_id = ? ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(slotId) as
+      | { id: string; body: string; structure: string | null; selection: string | null }
+      | undefined) ?? null
   );
 }
 
-// Redraft re-runs the full fan-out with the feedback in every prompt: each
-// new version is a complete option set. Appended, never replaces.
+export type RefineTarget = {
+  text: string;
+  label: string;
+  layout: DraftStructure["layout"];
+  threadBody?: string;
+};
+
+// Pure targeting: redraft refines the user's picked option only. Falls back
+// to the whole body for legacy/edited drafts without structure.
+export function refineTarget(
+  kind: string,
+  body: string,
+  structureJson: string | null,
+  selection: string | null,
+): RefineTarget {
+  try {
+    const parsed = structureJson ? (JSON.parse(structureJson) as Partial<DraftStructure>) : null;
+    if (parsed && Array.isArray(parsed.options) && parsed.options.length > 0) {
+      const idx = Math.min(
+        Math.max(0, Number.parseInt(selection ?? "", 10) || 0),
+        parsed.options.length - 1,
+      );
+      const opt = parsed.options[idx];
+      if (opt && typeof opt.body === "string" && opt.body.trim()) {
+        const layout =
+          parsed.layout === "hooks-plus-body"
+            ? ("hooks-plus-body" as const)
+            : parsed.layout === "pick-one"
+              ? ("pick-one" as const)
+              : ("prose" as const);
+        return {
+          text: opt.body,
+          label: typeof opt.label === "string" && opt.label ? opt.label : "Draft",
+          layout,
+          threadBody:
+            layout === "hooks-plus-body" && typeof parsed.body === "string" && parsed.body.trim()
+              ? parsed.body
+              : undefined,
+        };
+      }
+    }
+  } catch {
+    /* fall through to whole-body */
+  }
+  return { text: body, label: "Draft", layout: "prose" as const };
+}
+
+export function buildRefinePrompt(kind: string, ctx: FanoutContext, target: RefineTarget): string {
+  const header = headerFor(ctx, true);
+  const vault = `\n\nVAULT CONTEXT:\n${ctx.vaultContext}`;
+  const craft = craftBlock(ctx.platforms, kind);
+  const craftSection = craft ? `\n\n${craft}` : "";
+  const task =
+    kind === "thread" && target.threadBody
+      ? `Revise this ONE hook post (under 280 characters) for the thread below. Output only the revised hook, no preamble, no numbering.\n\nHOOK TO REVISE:\n${target.text}\n\nTHREAD IT TOPS:\n${target.threadBody}`
+      : `Revise this ONE ${ctx.typeLabel.toLowerCase()} in full. Output only the revised piece, no preamble, no variants.\n\nPIECE TO REVISE:\n${target.text}`;
+  return `${header}\n\n${guideFor(kind)}\n\n${task}${craftSection}${vault}`;
+}
+
+// Redraft refines the picked option only — one call, not a fresh fan-out.
+// News pillars re-fetch at redraft time, so "be more specific" pulls fresh
+// detail. Appended as a new single-option version, never replaces.
 export async function runRedraftSlot(slotId: string, feedback: string): Promise<string> {
   const note = feedback.trim();
   if (!note) throw new Error("feedback is empty");
@@ -430,14 +508,45 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
   const client = getMetaClient(metaKey);
+  const target = refineTarget(slot.content_type, prev.body, prev.structure, prev.selection);
   const ctx = await buildFanoutContext(slot, prev.body, note);
-  const calls = buildFanoutPrompts(slot.content_type, ctx);
-  const assembled = assembleStructure(slot.content_type, await runFanout(client, slot.content_type, calls));
-  if (!assembled) {
-    throw new Error(`model returned an empty redraft (all ${calls.length} calls came back empty)`);
+  const prompt = buildRefinePrompt(slot.content_type, ctx, target);
+  const refined = (await callText(client, prompt)).trim();
+  if (!refined) {
+    throw new Error("model returned an empty redraft (the refine call came back empty)");
   }
-  saveFeedback(slotId, prev.id, note);
-  return saveDraft(slot.id, slot.content_type, assembled.body, assembled.structure);
+  if (overLimit(slot.content_type, refined) > 0) {
+    // Length guard without the fan-out repair loop: one tighter retry.
+    const retry = (
+      await callText(
+        client,
+        `${prompt}\n\nToo long — rewrite it under the limit, same angle, tighter. Output only the piece.`,
+      )
+    ).trim();
+    if (!retry) throw new Error("model returned an empty redraft (the refine call came back empty)");
+    return finishRedraft(slot, prev.id, note, target, retry);
+  }
+  return finishRedraft(slot, prev.id, note, target, refined);
+}
+
+function finishRedraft(
+  slot: SlotRow,
+  prevId: string,
+  note: string,
+  target: RefineTarget,
+  refined: string,
+): string {
+  const structure: DraftStructure = {
+    layout: target.layout,
+    options: [{ label: target.label, body: refined }],
+    ...(target.threadBody ? { body: target.threadBody } : {}),
+  };
+  const body =
+    target.layout === "hooks-plus-body" && target.threadBody
+      ? `Hook:\n${refined}\n\n---\n\nThread:\n${target.threadBody}`
+      : refined;
+  saveFeedback(slot.id, prevId, note);
+  return saveDraft(slot.id, slot.content_type, body, structure, "0");
 }
 
 export async function runDraftAll(

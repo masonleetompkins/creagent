@@ -1034,7 +1034,7 @@ export default function QueueConsole(): React.ReactNode {
                   <textarea
                     value={feedback.body}
                     onChange={(e) => setFeedback({ draftId: d.id, body: e.target.value })}
-                    placeholder="What should change? e.g. shorter hook, no emojis, more contrarian…"
+                    placeholder="What should change about your picked option? e.g. more specific facts, no emojis…"
                   />
                   <div className="row">
                     <button
