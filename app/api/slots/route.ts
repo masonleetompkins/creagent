@@ -5,6 +5,37 @@ import { getDb, nowIso } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+// Clears generated plan artifacts (slots + drafts + feedback + banked
+// options). Templates, pillars, and learnings are kept so the queue can be
+// regenerated immediately. Requires ?confirm=all as a footgun guard.
+export async function DELETE(request: Request): Promise<NextResponse> {
+  const url = new URL(request.url);
+  if (url.searchParams.get("confirm") !== "all") {
+    return NextResponse.json({ error: "add ?confirm=all to clear the queue" }, { status: 400 });
+  }
+  try {
+    const db = getDb();
+    const count = (t: string) =>
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+    const cleared = {
+      slots: count("queue_slots"),
+      drafts: count("drafts"),
+      feedback: count("draft_feedback"),
+      banked: count("option_bank"),
+    };
+    db.prepare(`DELETE FROM draft_feedback`).run();
+    db.prepare(`DELETE FROM drafts`).run();
+    db.prepare(`DELETE FROM option_bank`).run();
+    db.prepare(`DELETE FROM queue_slots`).run();
+    return NextResponse.json({ cleared });
+  } catch (error) {
+    return NextResponse.json(
+      { error: `database unavailable: ${(error as Error).message}` },
+      { status: 503 },
+    );
+  }
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const from = url.searchParams.get("from") ?? new Date(0).toISOString();

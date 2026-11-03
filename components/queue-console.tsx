@@ -457,6 +457,32 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
+  async function clearQueue(): Promise<void> {
+    if (
+      !window.confirm(
+        `Clear all ${slots.length} slots, every draft, and the option bank? Your queue setup, pillars, and style rules are kept.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    setError(null);
+    try {
+      const data = await readJson(await fetch("/api/slots?confirm=all", { method: "DELETE" }));
+      const c = (data.cleared ?? {}) as { slots?: number; drafts?: number };
+      setNote(
+        `Cleared ${c.slots ?? 0} slots and ${c.drafts ?? 0} drafts. Setup kept — Plan 14 days to regenerate.`,
+      );
+      setSelected(null);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function fillFromBank(): Promise<void> {
     setBusy(true);
     setNote(null);
@@ -814,6 +840,9 @@ export default function QueueConsole(): React.ReactNode {
           className={setupOpen ? "primary" : ""}
         >
           Queue setup
+        </button>
+        <button disabled={busy} className="danger" onClick={() => void clearQueue()}>
+          Clear queue
         </button>
         <span className="spacer" />
         <div className="seg">
