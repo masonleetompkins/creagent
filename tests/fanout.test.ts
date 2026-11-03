@@ -225,7 +225,7 @@ describe("runFanout news retry", () => {
       { key: "a", label: "A", role: "option" as const, prompt: "P" },
     ]);
     assert.equal(out.get("a"), "vague 1");
-    assert.equal(n, 1);
+    assert.equal(n, 2); // gen + taste-pass critic (scoreless verdict keeps the original)
   });
 });
 

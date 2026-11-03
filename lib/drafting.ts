@@ -16,6 +16,14 @@ import {
 } from "./platform-fit";
 import { craftBlock } from "./social-craft";
 import { buildNewsSection, fetchNews, needsNews } from "./news-ground";
+import {
+  ANTI_SLOP,
+  buildCriticPrompt,
+  buildVoiceExemplarSection,
+  CRITIC_THRESHOLD,
+  extractRevision,
+  parseCriticScore,
+} from "./taste";
 import { searchVault } from "./vault";
 
 export type DraftResult = {
@@ -95,7 +103,18 @@ export type DraftStructure = {
 // Fan-out: N single-purpose calls, structure assembled in code. The model
 // never emits JSON or numbered multi-part blobs — each call returns one
 // plain-text piece, so there is nothing brittle to parse.
-export type FanoutCall = { key: string; label: string; prompt: string; role: "option" | "body" };
+export type FanoutCall = {
+  key: string;
+  label: string;
+  prompt: string;
+  role: "option" | "body";
+  temperature?: number;
+};
+
+// Options diverge (raised temperature pushes variants off the mean);
+// bodies and repairs stay on the endpoint default for stability.
+export const OPTION_TEMPERATURE = 1.2;
+const CRITIC_TEMPERATURE = 0.3;
 
 const VARIANT_ANGLES = [
   { label: "Contrarian", instruction: "Lead with the most contrarian or surprising point." },
@@ -122,13 +141,15 @@ export type FanoutContext = {
   newsSection: string;
   newsy: boolean;
   vaultContext: string;
+  voiceExemplars?: string;
   previous?: string;
   feedback?: string;
 };
 
 function headerFor(ctx: FanoutContext, revising: boolean): string {
   const role = revising ? "revising a draft" : "the creator's ghostwriter";
-  let out = `You are ${role}.\n\n${ctx.voiceSection}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}`;
+  const exemplars = ctx.voiceExemplars ? `\n\n${ctx.voiceExemplars}` : "";
+  let out = `You are ${role}.\n\n${ctx.voiceSection}${exemplars}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}`;
   if (revising && ctx.previous) out += `\n\nPREVIOUS DRAFT:\n${ctx.previous}`;
   if (revising && ctx.feedback) {
     out += `\n\nCREATOR FEEDBACK (address every point):\n${ctx.feedback}\n\nKeep what the feedback doesn't touch; change everything it does.`;
@@ -143,12 +164,14 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
   const vault = `\n\nVAULT CONTEXT:\n${ctx.vaultContext}`;
   const craft = craftBlock(ctx.platforms, kind);
   const craftSection = craft ? `\n\n${craft}` : "";
+  const taste = `\n\n${ANTI_SLOP}`;
   if (kind === "short_post") {
     return VARIANT_ANGLES.map((a, i) => ({
       key: `variant-${i}`,
       label: a.label,
       role: "option" as const,
-      prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}\nSCOPE: this slot drafts ONE standalone post. The platform rules above may describe threads — ignore all thread advice for this slot; apply only single-post hook rules.${craftSection}${vault}`,
+      temperature: OPTION_TEMPERATURE,
+      prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}\nSCOPE: this slot drafts ONE standalone post. The platform rules above may describe threads — ignore all thread advice for this slot; apply only single-post hook rules.${craftSection}${vault}${taste}`,
     }));
   }
   if (kind === "thread") {
@@ -156,13 +179,14 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
       key: `hook-${i}`,
       label: a.label,
       role: "option" as const,
-      prompt: `${header}\n\nWrite exactly ONE hook post under 280 characters for a thread on this brief. Make it ${a.instruction} Output only the hook, no preamble, no numbering.${craftSection}${vault}`,
+      temperature: OPTION_TEMPERATURE,
+      prompt: `${header}\n\nWrite exactly ONE hook post under 280 characters for a thread on this brief. Make it ${a.instruction} Output only the hook, no preamble, no numbering.${craftSection}${vault}${taste}`,
     }));
     hooks.push({
       key: "thread-body",
       label: "Thread",
       role: "body" as const,
-      prompt: `${header}\n\n${guideFor(kind)}${craftSection}${vault}`,
+      prompt: `${header}\n\n${guideFor(kind)}${craftSection}${vault}${taste}`,
     });
     return hooks;
   }
@@ -171,7 +195,7 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
       key: "draft",
       label: "Draft",
       role: "body" as const,
-      prompt: `${header}\n\n${guideFor(kind)}${vault}`,
+      prompt: `${header}\n\n${guideFor(kind)}${vault}${taste}`,
     },
   ];
 }
@@ -285,6 +309,11 @@ async function buildFanoutContext(
     vaultContext: buildDraftContext(
       hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
     ),
+    voiceExemplars: buildVoiceExemplarSection(
+      slot.pillar_id,
+      slot.pillar_name,
+      parseSlotPlatforms(slot.platforms),
+    ),
     previous,
     feedback,
   };
@@ -295,20 +324,32 @@ type MetaClient = ReturnType<typeof getMetaClient>;
 // Medium effort, uncapped output: capped budgets starve the draft when
 // reasoning runs long (probed live), and drafts deserve full quality.
 // Returns "" when both attempts come back empty — the caller decides.
-async function callText(client: MetaClient, prompt: string): Promise<string> {
-  let resp = await client.responses.create(
-    { model: metaTextModel(), input: prompt, reasoning: { effort: "medium" } },
-    { timeout: 180000 },
-  );
+async function createText(client: MetaClient, prompt: string, temperature?: number) {
+  const base = { model: metaTextModel(), input: prompt, reasoning: { effort: "medium" as const } };
+  try {
+    return await client.responses.create(
+      temperature === undefined ? base : { ...base, temperature },
+      { timeout: 180000 },
+    );
+  } catch (err) {
+    // Endpoints that reject the temperature param still draft — retry plain.
+    if (temperature === undefined) throw err;
+    return await client.responses.create(base, { timeout: 180000 });
+  }
+}
+
+async function callText(
+  client: MetaClient,
+  prompt: string,
+  temperature?: number,
+): Promise<string> {
+  let resp = await createText(client, prompt, temperature);
   let body = resp.output_text.trim();
   if (!body) {
-    resp = await client.responses.create(
-      {
-        model: metaTextModel(),
-        input: `${prompt}\n\nYour previous response was empty. Write it now — no preamble.`,
-        reasoning: { effort: "medium" },
-      },
-      { timeout: 180000 },
+    resp = await createText(
+      client,
+      `${prompt}\n\nYour previous response was empty. Write it now — no preamble.`,
+      temperature,
     );
     body = resp.output_text.trim();
   }
@@ -333,7 +374,7 @@ export async function runFanout(
   newsy = false,
 ): Promise<Map<string, string>> {
   const entries = await Promise.all(
-    calls.map(async (c) => [c.key, await callText(client, c.prompt)] as const),
+    calls.map(async (c) => [c.key, await callText(client, c.prompt, c.temperature)] as const),
   );
   const out = new Map(entries);
   // Soft completeness pass for news options: a news post with no concrete
@@ -371,6 +412,29 @@ export async function runFanout(
       else out.delete(c.key);
     }
   }
+  // Taste pass: one critic score per surviving option; 3/5 or below earns
+  // a rewrite. Unparseable verdicts, errors, and over-limit rewrites keep
+  // the original — the critic can only improve, never destroy.
+  await Promise.all(
+    calls
+      .filter((x) => x.role === "option")
+      .map(async (c) => {
+        const body = (out.get(c.key) ?? "").trim();
+        if (!body) return;
+        let verdict = "";
+        try {
+          verdict = await callText(client, buildCriticPrompt(body), CRITIC_TEMPERATURE);
+        } catch {
+          return;
+        }
+        const score = parseCriticScore(verdict);
+        if (score === null || score > CRITIC_THRESHOLD) return;
+        const revision = extractRevision(verdict);
+        if (!revision) return;
+        if (limit && overLimit(kind, revision) > 0) return;
+        out.set(c.key, revision);
+      }),
+  );
   return out;
 }
 
