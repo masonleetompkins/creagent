@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { getVoice } from "./brain";
 import { CONTENT_TYPES, PLAYBOOK, type ContentType } from "./content";
 import { getDb, nowIso } from "./db";
+import { rulesFor, saveFeedback } from "./feedback";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
 import { searchVault } from "./vault";
@@ -65,11 +66,16 @@ async function draftOne(slot: SlotRow): Promise<void> {
   const context = buildDraftContext(
     hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
   );
+  const rules = rulesFor(slot.pillar_id, slot.content_type);
+  const rulesSection =
+    rules.length > 0
+      ? `\n\nHOUSE RULES (distilled from your past feedback — follow every one):\n${rules.map((r) => `- ${r.rule}`).join("\n")}`
+      : "";
 
   // Medium effort, uncapped output: capped budgets starve the draft when
   // reasoning runs long (probed live), and drafts deserve full quality.
   const client = getMetaClient(metaKey);
-  const input = `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`;
+  const input = `You are the creator's ghostwriter.\n\n${voiceSection}\n\n${pillarLine}${pillarVoice}\nContent type: ${typeLabel}\nPlatforms: ${slot.platforms}${rulesSection}\n\n${guideFor(slot.content_type)}\n\nVAULT CONTEXT:\n${context}`;
   const call = (text: string) =>
     client.responses.create(
       {
@@ -129,6 +135,94 @@ export async function runDraftSlot(slotId: string): Promise<void> {
   const slot = loadSlot(slotId);
   if (!slot) throw new Error("slot not found");
   await draftOne(slot);
+}
+
+// Pure redraft prompt: previous draft + the creator's note, same voice and
+// house rules as a fresh draft. The new draft is appended, never replaces.
+export function buildRedraftInput(
+  previous: string,
+  feedback: string,
+  voiceSection: string,
+  pillarLine: string,
+  typeLabel: string,
+  platforms: string,
+  rulesSection: string,
+): string {
+  return `You are the creator's ghostwriter revising a draft.
+
+${voiceSection}
+
+${pillarLine}
+Content type: ${typeLabel}
+Platforms: ${platforms}${rulesSection}
+
+PREVIOUS DRAFT:
+${previous}
+
+CREATOR FEEDBACK (address every point):
+${feedback}
+
+Rewrite the draft in full. Keep what the feedback doesn't touch; change everything it does. Output only the revised draft, no preamble.`;
+}
+
+function latestDraft(slotId: string): { id: string; body: string } | null {
+  return (
+    (getDb()
+      .prepare(`SELECT id, body FROM drafts WHERE slot_id = ? ORDER BY created_at DESC LIMIT 1`)
+      .get(slotId) as { id: string; body: string } | undefined) ?? null
+  );
+}
+
+export async function runRedraftSlot(slotId: string, feedback: string): Promise<string> {
+  const note = feedback.trim();
+  if (!note) throw new Error("feedback is empty");
+  const slot = loadSlot(slotId);
+  if (!slot) throw new Error("slot not found");
+  const prev = latestDraft(slotId);
+  if (!prev) throw new Error("draft this slot before giving feedback");
+  const metaKey = loadKeys().meta;
+  if (!metaKey) throw new Error("save a Meta key in Settings first");
+  const voice = getVoice();
+  const voiceSection = voice
+    ? `VOICE PROFILE (match every rule below exactly):\n${voice.body.slice(0, 6000)}`
+    : "(no voice profile yet — write in a clear, confident creator voice)";
+  const pillarLine = slot.pillar_name ? `Pillar: ${slot.pillar_name}` : "Pillar: (none assigned)";
+  const typeLabel =
+    (CONTENT_TYPES as Record<string, { label: string }>)[slot.content_type]?.label ??
+    slot.content_type;
+  const rules = rulesFor(slot.pillar_id, slot.content_type);
+  const rulesSection =
+    rules.length > 0
+      ? `\n\nHOUSE RULES (distilled from your past feedback — follow every one):\n${rules.map((r) => `- ${r.rule}`).join("\n")}`
+      : "";
+  const client = getMetaClient(metaKey);
+  const input = buildRedraftInput(
+    prev.body,
+    note,
+    voiceSection,
+    pillarLine,
+    typeLabel,
+    slot.platforms,
+    rulesSection,
+  );
+  const call = (text: string) =>
+    client.responses.create(
+      { model: metaTextModel(), input: text, reasoning: { effort: "medium" } },
+      { timeout: 180000 },
+    );
+  let resp = await call(input);
+  let body = resp.output_text.trim();
+  if (!body) {
+    resp = await call(`${input}\n\nYour previous response was empty. Write the revised draft now — no preamble.`);
+    body = resp.output_text.trim();
+  }
+  if (!body) {
+    throw new Error(
+      `model returned an empty redraft (status: ${String((resp as { status?: unknown }).status ?? "unknown")})`,
+    );
+  }
+  saveFeedback(slotId, prev.id, note);
+  return saveDraft(slot.id, slot.content_type, body);
 }
 
 export async function runDraftAll(

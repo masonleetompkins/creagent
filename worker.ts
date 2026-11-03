@@ -6,7 +6,8 @@ import { runCarouselImage } from "./lib/carousel-image";
 import { runAutopick, runPlanImages } from "./lib/carousel-plan";
 import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
-import { runDraftAll, runDraftSlot } from "./lib/drafting";
+import { runDraftAll, runDraftSlot, runRedraftSlot } from "./lib/drafting";
+import { distillSlotFeedback } from "./lib/feedback";
 import { runMigrations } from "./scripts/migrate";
 import {
   isIngestSource,
@@ -121,6 +122,20 @@ async function dispatch(job: JobRow): Promise<unknown> {
     if (typeof slotId !== "string" || !slotId) throw new Error("slotId is required");
     await runDraftSlot(slotId);
     return { drafted: 1 };
+  }
+  if (job.name === "redraft_slot") {
+    const { slotId, feedback } = data;
+    if (typeof slotId !== "string" || !slotId) throw new Error("slotId is required");
+    if (typeof feedback !== "string" || !feedback.trim()) throw new Error("feedback is empty");
+    updateProgress(job.id, { stage: "Rewriting with your feedback…" });
+    const draftId = await runRedraftSlot(slotId, feedback);
+    return { redrafted: 1, draftId };
+  }
+  if (job.name === "distill_feedback") {
+    const { slotId } = data;
+    if (typeof slotId !== "string" || !slotId) throw new Error("slotId is required");
+    const added = await distillSlotFeedback(slotId);
+    return { rulesAdded: added };
   }
   if (job.name === "sync_metrics") {
     let backfill: unknown = null;

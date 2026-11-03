@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isContentType, isSlotStatus, PLATFORMS } from "@/lib/content";
 import { getDb } from "@/lib/db";
+import { enqueue } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,20 @@ export async function PATCH(
       );
     if (result.changes === 0) {
       return NextResponse.json({ error: "slot not found" }, { status: 404 });
+    }
+    if (status === "green") {
+      // Approving banks the slot's revision feedback into style rules
+      // (async — the click stays instant).
+      try {
+        const n = (
+          getDb()
+            .prepare(`SELECT COUNT(*) AS n FROM draft_feedback WHERE slot_id = ?`)
+            .get(id) as { n: number }
+        ).n;
+        if (n > 0) enqueue("distill_feedback", { slotId: id });
+      } catch {
+        /* distill is best-effort; the approval stands */
+      }
     }
     return NextResponse.json({ ok: true });
   } catch (error) {

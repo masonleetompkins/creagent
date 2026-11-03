@@ -169,7 +169,7 @@ export default function QueueConsole(): React.ReactNode {
     },
     [],
   );
-  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ draftId: string; body: string } | null>(null);
   const [form, setForm] = useState({
     weekday: "1",
     time: "09:00",
@@ -298,6 +298,11 @@ export default function QueueConsole(): React.ReactNode {
       });
       setAttachments((files.attachments as Attachment[]) ?? []);
       setGenRequests((reqs.requests as GenRequest[]) ?? []);
+      requestAnimationFrame(() => {
+        document
+          .querySelector(".slot-inspector")
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -375,6 +380,34 @@ export default function QueueConsole(): React.ReactNode {
       await openSlot(selected.id);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function sendFeedback(slotId: string): Promise<void> {
+    if (!selected || !feedback || feedback.body.trim().length === 0) return;
+    setBusy(true);
+    setNote(null);
+    setError(null);
+    setJobProgress({ done: 0, total: 0 });
+    try {
+      const started = await readJson(
+        await fetch("/api/draft/redraft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slotId, feedback: feedback.body }),
+        }),
+      );
+      const done = await pollJob(started.jobId as string);
+      if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
+      setFeedback(null);
+      setNote(`Regenerated with your feedback. ${(done.result as { hint?: string })?.hint ?? ""}`.trim());
+      await refresh();
+      await openSlot(slotId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+      setJobProgress(null);
     }
   }
 
@@ -719,7 +752,7 @@ export default function QueueConsole(): React.ReactNode {
           </button>
         </div>
       ) : null}
-      <div className={selected ? "queue-layout" : "queue-layout solo"}>
+      <div className="queue-layout solo">
       <div>
       <div className="cal" style={{ marginBottom: 0 }}>
         {DAYS.map((d) => (
@@ -730,11 +763,8 @@ export default function QueueConsole(): React.ReactNode {
         {days.map((day) => {
           const daySlots = byDay(day);
           const dayHistory = historyByDay(day);
-          const expanded = expandedDay === day.toISOString();
-          const slotCap = expanded ? 99 : view === "week" ? 4 : 3;
-          const histCap = expanded ? 99 : view === "week" ? 3 : 2;
-          const shown = daySlots.slice(0, slotCap);
-          const shownHistory = dayHistory.slice(0, histCap);
+          const shown = daySlots;
+          const shownHistory = dayHistory;
           const now = new Date();
           const isToday =
             day.getFullYear() === now.getFullYear() &&
@@ -766,11 +796,6 @@ export default function QueueConsole(): React.ReactNode {
                   ) : null}
                 </button>
               ))}
-              {shown.length < daySlots.length ? (
-                <button className="chip-more" onClick={() => setExpandedDay(day.toISOString())}>
-                  +{daySlots.length - shown.length} slots
-                </button>
-              ) : null}
               {dayHistory.length > 0 ? <div className="posted-label">Posted</div> : null}
               {shownHistory.map((a) => {
                 const when = new Date(a.posted_at ?? a.created_at);
@@ -799,11 +824,6 @@ export default function QueueConsole(): React.ReactNode {
                   </span>
                 );
               })}
-              {shownHistory.length < dayHistory.length ? (
-                <button className="chip-more" onClick={() => setExpandedDay(day.toISOString())}>
-                  +{dayHistory.length - shownHistory.length} posted
-                </button>
-              ) : null}
             </div>
           );
         })}
@@ -862,15 +882,36 @@ export default function QueueConsole(): React.ReactNode {
             <button onClick={() => void removeSlot(selected.id)}>Delete</button>
             <button onClick={() => setSelected(null)}>Close</button>
           </div>
-          {(selected.drafts ?? []).map((d) => (
+          {(selected.drafts ?? []).map((d, i) => (
             <div key={d.id}>
               <h2>
-                Draft ({typeLabel(d.kind)}){d.status === "edited" ? " — edited" : ""}
+                Draft{(selected.drafts ?? []).length > 1 ? ` ${i + 1}` : ""} ({typeLabel(d.kind)})
+                {d.status === "edited" ? " — edited" : ""}
               </h2>
               <p className="draftbody">{d.body}</p>
               <div className="row">
                 <button onClick={() => setEditing({ id: d.id, body: d.body })}>Edit</button>
+                <button onClick={() => setFeedback({ draftId: d.id, body: "" })}>Feedback</button>
               </div>
+              {feedback && feedback.draftId === d.id ? (
+                <div className="feedback-form">
+                  <textarea
+                    value={feedback.body}
+                    onChange={(e) => setFeedback({ draftId: d.id, body: e.target.value })}
+                    placeholder="What should change? e.g. shorter hook, no emojis, more contrarian…"
+                  />
+                  <div className="row">
+                    <button
+                      className="primary"
+                      disabled={busy || feedback.body.trim().length === 0}
+                      onClick={() => void sendFeedback(selected.id)}
+                    >
+                      Regenerate
+                    </button>
+                    <button onClick={() => setFeedback(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ))}
           {genRequests.length > 0 ? (

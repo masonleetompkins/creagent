@@ -19,6 +19,7 @@ function post(partial: Partial<MetricPost>): MetricPost {
     views: null,
     posted_at: null,
     collected_at: "2026-10-26T00:00:00.000Z",
+    is_reply: 0,
     ...partial,
   };
 }

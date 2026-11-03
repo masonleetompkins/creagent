@@ -184,6 +184,18 @@ export const AGENT_TOOLS: ToolDef[] = [
       }),
   },
   {
+    name: "redraft_slot",
+    description: "Regenerate a slot's draft from revision feedback (appends a new draft version).",
+    parameters: objParam({ slotId: S("Slot UUID"), feedback: S("What should change") }, ["slotId", "feedback"]),
+    run: async (a) =>
+      safe(async () => ({
+        jobId: enqueue("redraft_slot", {
+          slotId: uuid(a.slotId, "slotId"),
+          feedback: str(a.feedback, "feedback"),
+        }),
+      })),
+  },
+  {
     name: "list_pillars",
     description: "Content pillars with ids, names, descriptions, voice notes, and confirmed flags.",
     parameters: objParam({}),
