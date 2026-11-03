@@ -233,7 +233,12 @@ export default function QueueConsole(): React.ReactNode {
   const [selected, setSelected] = useState<(Slot & { drafts?: Draft[] }) | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [genRequests, setGenRequests] = useState<GenRequest[]>([]);
-  const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
+  const [editing, setEditing] = useState<{
+    id: string;
+    body: string;
+    target: number | "thread" | null;
+    title: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -591,11 +596,17 @@ export default function QueueConsole(): React.ReactNode {
   async function saveEdit(): Promise<void> {
     if (!editing || !selected) return;
     try {
+      const payload =
+        editing.target === null
+          ? { body: editing.body }
+          : editing.target === "thread"
+            ? { threadBody: editing.body }
+            : { optionIndex: editing.target, body: editing.body };
       await readJson(
         await fetch(`/api/drafts/${editing.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body: editing.body }),
+          body: JSON.stringify(payload),
         }),
       );
       setEditing(null);
@@ -1370,7 +1381,30 @@ export default function QueueConsole(): React.ReactNode {
                 nextStep={nextStep}
                 limit={slotCap(selected.platforms)}
                 onSelect={(idx) => void selectOption(d.id, idx)}
-                onEdit={() => setEditing({ id: d.id, body: d.body })}
+                onEdit={(target) => {
+                  if (target === null || !structure) {
+                    setEditing({ id: d.id, body: d.body, target: null, title: "Edit draft" });
+                  } else if (target === "thread") {
+                    setEditing({
+                      id: d.id,
+                      body: structure.body ?? d.body,
+                      target: "thread",
+                      title: "Edit thread",
+                    });
+                  } else {
+                    const opt = structure.options[target];
+                    if (!opt) {
+                      setEditing({ id: d.id, body: d.body, target: null, title: "Edit draft" });
+                    } else {
+                      setEditing({
+                        id: d.id,
+                        body: opt.body,
+                        target,
+                        title: `Edit option — ${opt.label}`,
+                      });
+                    }
+                  }
+                }}
                 onFeedback={() => setFeedback({ draftId: d.id, body: "", standing: false })}
               />
               {feedback && feedback.draftId === d.id ? (
@@ -1471,11 +1505,11 @@ export default function QueueConsole(): React.ReactNode {
           {editing ? (
             <div className="overlay" role="dialog" aria-label="Edit draft">
               <div className="dialog">
-                <h2>Edit draft</h2>
+                <h2>{editing.title}</h2>
                 <textarea
                   rows={14}
                   value={editing.body}
-                  onChange={(e) => setEditing({ id: editing.id, body: e.target.value })}
+                  onChange={(e) => setEditing({ ...editing, body: e.target.value })}
                 />
                 {(() => {
                   const thread = isThreadKind(selected.content_type);

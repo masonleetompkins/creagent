@@ -262,3 +262,82 @@ describe("saveDraft structure", () => {
     assert.equal(row.selection, null);
   });
 });
+
+describe("scoped draft edits", () => {
+  async function seed(structure: unknown): Promise<string> {
+    const { saveDraft } = await import("../lib/drafting");
+    const { getDb, nowIso } = await import("../lib/db");
+    const db = getDb();
+    const slotId = randomUUID();
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, brief, created_at)
+       VALUES (?, ?, 'short_post', '[]', 'red', '{}', ?)`,
+    ).run(slotId, new Date(Date.now() + 3600000).toISOString(), nowIso());
+    return saveDraft(
+      slotId,
+      "short_post",
+      "seed",
+      structure as { layout: "pick-one"; options: Array<{ label: string; body: string }> },
+    );
+  }
+
+  it("updates one option, keeps the rest and the layout", async () => {
+    const { updateDraftOption } = await import("../lib/drafting");
+    const { getDb } = await import("../lib/db");
+    const id = await seed({
+      layout: "pick-one",
+      options: [
+        { label: "A", body: "first" },
+        { label: "B", body: "second" },
+      ],
+    });
+    updateDraftOption(id, 1, "  second, sharper  ");
+    const row = getDb()
+      .prepare(`SELECT body, structure, status FROM drafts WHERE id = ?`)
+      .get(id) as { body: string; structure: string; status: string };
+    const parsed = JSON.parse(row.structure) as { layout: string; options: Array<{ body: string }> };
+    assert.equal(parsed.layout, "pick-one");
+    assert.equal(parsed.options[0].body, "first");
+    assert.equal(parsed.options[1].body, "second, sharper");
+    assert.ok(row.body.includes("second, sharper"));
+    assert.equal(row.status, "edited");
+  });
+
+  it("rejects bad indexes and missing drafts", async () => {
+    const { updateDraftOption } = await import("../lib/drafting");
+    const id = await seed({ layout: "pick-one", options: [{ label: "A", body: "first" }] });
+    assert.throws(() => updateDraftOption(id, 3, "x"), /that option is gone/);
+    assert.throws(() => updateDraftOption(id, 0, "   "), /edited text is empty/);
+    assert.throws(() => updateDraftOption(randomUUID(), 0, "x"), /draft not found/);
+  });
+
+  it("updates the thread body, keeps the hooks", async () => {
+    const { updateDraftThreadBody } = await import("../lib/drafting");
+    const { getDb } = await import("../lib/db");
+    const id = await seed({
+      layout: "hooks-plus-body",
+      options: [{ label: "H1", body: "hook" }],
+      body: "1/ Old.",
+    });
+    updateDraftThreadBody(id, "1/ New.\n\n2/ More.");
+    const row = getDb()
+      .prepare(`SELECT body, structure FROM drafts WHERE id = ?`)
+      .get(id) as { body: string; structure: string };
+    const parsed = JSON.parse(row.structure) as { body: string; options: Array<{ body: string }> };
+    assert.equal(parsed.options[0].body, "hook");
+    assert.equal(parsed.body, "1/ New.\n\n2/ More.");
+    assert.ok(row.body.includes("2/ More."));
+  });
+
+  it("rebuildBody mirrors the assemble formats", async () => {
+    const { rebuildBody } = await import("../lib/drafting");
+    assert.equal(
+      rebuildBody({ layout: "pick-one", options: [{ label: "A", body: "x" }] }),
+      "Option 1 (A):\nx",
+    );
+    assert.equal(
+      rebuildBody({ layout: "prose", options: [{ label: "D", body: "solo" }] }),
+      "solo",
+    );
+  });
+});

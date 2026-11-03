@@ -27,7 +27,8 @@ type Props = {
   // Tightest platform cap for N/Total counts; null shows bare counts.
   limit?: number | null;
   onSelect: (index: number) => void;
-  onEdit: () => void;
+  // Edit target: an option index, the thread body, or the whole draft.
+  onEdit: (target: number | "thread" | null) => void;
   onFeedback: () => void;
 };
 
@@ -184,7 +185,16 @@ export default function DraftReview(props: Props): React.ReactNode {
         </div>
       ) : null}
       <div className="row">
-        <button onClick={props.onEdit}>Edit</button>
+        {layout === "pick-one" ? (
+          <button onClick={() => props.onEdit(selection)}>Edit picked</button>
+        ) : null}
+        {layout === "hooks-plus-body" ? (
+          <>
+            <button onClick={() => props.onEdit(selection)}>Edit hook</button>
+            {threadBody ? <button onClick={() => props.onEdit("thread")}>Edit thread</button> : null}
+          </>
+        ) : null}
+        {layout === "prose" ? <button onClick={() => props.onEdit(null)}>Edit</button> : null}
         <button onClick={props.onFeedback}>Feedback</button>
         {bankable ? (
           <button

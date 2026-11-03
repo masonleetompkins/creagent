@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { getVoice } from "./brain";
 import { CONTENT_TYPES, PLAYBOOK, type ContentType } from "./content";
 import { getDb, nowIso } from "./db";
+import { parseStructure } from "./draft-structure";
 import { rulesFor, saveFeedback } from "./feedback";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
@@ -478,6 +479,66 @@ export async function runRedraftSet(slotId: string, feedback: string): Promise<s
   }
   saveFeedback(slotId, prev.id, note);
   return saveDraft(slot.id, slot.content_type, assembled.body, assembled.structure);
+}
+
+// Rebuild the assembled body column from an edited structure, mirroring
+// assembleStructure's formats so the legacy column never goes stale.
+export function rebuildBody(structure: DraftStructure): string {
+  if (structure.layout === "pick-one") {
+    return structure.options
+      .map((o, i) => `Option ${i + 1} (${o.label}):\n${o.body}`)
+      .join("\n\n---\n\n");
+  }
+  if (structure.layout === "hooks-plus-body") {
+    return `Hook options:\n${structure.options.map((o, i) => `${i + 1}. ${o.body}`).join("\n")}\n\n---\n\nThread:\n${structure.body ?? ""}`;
+  }
+  return structure.options[0]?.body ?? "";
+}
+
+// Option-scoped edit: replace one option's text, keep the layout and the
+// other options. Throws "draft not found" (404) or a 422 reason.
+export function updateDraftOption(draftId: string, index: number, text: string): void {
+  const clean = text.trim();
+  if (!clean) throw new Error("edited text is empty");
+  const row = getDb().prepare(`SELECT structure FROM drafts WHERE id = ?`).get(draftId) as
+    | { structure: string | null }
+    | undefined;
+  if (!row) throw new Error("draft not found");
+  const parsed = parseStructure(row.structure);
+  if (!parsed || !Number.isInteger(index) || index < 0 || index >= parsed.options.length) {
+    throw new Error("that option is gone — re-draft to edit");
+  }
+  const structure: DraftStructure = {
+    layout: parsed.layout,
+    options: parsed.options.map((o) => ({ ...o })),
+    body: parsed.body,
+  };
+  structure.options[index].body = clean;
+  getDb()
+    .prepare(`UPDATE drafts SET body = ?, structure = ?, status = 'edited' WHERE id = ?`)
+    .run(rebuildBody(structure), JSON.stringify(structure), draftId);
+}
+
+// Thread-body edit: replace the posts under the hooks, keep the hooks.
+export function updateDraftThreadBody(draftId: string, text: string): void {
+  const clean = text.trim();
+  if (!clean) throw new Error("edited text is empty");
+  const row = getDb().prepare(`SELECT structure FROM drafts WHERE id = ?`).get(draftId) as
+    | { structure: string | null }
+    | undefined;
+  if (!row) throw new Error("draft not found");
+  const parsed = parseStructure(row.structure);
+  if (!parsed || parsed.layout !== "hooks-plus-body") {
+    throw new Error("no thread body on this draft");
+  }
+  const structure: DraftStructure = {
+    layout: parsed.layout,
+    options: parsed.options.map((o) => ({ ...o })),
+    body: clean,
+  };
+  getDb()
+    .prepare(`UPDATE drafts SET body = ?, structure = ?, status = 'edited' WHERE id = ?`)
+    .run(rebuildBody(structure), JSON.stringify(structure), draftId);
 }
 
 export function saveDraft(

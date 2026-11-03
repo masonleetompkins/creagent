@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { updateDraftOption, updateDraftThreadBody } from "@/lib/drafting";
 
 export const dynamic = "force-dynamic";
 
@@ -17,12 +18,52 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const { body: text, selection } = body as { body?: unknown; selection?: unknown };
+  const {
+    body: text,
+    selection,
+    optionIndex,
+    threadBody,
+  } = body as {
+    body?: unknown;
+    selection?: unknown;
+    optionIndex?: unknown;
+    threadBody?: unknown;
+  };
   if (selection !== undefined && typeof selection !== "string") {
     return NextResponse.json({ error: "selection must be a string" }, { status: 400 });
   }
   if (text !== undefined && (typeof text !== "string" || !text.trim())) {
     return NextResponse.json({ error: "body must be a non-empty string" }, { status: 400 });
+  }
+  if (threadBody !== undefined && (typeof threadBody !== "string" || !threadBody.trim())) {
+    return NextResponse.json({ error: "threadBody must be a non-empty string" }, { status: 400 });
+  }
+  if (
+    optionIndex !== undefined &&
+    (typeof optionIndex !== "number" || !Number.isInteger(optionIndex))
+  ) {
+    return NextResponse.json({ error: "optionIndex must be an integer" }, { status: 400 });
+  }
+  // Scoped edits keep the structure (other options survive); whole-body
+  // edits still clear it to clean prose.
+  if (optionIndex !== undefined || threadBody !== undefined) {
+    try {
+      if (optionIndex !== undefined) {
+        if (typeof text !== "string") {
+          return NextResponse.json({ error: "body is required with optionIndex" }, { status: 400 });
+        }
+        updateDraftOption(id, optionIndex, text);
+      } else {
+        updateDraftThreadBody(id, threadBody as string);
+      }
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message.includes("not found")) {
+        return NextResponse.json({ error: message }, { status: 404 });
+      }
+      return NextResponse.json({ error: message }, { status: 422 });
+    }
   }
   if (text === undefined && selection === undefined) {
     return NextResponse.json({ error: "nothing to update" }, { status: 400 });
