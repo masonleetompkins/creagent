@@ -121,6 +121,29 @@ describe("pillar exemplars and tic bans", () => {
     assert.match(section, /HARD RULE: this pillar never uses/);
   });
 
+  it("picks a high-effort flop as contrast, never a lazy one", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { pillarFlop } = await import("../lib/platform-fit");
+    const db = getDb();
+    const pillar = randomUUID();
+    db.prepare(`INSERT INTO pillars (id, name, created_at) VALUES (?, 'Flop', ?)`).run(pillar, nowIso());
+    const asset = (title: string, mult: number, video = 0, pad = "") => {
+      db.prepare(
+        `INSERT INTO assets (id, source, title, transcript, is_video, created_at, is_reply, pillar_id, multiplier)
+         VALUES (?, 'zernio_twitter', ?, ?, ?, ?, 0, ?, ?)`,
+      ).run(randomUUID(), title, pad, video, nowIso(), pillar, mult);
+    };
+    asset("winner", 3.0);
+    asset("mid", 1.0);
+    asset("lazy flop", 0.1);
+    asset("tryhard flop with a long thoughtful take", 0.2, 0, "x".repeat(2000));
+    asset("video mid", 1.2, 1);
+    const flop = pillarFlop(pillar);
+    assert.equal(flop?.multiple, 0.2);
+    assert.match(flop?.title ?? "", /tryhard flop/);
+    assert.equal(pillarFlop(randomUUID()), null);
+  });
+
   it("leaves ELI5 pillars alone and stays silent without data", async () => {
     const { getDb, nowIso } = await import("../lib/db");
     const { buildPillarSection, pillarTicBans } = await import("../lib/platform-fit");

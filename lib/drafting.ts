@@ -15,6 +15,7 @@ import {
   platformFitFor,
 } from "./platform-fit";
 import { craftBlock } from "./social-craft";
+import { buildNewsSection, fetchNews, needsNews } from "./news-ground";
 import { searchVault } from "./vault";
 
 export type DraftResult = {
@@ -118,6 +119,7 @@ export type FanoutContext = {
   rulesSection: string;
   fitSection: string;
   pillarSection: string;
+  newsSection: string;
   vaultContext: string;
   previous?: string;
   feedback?: string;
@@ -125,7 +127,7 @@ export type FanoutContext = {
 
 function headerFor(ctx: FanoutContext, revising: boolean): string {
   const role = revising ? "revising a draft" : "the creator's ghostwriter";
-  let out = `You are ${role}.\n\n${ctx.voiceSection}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}`;
+  let out = `You are ${role}.\n\n${ctx.voiceSection}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}`;
   if (revising && ctx.previous) out += `\n\nPREVIOUS DRAFT:\n${ctx.previous}`;
   if (revising && ctx.feedback) {
     out += `\n\nCREATOR FEEDBACK (address every point):\n${ctx.feedback}\n\nKeep what the feedback doesn't touch; change everything it does.`;
@@ -247,8 +249,22 @@ async function buildFanoutContext(
   // The voice profile is injected directly — never left to retrieval luck.
   const fit = fitForSlot(slot);
   const query = `${slot.pillar_name ?? ""} ${typeLabel} ${(slot.content_type as ContentType) ?? ""}`.trim();
-  const hits = await searchVault(query || "voice", 5);
+  const newsy = needsNews(slot.pillar_name, slot.pillar_desc);
+  const [hits, newsItems] = await Promise.all([
+    searchVault(query || "voice", 5),
+    (async () => {
+      if (!newsy || !slot.pillar_name) return null;
+      const braveKey = loadKeys().brave;
+      if (!braveKey) return [];
+      try {
+        return await fetchNews(braveKey, slot.pillar_name);
+      } catch {
+        return [];
+      }
+    })(),
+  ]);
   const rules = rulesFor(slot.pillar_id, slot.content_type);
+  const newsSection = newsItems === null ? "" : `\n\n${buildNewsSection(newsItems)}`;
   return {
     voiceSection: voiceSectionFor(fit.weak, fit.pillarFormat),
     pillarLine,
@@ -262,6 +278,7 @@ async function buildFanoutContext(
         : "",
     fitSection: fit.fitSection,
     pillarSection: fit.pillarSection,
+    newsSection,
     vaultContext: buildDraftContext(
       hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
     ),

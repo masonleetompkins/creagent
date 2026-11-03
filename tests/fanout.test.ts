@@ -21,6 +21,7 @@ const CTX = {
   rulesSection: "",
   fitSection: "",
   pillarSection: "",
+  newsSection: "",
   vaultContext: "(vault is empty)",
 };
 

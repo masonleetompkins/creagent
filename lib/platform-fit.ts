@@ -121,6 +121,41 @@ export function pillarTicBans(pillarId: string | null): string[] {
   return TIC_DEFS.filter((t) => !t.pattern.test(corpus)).map((t) => t.name);
 }
 
+// Instructive flop: a high-effort post that still flopped. Lazy flops teach
+// nothing, so the pick must clear the pillar's median effort — length plus
+// a video bonus as the effort proxy. Shown as contrast, never alone:
+// models prime on what they read, so the winner stays the target.
+export type PillarFlop = { title: string; multiple: number };
+
+export function pillarFlop(pillarId: string | null): PillarFlop | null {
+  if (!pillarId) return null;
+  const rows = getDb()
+    .prepare(
+      `SELECT title, transcript, is_video, multiplier FROM assets
+       WHERE pillar_id = ? AND is_reply = 0 AND multiplier IS NOT NULL LIMIT 60`,
+    )
+    .all(pillarId) as Array<{
+    title: string | null;
+    transcript: string | null;
+    is_video: number;
+    multiplier: number;
+  }>;
+  if (rows.length < 5) return null;
+  const effort = (r: { title: string | null; transcript: string | null; is_video: number }): number =>
+    (r.title ?? "").length + (r.transcript ?? "").length + (r.is_video ? 2000 : 0);
+  const sorted = rows.map(effort).sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const flops = rows
+    .filter((r) => (r.multiplier ?? 99) < 0.5 && effort(r) >= median)
+    .sort((a, b) => effort(b) - effort(a) || (a.multiplier ?? 0) - (b.multiplier ?? 0));
+  const pick = flops[0];
+  if (!pick || pick.multiplier === null) return null;
+  return {
+    title: trimText(pick.title ?? pick.transcript ?? "", 120) || "(untitled post)",
+    multiple: pick.multiplier,
+  };
+}
+
 export function buildPillarSection(
   pillarId: string | null,
   pillarName: string | null,
@@ -129,10 +164,16 @@ export function buildPillarSection(
   if (!pillarId || !pillarName) return { section: "", hasFormat: false };
   const exemplars = pillarExemplars(pillarId, platforms);
   const bans = pillarTicBans(pillarId);
+  const flop = exemplars.length > 0 ? pillarFlop(pillarId) : null;
   if (exemplars.length === 0 && bans.length === 0) return { section: "", hasFormat: false };
   const lines = [`THIS PILLAR'S WINNERS ("${pillarName}" — match THIS format; your other pillars' formats don't apply here):`];
   for (const e of exemplars) {
     lines.push(`- "${e.title}" (${e.multiple}x).`);
+  }
+  if (flop) {
+    lines.push(
+      `- YOUR FLOP (${flop.multiple}x despite real effort): "${flop.title}" — same pillar, same author. Match the winners' instincts above, not this one's.`,
+    );
   }
   for (const ban of bans) {
     lines.push(`- HARD RULE: this pillar never uses ${ban} — do not use it here.`);
