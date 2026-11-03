@@ -97,6 +97,7 @@ type PublishHistoryRow = {
 };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // Mirrors IN_FLIGHT in lib/publish — receipts Zernio still holds.
 const IN_FLIGHT = new Set(["scheduled", "pending", "processing", "uploading", "publishing"]);
@@ -195,13 +196,6 @@ function fitStat(
   return pillars.find((p) => p.id === pillarId)?.byPlatform?.[platform] ?? null;
 }
 
-function fitMark(pillars: Pillar[], pillarId: string, platform: string): string {
-  const st = fitStat(pillars, pillarId, platform);
-  if (!st || st.multiplier === null) return " · no data";
-  const flag = st.multiplier < 0.7 && st.posts > 0 ? " ⚠" : "";
-  return ` · ${st.multiplier}x${flag}`;
-}
-
 function isWeakStat(st: { posts: number; multiplier: number | null } | null): boolean {
   return !!st && st.multiplier !== null && st.posts > 0 && st.multiplier < 0.7;
 }
@@ -267,12 +261,13 @@ export default function QueueConsole(): React.ReactNode {
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
-  const [adding, setAdding] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({
     weekday: "1",
     time: "09:00",
     pillar_id: "",
     content_type: "short_post",
+    platforms: [] as string[],
   });
 
   const weekStart = useCallback(() => {
@@ -716,10 +711,14 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
-  async function addTemplate(platform: string): Promise<void> {
+  async function addTemplate(): Promise<void> {
     const days =
       draft.weekday === "all" ? [0, 1, 2, 3, 4, 5, 6] : [Number(draft.weekday)];
-    const plats = [platform];
+    const plats = draft.platforms.slice().sort();
+    if (plats.length === 0) {
+      setNote("Check at least one platform — nothing added.");
+      return;
+    }
     let created = 0;
     let skipped = 0;
     try {
@@ -755,7 +754,7 @@ export default function QueueConsole(): React.ReactNode {
           ? "Those slots already exist — nothing added."
           : `Added ${created} slot${created === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} already existed)` : ""}.`,
       );
-      if (created > 0) setAdding(null);
+      if (created > 0) setAdding(false);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -844,6 +843,25 @@ export default function QueueConsole(): React.ReactNode {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ pillar_id: pillarId || null }),
+            }),
+          ),
+        ),
+      );
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function setTemplatePlatforms(ids: string[], platforms: string[]): Promise<void> {
+    try {
+      await Promise.all(
+        ids.map(async (id) =>
+          readJson(
+            await fetch(`/api/templates/${id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ platforms }),
             }),
           ),
         ),
@@ -1421,10 +1439,10 @@ export default function QueueConsole(): React.ReactNode {
             </button>
           </div>
           <p className="muted">
-            Posting times per platform, broken down by day. Pillar multiples
-            are measured against each platform&apos;s median (1.0x = average);
-            ⚠ marks combos under 0.7x. The planner materializes these into
-            calendar slots.
+            Posting times, broken down by day. Each row ships one post to
+            every checked platform. Pillar multiples are measured per platform
+            (1.0x = average); ⚠ marks combos under 0.7x. The planner
+            materializes these into calendar slots.
           </p>
           <section className="keycard slim">
             <div className="row">
@@ -1456,17 +1474,28 @@ export default function QueueConsole(): React.ReactNode {
             {agentBusy ? <p className="muted">The agent is setting up your queue…</p> : null}
             {agentNote ? <p className="note ok">{agentNote}</p> : null}
           </section>
-          {PLATFORMS.map((pl) => {
-            const label = PLAT_LABEL[pl] ?? pl;
-            const mine = templates.filter((t) => parsePlatforms(t.platforms).includes(pl));
+          {(() => {
+            const known = new Set<string>([...PLATFORMS]);
             const groups = new Map<string, Template[]>();
-            for (const t of mine) {
+            for (const t of templates) {
               const key = `${t.time}|${t.pillar_id ?? ""}|${t.content_type}|${parsePlatforms(t.platforms).slice().sort().join(",")}`;
               const g = groups.get(key) ?? [];
               g.push(t);
               groups.set(key, g);
             }
-            const rows: React.ReactNode[] = [];
+            const daily: Template[][] = [];
+            const byDay: Template[][] = [[], [], [], [], [], [], []];
+            for (const g of groups.values()) {
+              if (new Set(g.map((t) => t.weekday)).size === 7) daily.push(g);
+              else for (const t of g) (byDay[t.weekday] ?? byDay[0]).push(t);
+            }
+            daily.sort((a, b) => (a[0]?.time ?? "").localeCompare(b[0]?.time ?? ""));
+            for (const list of byDay) list.sort((a, b) => a.time.localeCompare(b.time));
+            const togglePlat = (t: Template, ids: string[], pl: string): void => {
+              const cur = parsePlatforms(t.platforms);
+              const next = cur.includes(pl) ? cur.filter((p) => p !== pl) : [...cur, pl];
+              void setTemplatePlatforms(ids, next);
+            };
             const card = (
               key: string,
               labelText: string,
@@ -1475,21 +1504,41 @@ export default function QueueConsole(): React.ReactNode {
               onDelete: () => void,
               deleteLabel: string,
             ): React.ReactNode => {
-              const others = parsePlatforms(t.platforms).filter((p) => p !== pl);
-              const st = fitStat(pillars, t.pillar_id, pl);
-              const weak = isWeakStat(st);
+              const plats = parsePlatforms(t.platforms);
+              const unknowns = plats.filter((p) => !known.has(p));
               const pillarName = pillars.find((p) => p.id === t.pillar_id)?.name ?? "This pillar";
+              const warns = plats
+                .map((p) => ({ platform: p, st: fitStat(pillars, t.pillar_id, p) }))
+                .filter((w) => isWeakStat(w.st) && w.st && w.st.multiplier !== null);
               return (
                 <section className="keycard slim" key={key}>
                   <p>
                     <strong>{labelText}</strong> · {typeLabel(t.content_type)}
-                    {others.length > 0 ? ` · also: ${others.join(", ")}` : ""}
                   </p>
-                  {weak && st && st.multiplier !== null ? (
-                    <p className="note warn">
-                      ⚠ {pillarName} scores {st.multiplier}x on {label} across {st.posts} posts
-                    </p>
+                  <div className="ppills" role="group" aria-label="Platforms for this time">
+                    {PLATFORMS.map((pl) => (
+                      <button
+                        key={pl}
+                        className={plats.includes(pl) ? "on" : ""}
+                        aria-pressed={plats.includes(pl)}
+                        onClick={() => togglePlat(t, ids, pl)}
+                      >
+                        {PLAT_LABEL[pl] ?? pl}
+                      </button>
+                    ))}
+                  </div>
+                  {unknowns.length > 0 ? (
+                    <p className="muted">Also ships to: {unknowns.join(", ")}</p>
                   ) : null}
+                  {plats.length === 0 ? (
+                    <p className="note warn">No platforms — check at least one or this row never ships.</p>
+                  ) : null}
+                  {warns.map((w) => (
+                    <p className="note warn" key={w.platform}>
+                      ⚠ {pillarName} scores {w.st?.multiplier}x on {PLAT_LABEL[w.platform] ?? w.platform} across{" "}
+                      {w.st?.posts} posts
+                    </p>
+                  ))}
                   <div className="row">
                     <select
                       aria-label="Pillar"
@@ -1500,7 +1549,6 @@ export default function QueueConsole(): React.ReactNode {
                       {pillars.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name}
-                          {fitMark(pillars, p.id, pl)}
                         </option>
                       ))}
                     </select>
@@ -1511,41 +1559,48 @@ export default function QueueConsole(): React.ReactNode {
                 </section>
               );
             };
-            for (const g of [...groups.values()].sort((a, b) =>
-              (a[0]?.time ?? "").localeCompare(b[0]?.time ?? ""),
-            )) {
-              const first = g[0];
-              if (!first) continue;
-              if (new Set(g.map((t) => t.weekday)).size === 7) {
-                rows.push(
-                  card(
-                    `daily-${pl}-${first.id}`,
-                    `Every day ${first.time}`,
-                    first,
-                    g.map((t) => t.id),
-                    () => removeDaily(g.map((t) => t.id)),
-                    "Delete all 7",
-                  ),
-                );
-              } else {
-                for (const t of g.slice().sort((a, b) => a.weekday - b.weekday)) {
-                  rows.push(
-                    card(`${pl}-${t.id}`, `${DAYS[t.weekday]} ${t.time}`, t, [t.id], () => removeTemplate(t.id), "Delete"),
-                  );
-                }
-              }
-            }
-            const draftStat = fitStat(pillars, draft.pillar_id || null, pl);
-            const draftWeak = adding === pl && isWeakStat(draftStat);
+            const draftWarns = draft.platforms
+              .map((p) => ({ platform: p, st: fitStat(pillars, draft.pillar_id || null, p) }))
+              .filter((w) => isWeakStat(w.st) && w.st && w.st.multiplier !== null);
             const draftPillar = pillars.find((p) => p.id === draft.pillar_id)?.name ?? "This pillar";
             return (
-              <section className="keycard" key={pl}>
-                <h2>
-                  {label} ({mine.length})
-                </h2>
-                {rows}
-                {adding === pl ? (
-                  <>
+              <>
+                {daily.length > 0 ? (
+                  <section className="keycard" key="daily">
+                    <h2>Every day</h2>
+                    {daily.map((g) => {
+                      const first = g[0];
+                      if (!first) return null;
+                      const ids = g.map((t) => t.id);
+                      return card(
+                        `daily-${first.id}`,
+                        first.time,
+                        first,
+                        ids,
+                        () => removeDaily(ids),
+                        "Delete all 7",
+                      );
+                    })}
+                  </section>
+                ) : null}
+                {DAY_FULL.map((day, i) =>
+                  byDay[i].length > 0 ? (
+                    <section className="keycard" key={day}>
+                      <h2>
+                        {day} ({byDay[i].length})
+                      </h2>
+                      {byDay[i].map((t) =>
+                        card(`${t.id}`, t.time, t, [t.id], () => removeTemplate(t.id), "Delete"),
+                      )}
+                    </section>
+                  ) : null,
+                )}
+                {templates.length === 0 ? (
+                  <p className="muted">No posting times yet — add one below or ask the agent.</p>
+                ) : null}
+                {adding ? (
+                  <section className="keycard" key="add">
+                    <h2>New posting time</h2>
                     <div className="row">
                       <select
                         aria-label="Weekday"
@@ -1579,7 +1634,6 @@ export default function QueueConsole(): React.ReactNode {
                         {pillars.map((p) => (
                           <option key={p.id} value={p.id}>
                             {p.name}
-                            {fitMark(pillars, p.id, pl)}
                           </option>
                         ))}
                       </select>
@@ -1595,64 +1649,57 @@ export default function QueueConsole(): React.ReactNode {
                         ))}
                       </select>
                     </div>
-                    {draftWeak && draftStat && draftStat.multiplier !== null ? (
-                      <p className="note warn">
-                        ⚠ {draftPillar} scores {draftStat.multiplier}x on {label} across{" "}
-                        {draftStat.posts} posts — save anyway to push into it deliberately.
+                    <div className="ppills" role="group" aria-label="Platforms for this time">
+                      {PLATFORMS.map((pl) => (
+                        <button
+                          key={pl}
+                          className={draft.platforms.includes(pl) ? "on" : ""}
+                          aria-pressed={draft.platforms.includes(pl)}
+                          onClick={() =>
+                            setDraft((f) => ({
+                              ...f,
+                              platforms: f.platforms.includes(pl)
+                                ? f.platforms.filter((p) => p !== pl)
+                                : [...f.platforms, pl],
+                            }))
+                          }
+                        >
+                          {PLAT_LABEL[pl] ?? pl}
+                        </button>
+                      ))}
+                    </div>
+                    {draftWarns.map((w) => (
+                      <p className="note warn" key={w.platform}>
+                        ⚠ {draftPillar} scores {w.st?.multiplier}x on {PLAT_LABEL[w.platform] ?? w.platform} across{" "}
+                        {w.st?.posts} posts — save anyway to push into it deliberately.
                       </p>
-                    ) : null}
+                    ))}
                     <div className="row">
-                      <button className="primary" onClick={() => void addTemplate(pl)}>
+                      <button className="primary" onClick={() => void addTemplate()}>
                         Save
                       </button>
-                      <button onClick={() => setAdding(null)}>Cancel</button>
+                      <button onClick={() => setAdding(false)}>Cancel</button>
                     </div>
-                  </>
+                  </section>
                 ) : (
                   <div className="row">
                     <button
                       onClick={() => {
-                        setDraft({ weekday: "1", time: "09:00", pillar_id: "", content_type: "short_post" });
-                        setAdding(pl);
+                        setDraft({
+                          weekday: "1",
+                          time: "09:00",
+                          pillar_id: "",
+                          content_type: "short_post",
+                          platforms: [],
+                        });
+                        setAdding(true);
                       }}
                     >
-                      + Add {label} time
+                      + Add posting time
                     </button>
                   </div>
                 )}
-              </section>
-            );
-          })}
-          {(() => {
-            const known = new Set<string>([...PLATFORMS]);
-            const orphans = templates.filter((t) => {
-              const ps = parsePlatforms(t.platforms);
-              return ps.length === 0 || !ps.some((p) => known.has(p));
-            });
-            if (orphans.length === 0) return null;
-            return (
-              <section className="keycard" key="unassigned">
-                <h2>Unassigned ({orphans.length})</h2>
-                {orphans
-                  .slice()
-                  .sort((a, b) => a.weekday - b.weekday || a.time.localeCompare(b.time))
-                  .map((t) => (
-                    <section className="keycard slim" key={t.id}>
-                      <p>
-                        <strong>
-                          {DAYS[t.weekday]} {t.time}
-                        </strong>{" "}
-                        · {typeLabel(t.content_type)} ·{" "}
-                        {parsePlatforms(t.platforms).join(", ") || "no platforms"}
-                      </p>
-                      <div className="row">
-                        <button className="danger" onClick={() => void removeTemplate(t.id)}>
-                          Delete
-                        </button>
-                      </div>
-                    </section>
-                  ))}
-              </section>
+              </>
             );
           })()}
             </div>
