@@ -24,6 +24,8 @@ import { requestKey, runKeyingSetup } from "./lib/corridorkey";
 import { runExport } from "./lib/export";
 import { runMetricsSync } from "./lib/metrics";
 import { runPlanner } from "./lib/planner";
+import { loadKeys } from "./lib/keys";
+import { syncScheduledPosts } from "./lib/publish";
 import { runTranscription } from "./lib/transcribe";
 import { eligibleCount, runTranscriptBackfill } from "./lib/transcript-backfill";
 import {
@@ -267,6 +269,18 @@ async function tick(): Promise<void> {
     }
   } catch (error) {
     console.log(`reaper error: ${(error as Error).message}`);
+  }
+  // Scheduled Zernio posts go gray on their own once live (5-minute sweep).
+  if (ticks % 300 === 0) {
+    try {
+      const key = loadKeys().zernio;
+      if (key) {
+        const flipped = await syncScheduledPosts(key);
+        if (flipped.length > 0) console.log(`scheduled posts live: ${flipped.join(", ")}`);
+      }
+    } catch (error) {
+      console.log(`schedule sync error: ${(error as Error).message}`);
+    }
   }
   let job: JobRow | null;
   try {

@@ -98,6 +98,9 @@ type PublishHistoryRow = {
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// Mirrors IN_FLIGHT in lib/publish — receipts Zernio still holds.
+const IN_FLIGHT = new Set(["scheduled", "pending", "processing", "uploading", "publishing"]);
+
 const SOURCE_SHORT: Record<string, string> = {
   x_posts: "X",
   tiktok_videos: "TikTok",
@@ -494,6 +497,27 @@ export default function QueueConsole(): React.ReactNode {
       });
       await refresh();
       if (data.ok === true) await openSlot(id);
+    } catch (e) {
+      setPublishResult({ ok: false, error: (e as Error).message });
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function cancelScheduled(id: string): Promise<void> {
+    setPublishing(true);
+    setPublishResult(null);
+    try {
+      const data = await readJson(
+        await fetch(`/api/slots/${id}/publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "cancel" }),
+        }),
+      );
+      showToast(`Cancelled ${data.cancelled as number} scheduled post(s)`);
+      await refresh();
+      await openSlot(id);
     } catch (e) {
       setPublishResult({ ok: false, error: (e as Error).message });
     } finally {
@@ -1099,13 +1123,26 @@ export default function QueueConsole(): React.ReactNode {
                 Approve
               </button>
             ) : null}
-            {selected.status === "green" ? (
+            {selected.status === "green" &&
+            !publishHistory.some((h) => IN_FLIGHT.has(h.status)) ? (
               <button
                 className="primary"
                 disabled={publishing}
                 onClick={() => void publishNow(selected.id)}
               >
-                {publishing ? "Posting…" : "Post via Zernio"}
+                {(() => {
+                  const future = Date.parse(selected.scheduled_at) > Date.now();
+                  if (publishing) return future ? "Scheduling…" : "Posting…";
+                  return future
+                    ? `Schedule for ${fmtTime(selected.scheduled_at)}`
+                    : "Post now";
+                })()}
+              </button>
+            ) : null}
+            {selected.status === "green" &&
+            publishHistory.some((h) => IN_FLIGHT.has(h.status)) ? (
+              <button disabled={publishing} onClick={() => void cancelScheduled(selected.id)}>
+                Cancel scheduled
               </button>
             ) : null}
             {selected.status === "green" ? (
@@ -1152,12 +1189,21 @@ export default function QueueConsole(): React.ReactNode {
                   <span className="muted"> · {r.payload}</span>
                   {r.status === "published" && r.postUrl ? (
                     <a href={r.postUrl} target="_blank" rel="noreferrer"> · view ✓</a>
+                  ) : IN_FLIGHT.has(r.status) ? (
+                    <span> · scheduled ✓</span>
                   ) : (
                     <span> · {r.error ?? r.status}</span>
                   )}
                 </div>
               ))}
             </div>
+          ) : null}
+          {selected.status === "green" &&
+          publishHistory.some((h) => IN_FLIGHT.has(h.status)) ? (
+            <p className="note ok">
+              Scheduled for {fmtTime(selected.scheduled_at)} ✓ — goes live on its own, or Cancel
+              scheduled above to change it.
+            </p>
           ) : null}
           {selected.status === "gray" &&
           publishHistory.some((h) => h.status === "published") ? (

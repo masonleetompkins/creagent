@@ -5,7 +5,7 @@ export const ZERNIO_BASE_URL = "https://zernio.com/api";
 
 async function zernioRequest(
   apiKey: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   body?: unknown,
   extraHeaders?: Record<string, string>,
@@ -116,6 +116,18 @@ export async function zernioCreatePost(
     "Idempotency-Key": idempotencyKey,
     "x-request-id": idempotencyKey,
   });
+}
+
+// Post status by id — same { post } shape as create. Poll scheduled posts
+// with this; the per-entry platforms[] carry status + platformPostUrl.
+export async function zernioGetPost(apiKey: string, postId: string): Promise<unknown> {
+  return zernioRequest(apiKey, "GET", `/v1/posts/${encodeURIComponent(postId)}`);
+}
+
+// Cancel a scheduled (or failed/draft) post. Published posts 400 here —
+// those need unpublish, which this app never calls (posted is posted).
+export async function zernioDeletePost(apiKey: string, postId: string): Promise<unknown> {
+  return zernioRequest(apiKey, "DELETE", `/v1/posts/${encodeURIComponent(postId)}`);
 }
 
 export async function testZernio(apiKey: string): Promise<string> {

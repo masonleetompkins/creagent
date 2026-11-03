@@ -9,7 +9,13 @@ import { getDb, nowIso } from "./db";
 import { resolveApproval } from "./draft-approval";
 import { clampSelection, parseStructure, splitLegacyOptions } from "./draft-structure";
 import { parseSlotPlatforms } from "./platform-fit";
-import { zernioAccounts, zernioCreatePost, type ZernioAccount } from "./zernio";
+import {
+  zernioAccounts,
+  zernioCreatePost,
+  zernioDeletePost,
+  zernioGetPost,
+  type ZernioAccount,
+} from "./zernio";
 
 // Our platform keys → Zernio platform slugs (docs.zernio.com/platforms).
 // blog has no connected-account target and can't publish.
@@ -59,8 +65,24 @@ export type PlatformReceipt = {
 };
 
 export type PublishResult =
-  | { ok: true; postId: string | null; receipts: PlatformReceipt[]; slotStatus: string }
+  | {
+      ok: true;
+      postId: string | null;
+      receipts: PlatformReceipt[];
+      slotStatus: string;
+      scheduledFor?: string;
+    }
   | { ok: false; error: string; postId?: string | null; receipts?: PlatformReceipt[] };
+
+// Receipt statuses still in Zernio's hands (scheduled entries read back as
+// scheduled/pending; publishing-side transients all mean "wait, don't resend").
+export const IN_FLIGHT = new Set([
+  "scheduled",
+  "pending",
+  "processing",
+  "uploading",
+  "publishing",
+]);
 
 export function splitThreadItems(hook: string, body: string): string[] {
   return [hook, ...body.split(/\n\s*\n/)]
@@ -73,12 +95,15 @@ function overCap(text: string, cap: number): boolean {
 }
 
 // Pure body builder: thread-capable platforms get the sequence, every other
-// platform gets the full text as one cross-post. Error or body, never both.
+// platform gets the full text as one cross-post. scheduledFor (ISO) schedules
+// on Zernio; omitted it publishes now. Error or body, never both.
 export function buildPublishBody(
   text: PublishText,
   targets: PublishTarget[],
+  scheduledFor?: string,
 ): { body: Record<string, unknown>; payloads: Record<string, string> } | { error: string } {
   if (targets.length === 0) return { error: "no publish targets" };
+  const timing = scheduledFor ? { scheduledFor } : { publishNow: true };
   if (text.mode === "single") {
     for (const t of targets) {
       const cap = SINGLE_CAPS[t.slug];
@@ -92,7 +117,7 @@ export function buildPublishBody(
       body: {
         content: text.content,
         platforms: targets.map((t) => ({ platform: t.slug, accountId: t.accountId })),
-        publishNow: true,
+        ...timing,
       },
       payloads: Object.fromEntries(targets.map((t) => [t.platform, "post"])),
     };
@@ -127,7 +152,7 @@ export function buildPublishBody(
     }
   }
   return {
-    body: { content: fullText, platforms: entries, publishNow: true },
+    body: { content: fullText, platforms: entries, ...timing },
     payloads,
   };
 }
@@ -155,6 +180,7 @@ export function parsePublishResponse(json: unknown): {
 
 type SlotRow = {
   id: string;
+  scheduled_at: string;
   status: string;
   content_type: string;
   platforms: string;
@@ -173,7 +199,7 @@ function loadSlot(slotId: string): SlotRow | null {
   return (
     (getDb()
       .prepare(
-        `SELECT id, status, content_type, platforms, approved_draft_id, approved_option
+        `SELECT id, scheduled_at, status, content_type, platforms, approved_draft_id, approved_option
          FROM queue_slots WHERE id = ?`,
       )
       .get(slotId) as SlotRow | undefined) ?? null
@@ -225,9 +251,16 @@ function publishTextFor(slot: SlotRow): PublishText | { error: string } {
 export type PublishDeps = {
   listAccounts: (apiKey: string) => Promise<ZernioAccount[]>;
   createPost: (apiKey: string, body: Record<string, unknown>, key: string) => Promise<unknown>;
+  getPost: (apiKey: string, postId: string) => Promise<unknown>;
+  deletePost: (apiKey: string, postId: string) => Promise<unknown>;
 };
 
-const DEFAULT_DEPS: PublishDeps = { listAccounts: zernioAccounts, createPost: zernioCreatePost };
+const DEFAULT_DEPS: PublishDeps = {
+  listAccounts: zernioAccounts,
+  createPost: zernioCreatePost,
+  getPost: zernioGetPost,
+  deletePost: zernioDeletePost,
+};
 
 function matchTargets(platforms: string[], accounts: ZernioAccount[]): PublishTarget[] | { error: string } {
   if (platforms.length === 0) return { error: "this slot has no platforms — edit it first" };
@@ -300,12 +333,36 @@ export async function publishSlot(
   }
   const allTargets = matchTargets(parseSlotPlatforms(slot.platforms), accounts);
   if ("error" in allTargets) return { ok: false, error: allTargets.error };
-  // Retries skip platforms that already published — resending them would
-  // just trip Zernio's content dedup (409) instead of finishing the job.
+  // Future slot time schedules on Zernio; due/past slots publish now.
+  const scheduledFor =
+    Number.isNaN(Date.parse(slot.scheduled_at)) || Date.parse(slot.scheduled_at) <= Date.now()
+      ? undefined
+      : new Date(slot.scheduled_at).toISOString();
+  // Best-effort refresh: genuinely-live rows block below, but stale
+  // transients resolve instead of jamming retries forever.
+  try {
+    await refreshInFlight(slot.id, apiKey, deps);
+  } catch {
+    /* unreachable Zernio just leaves the rows stale */
+  }
+  const live = liveScheduled(slot.id);
+  if (live && scheduledFor) {
+    return {
+      ok: false,
+      error: `already scheduled for ${fmtWhen(slot.scheduled_at)} — Cancel scheduled first to change the text or time.`,
+    };
+  }
+  if (live) {
+    return { ok: false, error: "Zernio is still sending the last attempt — wait a minute, then retry" };
+  }
+  // Retries skip platforms that already published or are still scheduled —
+  // resending them would trip Zernio's content dedup (409) instead of
+  // finishing the job.
+  const settled = ["published", ...IN_FLIGHT].map((s) => `'${s}'`).join(",");
   const done = new Set(
     (
       db
-        .prepare(`SELECT DISTINCT platform FROM slot_posts WHERE slot_id = ? AND status = 'published'`)
+        .prepare(`SELECT DISTINCT platform FROM slot_posts WHERE slot_id = ? AND status IN (${settled})`)
         .all(slotId) as Array<{ platform: string }>
     ).map((r) => r.platform),
   );
@@ -314,7 +371,7 @@ export async function publishSlot(
     const rows = db
       .prepare(
         `SELECT platform, username, payload, status, post_url AS postUrl, error
-         FROM slot_posts WHERE slot_id = ? AND status = 'published' ORDER BY attempt DESC`,
+         FROM slot_posts WHERE slot_id = ? AND status IN (${settled}) ORDER BY attempt DESC`,
       )
       .all(slotId) as Array<{
       platform: string;
@@ -340,10 +397,16 @@ export async function publishSlot(
   }
   const targets = allTargets.filter((t) => !done.has(t.platform));
   if (targets.length === 0) {
-    db.prepare(`UPDATE queue_slots SET status = 'gray' WHERE id = ?`).run(slotId);
-    return { ok: true, postId: null, receipts: carried, slotStatus: "gray" };
+    if (carried.every((r) => r.status === "published")) {
+      db.prepare(`UPDATE queue_slots SET status = 'gray' WHERE id = ?`).run(slotId);
+      return { ok: true, postId: null, receipts: carried, slotStatus: "gray" };
+    }
+    return {
+      ok: false,
+      error: `already scheduled for ${fmtWhen(slot.scheduled_at)} — Cancel scheduled first to change the text or time.`,
+    };
   }
-  const built = buildPublishBody(text, targets);
+  const built = buildPublishBody(text, targets, scheduledFor);
   if ("error" in built) return { ok: false, error: built.error };
 
   const { attempt, key } = nextAttempt(slotId);
@@ -391,20 +454,177 @@ export async function publishSlot(
       error: r?.error ?? (r ? null : "no per-platform result in the Zernio response"),
     };
   });
-  const fresh = receipts.filter((r) => r.status === "published");
+  const fresh = receipts.filter((r) => r.status === "published" || IN_FLIGHT.has(r.status));
   const allReceipts = [...carried, ...receipts];
   if (fresh.length === targets.length) {
+    if (scheduledFor || receipts.some((r) => IN_FLIGHT.has(r.status))) {
+      return { ok: true, postId: parsed.postId, receipts: allReceipts, slotStatus: "green", scheduledFor };
+    }
     db.prepare(`UPDATE queue_slots SET status = 'gray' WHERE id = ?`).run(slotId);
     return { ok: true, postId: parsed.postId, receipts: allReceipts, slotStatus: "gray" };
   }
-  const failed = receipts.filter((r) => r.status !== "published");
+  const failed = receipts.filter((r) => r.status !== "published" && !IN_FLIGHT.has(r.status));
   const doneCount = carried.length + fresh.length;
   return {
     ok: false,
     postId: parsed.postId,
     receipts: allReceipts,
-    error: `posted ${doneCount} of ${allTargets.length} — ${failed.map((f) => `${f.platform}: ${f.error ?? f.status}`).join("; ")}. Fix it and retry; already-posted platforms are skipped.`,
+    error: `posted ${doneCount} of ${allTargets.length} — ${failed.map((f) => `${f.platform}: ${f.error ?? f.status}`).join("; ")}. Fix it and retry; finished platforms are skipped.`,
   };
+}
+
+export function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
+
+// A confirmed Zernio post still in flight for this slot (rows with a post id
+// and an in-flight status). Pre-send 'sending' rows don't count — those are
+// unconfirmed and reuse their key on retry.
+function liveScheduled(slotId: string): boolean {
+  const inflight = [...IN_FLIGHT].map((s) => `'${s}'`).join(",");
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM slot_posts
+       WHERE slot_id = ? AND zernio_post_id IS NOT NULL AND status IN (${inflight})`,
+    )
+    .get(slotId) as { n: number };
+  return row.n > 0;
+}
+
+// Refresh every in-flight receipt for one slot from Zernio, flipping the
+// slot gray when all its platforms published. Throws on transport errors.
+async function refreshInFlight(slotId: string, apiKey: string, deps: PublishDeps): Promise<void> {
+  const db = getDb();
+  const inflight = [...IN_FLIGHT].map((s) => `'${s}'`).join(",");
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT zernio_post_id AS postId FROM slot_posts
+       WHERE slot_id = ? AND zernio_post_id IS NOT NULL AND status IN (${inflight})`,
+    )
+    .all(slotId) as Array<{ postId: string }>;
+  for (const { postId } of rows) {
+    const parsed = parsePublishResponse(await deps.getPost(apiKey, postId));
+    const bySlug = new Map(parsed.receipts.map((r) => [r.platform, r]));
+    const targets = db
+      .prepare(`SELECT platform FROM slot_posts WHERE slot_id = ? AND zernio_post_id = ?`)
+      .all(slotId, postId) as Array<{ platform: string }>;
+    const update = db.prepare(
+      `UPDATE slot_posts SET status = ?, post_url = ?, error = ?
+       WHERE slot_id = ? AND zernio_post_id = ? AND platform = ? AND status IN (${inflight})`,
+    );
+    for (const t of targets) {
+      const slug = ZERNIO_SLUGS[t.platform];
+      const r = slug ? bySlug.get(slug) : undefined;
+      if (!r) continue;
+      update.run(r.status, r.postUrl ?? null, r.error ?? null, slotId, postId, t.platform);
+    }
+  }
+}
+
+function slotPlatformsComplete(slotId: string): boolean {
+  const db = getDb();
+  const slot = loadSlot(slotId);
+  if (!slot) return false;
+  const platforms = parseSlotPlatforms(slot.platforms);
+  if (platforms.length === 0) return false;
+  const rows = db
+    .prepare(`SELECT DISTINCT platform FROM slot_posts WHERE slot_id = ? AND status = 'published'`)
+    .all(slotId) as Array<{ platform: string }>;
+  const done = new Set(rows.map((r) => r.platform));
+  return platforms.every((p) => done.has(p));
+}
+
+// Sync one slot's in-flight receipts; flips gray when everything published.
+// Returns true when the slot flipped.
+export async function syncSlot(
+  slotId: string,
+  apiKey: string,
+  deps: PublishDeps = DEFAULT_DEPS,
+): Promise<boolean> {
+  await refreshInFlight(slotId, apiKey, deps);
+  if (slotPlatformsComplete(slotId)) {
+    getDb().prepare(`UPDATE queue_slots SET status = 'gray' WHERE id = ? AND status != 'gray'`).run(slotId);
+    return true;
+  }
+  return false;
+}
+
+// Worker sweep: sync every slot with in-flight receipts. Returns flipped ids.
+export async function syncScheduledPosts(
+  apiKey: string,
+  deps: PublishDeps = DEFAULT_DEPS,
+): Promise<string[]> {
+  const inflight = [...IN_FLIGHT].map((s) => `'${s}'`).join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT slot_id AS slotId FROM slot_posts
+       WHERE zernio_post_id IS NOT NULL AND status IN (${inflight})`,
+    )
+    .all() as Array<{ slotId: string }>;
+  const flipped: string[] = [];
+  for (const { slotId } of rows) {
+    try {
+      if (await syncSlot(slotId, apiKey, deps)) flipped.push(slotId);
+    } catch {
+      /* one slot's sync never blocks the rest */
+    }
+  }
+  return flipped;
+}
+
+// Cancel every live scheduled Zernio post for a green slot. Published
+// copies are untouched (DELETE 400s on those — posted is posted).
+export async function cancelScheduled(
+  slotId: string,
+  apiKey: string,
+  deps: PublishDeps = DEFAULT_DEPS,
+): Promise<{ ok: true; cancelled: number } | { ok: false; error: string }> {
+  const db = getDb();
+  const slot = loadSlot(slotId);
+  if (!slot) return { ok: false, error: "slot not found" };
+  if (slot.status !== "green") {
+    return { ok: false, error: `only green slots hold scheduled posts — this one is ${slot.status}` };
+  }
+  const inflight = [...IN_FLIGHT].map((s) => `'${s}'`).join(",");
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT zernio_post_id AS postId FROM slot_posts
+       WHERE slot_id = ? AND zernio_post_id IS NOT NULL AND status IN (${inflight})`,
+    )
+    .all(slotId) as Array<{ postId: string }>;
+  if (rows.length === 0) return { ok: false, error: "nothing scheduled for this slot" };
+  // Sync first: a post that already went live cancels nothing and reports truth.
+  try {
+    await refreshInFlight(slotId, apiKey, deps);
+  } catch (error) {
+    return { ok: false, error: `couldn't reach Zernio: ${(error as Error).message}` };
+  }
+  const still = db
+    .prepare(
+      `SELECT DISTINCT zernio_post_id AS postId FROM slot_posts
+       WHERE slot_id = ? AND zernio_post_id IS NOT NULL AND status IN (${inflight})`,
+    )
+    .all(slotId) as Array<{ postId: string }>;
+  let cancelled = 0;
+  for (const { postId } of still) {
+    try {
+      await deps.deletePost(apiKey, postId);
+    } catch (error) {
+      return { ok: false, error: `couldn't cancel (${(error as Error).message}) — it may have just published; reopen the slot to sync` };
+    }
+    db.prepare(`UPDATE slot_posts SET status = 'cancelled' WHERE slot_id = ? AND zernio_post_id = ?`).run(
+      slotId,
+      postId,
+    );
+    cancelled += 1;
+  }
+  if (cancelled === 0) {
+    await syncSlot(slotId, apiKey, deps).catch(() => false);
+    return { ok: false, error: "nothing left to cancel — it already published" };
+  }
+  return { ok: true, cancelled };
 }
 
 export function slotPublishHistory(slotId: string): Array<{

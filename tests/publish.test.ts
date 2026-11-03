@@ -77,6 +77,19 @@ describe("buildPublishBody", () => {
     assert.deepEqual(out.payloads, { x: "thread (3 posts)", linkedin: "full text" });
   });
 
+  it("schedules when given a slot time, publishes now without one", async () => {
+    const { buildPublishBody } = await import("../lib/publish");
+    const targets = [{ platform: "x", slug: "twitter", accountId: "a1", username: "me" }];
+    const scheduled = buildPublishBody({ mode: "single", content: "hi" }, targets, "2030-01-01T09:00:00.000Z");
+    assert.ok(!("error" in scheduled));
+    assert.equal(scheduled.body["scheduledFor"], "2030-01-01T09:00:00.000Z");
+    assert.ok(!("publishNow" in scheduled.body));
+    const now = buildPublishBody({ mode: "single", content: "hi" }, targets);
+    assert.ok(!("error" in now));
+    assert.equal(now.body["publishNow"], true);
+    assert.ok(!("scheduledFor" in now.body));
+  });
+
   it("rejects over-long thread items and over-long cross-posts", async () => {
     const { buildPublishBody } = await import("../lib/publish");
     const badItem = buildPublishBody(
@@ -130,6 +143,7 @@ describe("publishSlot", () => {
     contentType: string;
     platforms: string[];
     approvedOption?: number;
+    scheduledAt?: string;
     draft?: { structure: unknown; selection?: string; body?: string };
   }): Promise<string> {
     const { getDb, nowIso } = await import("../lib/db");
@@ -139,7 +153,7 @@ describe("publishSlot", () => {
     db.prepare(
       `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, brief, created_at)
        VALUES (?, ?, ?, ?, ?, '{}', ?)`,
-    ).run(slotId, at, opts.contentType, JSON.stringify(opts.platforms), opts.status, at);
+    ).run(slotId, opts.scheduledAt ?? at, opts.contentType, JSON.stringify(opts.platforms), opts.status, at);
     if (opts.draft) {
       const draftId = randomUUID();
       db.prepare(
@@ -165,15 +179,38 @@ describe("publishSlot", () => {
   function deps(impl: {
     accounts?: Array<{ id: string; platform: string; username: string }>;
     onPost?: (body: Record<string, unknown>, key: string) => unknown;
+    onGet?: (postId: string) => unknown;
+    onDelete?: (postId: string) => unknown;
   }) {
     const sent: Array<{ body: Record<string, unknown>; key: string }> = [];
+    const got: string[] = [];
+    const deleted: string[] = [];
     return {
       sent,
+      got,
+      deleted,
       accounts: impl.accounts ?? [{ id: "a1", platform: "twitter", username: "me" }],
       createPost: async (_apiKey: string, body: Record<string, unknown>, key: string) => {
         sent.push({ body, key });
         return impl.onPost?.(body, key) ?? { post: { _id: "zp", platforms: [] } };
       },
+      getPost: async (_apiKey: string, postId: string) => {
+        got.push(postId);
+        return impl.onGet?.(postId) ?? { post: { _id: postId, platforms: [] } };
+      },
+      deletePost: async (_apiKey: string, postId: string) => {
+        deleted.push(postId);
+        return impl.onDelete?.(postId) ?? { success: true };
+      },
+    };
+  }
+
+  function fullDeps(d: ReturnType<typeof deps>) {
+    return {
+      listAccounts: async () => d.accounts,
+      createPost: d.createPost,
+      getPost: d.getPost,
+      deletePost: d.deletePost,
     };
   }
 
@@ -182,10 +219,7 @@ describe("publishSlot", () => {
     for (const status of ["red", "orange", "gray"]) {
       const slotId = await seed({ status, contentType: "short_post", platforms: ["x"] });
       const d = deps({});
-      const res = await publishSlot(slotId, "k", {
-        listAccounts: async () => d.accounts,
-        createPost: d.createPost,
-      });
+      const res = await publishSlot(slotId, "k", fullDeps(d));
       assert.equal(res.ok, false);
       assert.equal(d.sent.length, 0);
     }
@@ -195,10 +229,7 @@ describe("publishSlot", () => {
     const { publishSlot } = await import("../lib/publish");
     const run = async (slotId: string, accounts: Array<{ id: string; platform: string; username: string }>) => {
       const d = deps({ accounts });
-      const res = await publishSlot(slotId, "k", {
-        listAccounts: async () => d.accounts,
-        createPost: d.createPost,
-      });
+      const res = await publishSlot(slotId, "k", fullDeps(d));
       assert.equal(res.ok, false);
       assert.equal(d.sent.length, 0);
       return res.ok === false ? res.error : "";
@@ -249,10 +280,7 @@ describe("publishSlot", () => {
         },
       }),
     });
-    const res = await publishSlot(slotId, "k", {
-      listAccounts: async () => d.accounts,
-      createPost: d.createPost,
-    });
+    const res = await publishSlot(slotId, "k", fullDeps(d));
     assert.equal(res.ok, true);
     assert.equal(d.sent.length, 1);
     assert.equal((d.sent[0].body["content"] as string), "hello world");
@@ -302,7 +330,7 @@ describe("publishSlot", () => {
       },
     });
     const run = () =>
-      publishSlot(slotId, "k", { listAccounts: async () => d.accounts, createPost: d.createPost });
+      publishSlot(slotId, "k", fullDeps(d));
     const first = await run();
     assert.equal(first.ok, false);
     if (first.ok) throw new Error("unreachable");
@@ -337,7 +365,7 @@ describe("publishSlot", () => {
       },
     });
     const run = () =>
-      publishSlot(slotId, "k", { listAccounts: async () => d.accounts, createPost: d.createPost });
+      publishSlot(slotId, "k", fullDeps(d));
     const first = await run();
     assert.equal(first.ok, false);
     const second = await run();
@@ -367,15 +395,117 @@ describe("publishSlot", () => {
     const d = deps({
       onPost: () => ({ post: { _id: "zpt", platforms: [{ platform: "twitter", status: "published" }] } }),
     });
-    const res = await publishSlot(slotId, "k", {
-      listAccounts: async () => d.accounts,
-      createPost: d.createPost,
-    });
+    const res = await publishSlot(slotId, "k", fullDeps(d));
     assert.equal(res.ok, true);
     const entry = (d.sent[0].body["platforms"] as Array<Record<string, unknown>>)[0];
     assert.deepEqual(
       (entry["platformSpecificData"] as { threadItems: Array<{ content: string }> }).threadItems,
       [{ content: "hook two" }, { content: "1/ First." }, { content: "2/ Second." }],
     );
+  });
+
+  it("schedules future slots and stays green until live", async () => {
+    const { publishSlot } = await import("../lib/publish");
+    const { getDb } = await import("../lib/db");
+    const when = new Date(Date.now() + 3600_000).toISOString();
+    const slotId = await seed({
+      status: "green",
+      contentType: "short_post",
+      platforms: ["x"],
+      scheduledAt: when,
+      draft: { structure: { layout: "prose", options: [{ label: "D", body: "future post" }] } },
+    });
+    const d = deps({
+      onPost: () => ({
+        post: { _id: "zs1", status: "scheduled", platforms: [{ platform: "twitter", status: "scheduled" }] },
+      }),
+    });
+    const res = await publishSlot(slotId, "k", fullDeps(d));
+    assert.equal(res.ok, true);
+    assert.equal(d.sent[0].body["scheduledFor"], when);
+    assert.ok(!("publishNow" in d.sent[0].body));
+    const status = (getDb().prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotId) as { status: string }).status;
+    assert.equal(status, "green");
+    // Duplicate scheduling is blocked without a second send.
+    const again = await publishSlot(slotId, "k", fullDeps(d));
+    assert.equal(again.ok, false);
+    if (again.ok) throw new Error("unreachable");
+    assert.match(again.error, /already scheduled/);
+    assert.equal(d.sent.length, 1);
+  });
+
+  it("cancels live scheduled posts, reports when nothing is scheduled", async () => {
+    const { cancelScheduled, publishSlot } = await import("../lib/publish");
+    const when = new Date(Date.now() + 3600_000).toISOString();
+    const slotId = await seed({
+      status: "green",
+      contentType: "short_post",
+      platforms: ["x"],
+      scheduledAt: when,
+      draft: { structure: { layout: "prose", options: [{ label: "D", body: "to cancel" }] } },
+    });
+    const d = deps({
+      onPost: () => ({
+        post: { _id: "zs2", status: "scheduled", platforms: [{ platform: "twitter", status: "scheduled" }] },
+      }),
+      onGet: () => ({
+        post: { _id: "zs2", status: "scheduled", platforms: [{ platform: "twitter", status: "scheduled" }] },
+      }),
+    });
+    const sent = await publishSlot(slotId, "k", fullDeps(d));
+    assert.equal(sent.ok, true);
+    const cancelled = await cancelScheduled(slotId, "k", fullDeps(d));
+    assert.deepEqual(cancelled, { ok: true, cancelled: 1 });
+    assert.deepEqual(d.deleted, ["zs2"]);
+    const empty = await cancelScheduled(slotId, "k", fullDeps(d));
+    assert.equal(empty.ok, false);
+    if (empty.ok) throw new Error("unreachable");
+    assert.match(empty.error, /nothing scheduled/);
+  });
+
+  it("sync flips gray once every platform is live", async () => {
+    const { publishSlot, syncSlot, syncScheduledPosts } = await import("../lib/publish");
+    const { getDb } = await import("../lib/db");
+    const when = new Date(Date.now() + 3600_000).toISOString();
+    const mk = () =>
+      seed({
+        status: "green",
+        contentType: "short_post",
+        platforms: ["x"],
+        scheduledAt: when,
+        draft: { structure: { layout: "prose", options: [{ label: "D", body: "sync me" }] } },
+      });
+    const slotA = await mk();
+    const slotB = await mk();
+    let live = false;
+    const d = deps({
+      onPost: (body) => {
+        const id = `zs-${(body["content"] as string).length}-${Math.random()}`;
+        return { post: { _id: id, status: "scheduled", platforms: [{ platform: "twitter", status: "scheduled" }] } };
+      },
+      onGet: (postId) => ({
+        post: {
+          _id: postId,
+          platforms: [
+            live
+              ? { platform: "twitter", status: "published", platformPostUrl: `https://x.com/me/${postId}` }
+              : { platform: "twitter", status: "scheduled" },
+          ],
+        },
+      }),
+    });
+    assert.equal((await publishSlot(slotA, "k", fullDeps(d))).ok, true);
+    assert.equal((await publishSlot(slotB, "k", fullDeps(d))).ok, true);
+    assert.equal(await syncSlot(slotA, "k", fullDeps(d)), false);
+    live = true;
+    assert.equal(await syncSlot(slotA, "k", fullDeps(d)), true);
+    const statusA = (getDb().prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotA) as { status: string }).status;
+    assert.equal(statusA, "gray");
+    const flipped = await syncScheduledPosts("k", fullDeps(d));
+    // Other tests' scheduled rows share this DB, so the sweep may flip
+    // them too — slotB must be among the flipped.
+    assert.ok(flipped.includes(slotB));
+    const statusB = (getDb().prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotB) as { status: string }).status;
+    assert.equal(statusB, "gray");
   });
 });
