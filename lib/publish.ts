@@ -5,6 +5,7 @@
 // per-platform receipts land in slot_posts; the slot flips gray only when
 // every platform published. Docs: docs.zernio.com/posts/create-post
 import { randomUUID } from "node:crypto";
+import { PLATFORM_POST_CAPS } from "./content";
 import { getDb, nowIso } from "./db";
 import { resolveApproval } from "./draft-approval";
 import { clampSelection, parseStructure, splitLegacyOptions } from "./draft-structure";
@@ -33,16 +34,15 @@ const THREAD_SLUGS = new Set(["twitter", "threads"]);
 const THREAD_KINDS = new Set(["thread", "article_thread"]);
 const TEXT_KINDS = new Set(["short_post", "thread", "article_thread"]);
 
-// Length caps from Zernio's platform docs — their API rejects over these,
-// so we preflight and fail before a multi-platform send can half-publish.
-const SINGLE_CAPS: Record<string, number> = {
-  twitter: 280,
-  threads: 500,
-  linkedin: 3000,
-  instagram: 2200,
-  facebook: 63206,
-};
+// Length caps: singles from the shared platform map (their API rejects
+// over these, so we preflight and fail before a multi-platform send can
+// half-publish); thread items carry their own per-post caps.
 const THREAD_ITEM_CAPS: Record<string, number> = { twitter: 280, threads: 500 };
+
+function singleCap(slug: string): number | undefined {
+  if (slug === "twitter") return PLATFORM_POST_CAPS["x"];
+  return PLATFORM_POST_CAPS[slug];
+}
 
 export type PublishText =
   | { mode: "single"; content: string }
@@ -106,7 +106,7 @@ export function buildPublishBody(
   const timing = scheduledFor ? { scheduledFor } : { publishNow: true };
   if (text.mode === "single") {
     for (const t of targets) {
-      const cap = SINGLE_CAPS[t.slug];
+      const cap = singleCap(t.slug);
       if (cap !== undefined && overCap(text.content, cap)) {
         return {
           error: `${t.platform} caps posts at ${cap} characters — this one is ${Array.from(text.content.trim()).length}. Shorten the draft, then post.`,
@@ -141,7 +141,7 @@ export function buildPublishBody(
       });
       payloads[t.platform] = `thread (${text.items.length} posts)`;
     } else {
-      const cap = SINGLE_CAPS[t.slug];
+      const cap = singleCap(t.slug);
       if (cap !== undefined && overCap(fullText, cap)) {
         return {
           error: `${t.platform} caps posts at ${cap} characters — this thread's full text is ${Array.from(fullText.trim()).length}. Remove ${t.platform} from the slot to post the thread where it fits.`,

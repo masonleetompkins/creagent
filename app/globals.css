@@ -935,6 +935,11 @@ button:disabled {
   text-transform: capitalize;
 }
 
+.overcap {
+  color: var(--warn);
+  opacity: 1;
+}
+
 .ved {
   display: flex;
   flex-direction: column;

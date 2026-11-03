@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CONTENT_TYPES, PLATFORMS } from "@/lib/content";
+import { CONTENT_TYPES, PLATFORM_POST_CAPS, PLATFORMS } from "@/lib/content";
 import DraftReview from "./draft-review";
 import {
   approvedBody,
@@ -470,6 +470,14 @@ export default function QueueConsole(): React.ReactNode {
   }
 
   async function markPosted(id: string): Promise<void> {
+    if (publishHistory.some((h) => IN_FLIGHT.has(h.status))) {
+      setPublishResult({
+        ok: false,
+        error:
+          "This slot is still scheduled on Zernio — Cancel scheduled first, or it will fire on top of your manual post.",
+      });
+      return;
+    }
     try {
       await readJson(await fetch(`/api/slots/${id}/post`, { method: "POST" }));
       await refresh();
@@ -477,6 +485,18 @@ export default function QueueConsole(): React.ReactNode {
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+
+  async function reopenSlot(id: string): Promise<void> {
+    if (publishHistory.some((h) => IN_FLIGHT.has(h.status))) {
+      setPublishResult({
+        ok: false,
+        error:
+          "Cancel the scheduled post first — it's still live on Zernio and would ship the old text.",
+      });
+      return;
+    }
+    await setStatus(id, "orange");
   }
 
   async function publishNow(id: string): Promise<void> {
@@ -1167,6 +1187,11 @@ export default function QueueConsole(): React.ReactNode {
                 Mark posted
               </button>
             ) : null}
+            {selected.status === "green" ? (
+              <button onClick={() => void reopenSlot(selected.id)} title="Send back to review to edit the draft">
+                Reopen
+              </button>
+            ) : null}
             {isVideoType(selected.content_type) ? (
               <button onClick={() => void openVideo(selected)}>Video editor</button>
             ) : null}
@@ -1253,10 +1278,24 @@ export default function QueueConsole(): React.ReactNode {
                 : clampSelection(pinned.selection, optionCountOf(pinned));
             const hero = approvedBody(pinned, heroIdx);
             const vnum = versions.length > 1 ? `Draft ${versions.indexOf(pinned) + 1} · ` : "";
+            const heroLen = Array.from(hero.trim()).length;
+            const overCaps = parsePlatforms(selected.platforms).filter((p) => {
+              const cap = PLATFORM_POST_CAPS[p];
+              return cap !== undefined && heroLen > cap;
+            });
             return (
               <div className="aphero">
                 <p className="dr-sub">
-                  {selected.status === "gray" ? "Posted" : "Approved post"} · {vnum}Option {heroIdx + 1}
+                  {selected.status === "gray" ? "Posted" : "Approved post"} · {vnum}Option {heroIdx + 1} ·{" "}
+                  {heroLen} chars
+                  {overCaps.length > 0 ? (
+                    <span className="overcap">
+                      {" "}
+                      · over {(PLAT_LABEL[overCaps[0]] ?? overCaps[0]).toString()}&rsquo;s{" "}
+                      {PLATFORM_POST_CAPS[overCaps[0]]}
+                      {overCaps.length > 1 ? ` (+${overCaps.length - 1} more)` : ""}
+                    </span>
+                  ) : null}
                 </p>
                 <div className="dr-prose">
                   <p>{hero}</p>

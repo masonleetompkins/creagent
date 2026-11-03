@@ -89,6 +89,16 @@ export const PLATFORMS = [
   "linkedin",
 ] as const;
 
+// Single-post character caps from Zernio's platform docs. Shared by the
+// publish preflight and the inspector's live count — one source of truth.
+export const PLATFORM_POST_CAPS: Record<string, number> = {
+  x: 280,
+  threads: 500,
+  linkedin: 3000,
+  instagram: 2200,
+  facebook: 63206,
+};
+
 export type SlotStatus = "red" | "orange" | "green" | "gray";
 
 export function isSlotStatus(value: string): value is SlotStatus {
