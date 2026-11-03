@@ -21,6 +21,19 @@ describe("news detection and queries", () => {
   });
 });
 
+describe("rankNewsResults", () => {
+  it("prefers specific stories over section fronts", async () => {
+    const { rankNewsResults } = await import("../lib/news-ground");
+    const ranked = rankNewsResults([
+      { title: "AI News", description: "Latest updates", url: "https://x.com/category/ai" },
+      { title: "70B model ships", description: "Runs in 5GB, costs $0", url: "https://x.com/p/70b-model-ships-2041" },
+      { title: "Brief", description: "Short", url: "https://x.com/" },
+    ]);
+    assert.equal(ranked[0].title, "70B model ships");
+    assert.equal(ranked[2].title, "AI News");
+  });
+});
+
 describe("parseNewsResults + buildNewsSection", () => {
   it("parses Brave results and bounds the section", () => {
     const items = parseNewsResults({

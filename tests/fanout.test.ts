@@ -22,6 +22,7 @@ const CTX = {
   fitSection: "",
   pillarSection: "",
   newsSection: "",
+  newsy: false,
   vaultContext: "(vault is empty)",
 };
 
@@ -185,6 +186,46 @@ describe("refineTarget + buildRefinePrompt", () => {
     assert.ok(prompt.includes("PIECE"));
     assert.ok(prompt.includes("Output only the revised piece"));
     assert.ok(!prompt.includes("alternate variants"));
+  });
+});
+
+describe("runFanout news retry", () => {
+  it("retries digit-less news options once, keeps originals otherwise", async () => {
+    const { runFanout } = await import("../lib/drafting");
+    const seen: string[] = [];
+    const stub = {
+      responses: {
+        create: async ({ input }: { input: string }) => {
+          seen.push(input);
+          if (input.includes("Too vague")) return { output_text: "Model X costs $5 — verified digit" };
+          if (input.includes("PROMPT-A")) return { output_text: "vague post with no facts" };
+          return { output_text: "post with 3 facts" };
+        },
+      },
+    };
+    const calls = [
+      { key: "a", label: "A", role: "option" as const, prompt: "PROMPT-A" },
+      { key: "b", label: "B", role: "option" as const, prompt: "PROMPT-B" },
+    ];
+    // @ts-expect-error stub client
+    const out = await runFanout(stub, "short_post", calls, true);
+    assert.match(out.get("a") ?? "", /verified digit/);
+    assert.equal(out.get("b"), "post with 3 facts");
+    assert.ok(seen.some((s) => s.includes("Too vague")));
+  });
+
+  it("skips the retry for non-news drafts", async () => {
+    const { runFanout } = await import("../lib/drafting");
+    let n = 0;
+    const stub = {
+      responses: { create: async () => ({ output_text: `vague ${++n}` }) },
+    };
+    // @ts-expect-error stub client
+    const out = await runFanout(stub, "short_post", [
+      { key: "a", label: "A", role: "option" as const, prompt: "P" },
+    ]);
+    assert.equal(out.get("a"), "vague 1");
+    assert.equal(n, 1);
   });
 });
 

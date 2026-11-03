@@ -217,6 +217,7 @@ export default function QueueConsole(): React.ReactNode {
   const [feedback, setFeedback] = useState<{ draftId: string; body: string; standing: boolean } | null>(
     null,
   );
+  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     weekday: "1",
@@ -484,6 +485,7 @@ export default function QueueConsole(): React.ReactNode {
     setNote(null);
     setError(null);
     setJobProgress({ done: 0, total: 0 });
+    setFeedbackStatus(mode === "set" ? "Regenerating all options…" : "Refining your pick…");
     try {
       const started = await readJson(
         await fetch("/api/draft/redraft", {
@@ -492,7 +494,10 @@ export default function QueueConsole(): React.ReactNode {
           body: JSON.stringify({ slotId, feedback: feedback.body, mode, standing: feedback.standing }),
         }),
       );
-      const done = await pollJob(started.jobId as string);
+      const done = await pollJob(started.jobId as string, (d) => {
+        const prog = (d.progress ?? {}) as { stage?: unknown };
+        if (typeof prog.stage === "string" && prog.stage) setFeedbackStatus(prog.stage);
+      });
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
       setFeedback(null);
       setNote(
@@ -505,6 +510,7 @@ export default function QueueConsole(): React.ReactNode {
     } finally {
       setBusy(false);
       setJobProgress(null);
+      setFeedbackStatus(null);
     }
   }
 
@@ -1058,16 +1064,19 @@ export default function QueueConsole(): React.ReactNode {
                       disabled={busy || feedback.body.trim().length === 0}
                       onClick={() => void sendFeedback(selected.id, "refine")}
                     >
-                      Refine picked
+                      {busy ? "Working…" : "Refine picked"}
                     </button>
                     <button
                       disabled={busy || feedback.body.trim().length === 0}
                       onClick={() => void sendFeedback(selected.id, "set")}
                     >
-                      New set
+                      {busy ? "Working…" : "New set"}
                     </button>
-                    <button onClick={() => setFeedback(null)}>Cancel</button>
+                    <button disabled={busy} onClick={() => setFeedback(null)}>
+                      Cancel
+                    </button>
                   </div>
+                  {busy && feedbackStatus ? <p className="note">{feedbackStatus}</p> : null}
                 </div>
               ) : null}
             </div>

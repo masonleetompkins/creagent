@@ -120,6 +120,7 @@ export type FanoutContext = {
   fitSection: string;
   pillarSection: string;
   newsSection: string;
+  newsy: boolean;
   vaultContext: string;
   previous?: string;
   feedback?: string;
@@ -265,6 +266,7 @@ async function buildFanoutContext(
   ]);
   const rules = rulesFor(slot.pillar_id, slot.content_type);
   const newsSection = newsItems === null ? "" : `\n\n${buildNewsSection(newsItems)}`;
+  const newsyFlag = newsItems !== null;
   return {
     voiceSection: voiceSectionFor(fit.weak, fit.pillarFormat),
     pillarLine,
@@ -279,6 +281,7 @@ async function buildFanoutContext(
     fitSection: fit.fitSection,
     pillarSection: fit.pillarSection,
     newsSection,
+    newsy: newsyFlag,
     vaultContext: buildDraftContext(
       hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
     ),
@@ -323,15 +326,32 @@ export function overLimit(kind: string, text: string): number {
   return Math.max(0, Array.from(text.trim()).length - limit);
 }
 
-async function runFanout(
+export async function runFanout(
   client: MetaClient,
   kind: string,
   calls: FanoutCall[],
+  newsy = false,
 ): Promise<Map<string, string>> {
   const entries = await Promise.all(
     calls.map(async (c) => [c.key, await callText(client, c.prompt)] as const),
   );
   const out = new Map(entries);
+  // Soft completeness pass for news options: a news post with no concrete
+  // fact (no digit anywhere) gets one retry naming specifics. Accepted
+  // whatever comes back — unlike length, vagueness never drops an option.
+  if (newsy) {
+    for (const c of calls.filter((x) => x.role === "option")) {
+      const body = (out.get(c.key) ?? "").trim();
+      if (!body || /\d/.test(body)) continue;
+      const retry = (
+        await callText(
+          client,
+          `${c.prompt}\n\nToo vague — add one concrete fact from the news (a name, number, or date). Same angle, no padding. Output only the post.`,
+        )
+      ).trim();
+      if (retry) out.set(c.key, retry);
+    }
+  }
   // Repair pass: over-limit options get one retry with the overage stated,
   // then are dropped. Limits apply to options only — thread bodies are
   // multi-post by design (each post carries its own limit in-prompt).
@@ -360,7 +380,10 @@ async function draftOne(slot: SlotRow): Promise<void> {
   const client = getMetaClient(metaKey);
   const ctx = await buildFanoutContext(slot);
   const calls = buildFanoutPrompts(slot.content_type, ctx);
-  const assembled = assembleStructure(slot.content_type, await runFanout(client, slot.content_type, calls));
+  const assembled = assembleStructure(
+    slot.content_type,
+    await runFanout(client, slot.content_type, calls, ctx.newsy),
+  );
   if (!assembled) {
     throw new Error(`model returned an empty draft (all ${calls.length} calls came back empty)`);
   }
@@ -382,7 +405,10 @@ export async function runRedraftSet(slotId: string, feedback: string): Promise<s
   const client = getMetaClient(metaKey);
   const ctx = await buildFanoutContext(slot, prev.body, note);
   const calls = buildFanoutPrompts(slot.content_type, ctx);
-  const assembled = assembleStructure(slot.content_type, await runFanout(client, slot.content_type, calls));
+  const assembled = assembleStructure(
+    slot.content_type,
+    await runFanout(client, slot.content_type, calls, ctx.newsy),
+  );
   if (!assembled) {
     throw new Error(`model returned an empty redraft (all ${calls.length} calls came back empty)`);
   }
