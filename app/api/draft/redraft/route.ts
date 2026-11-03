@@ -19,9 +19,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (typeof body.feedback !== "string" || !body.feedback.trim()) {
       return NextResponse.json({ error: "feedback is empty" }, { status: 400 });
     }
+    const mode = body.mode === "set" ? "set" : "refine";
+    const standing = body.standing === true;
     const jobId = enqueue("redraft_slot", {
       slotId: body.slotId,
       feedback: body.feedback.trim().slice(0, 4000),
+      mode,
+      standing,
     });
     return NextResponse.json({ jobId });
   } catch (error) {

@@ -214,7 +214,9 @@ export default function QueueConsole(): React.ReactNode {
     },
     [],
   );
-  const [feedback, setFeedback] = useState<{ draftId: string; body: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ draftId: string; body: string; standing: boolean } | null>(
+    null,
+  );
   const [adding, setAdding] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     weekday: "1",
@@ -476,7 +478,7 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
-  async function sendFeedback(slotId: string): Promise<void> {
+  async function sendFeedback(slotId: string, mode: "refine" | "set"): Promise<void> {
     if (!selected || !feedback || feedback.body.trim().length === 0) return;
     setBusy(true);
     setNote(null);
@@ -487,13 +489,15 @@ export default function QueueConsole(): React.ReactNode {
         await fetch("/api/draft/redraft", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slotId, feedback: feedback.body }),
+          body: JSON.stringify({ slotId, feedback: feedback.body, mode, standing: feedback.standing }),
         }),
       );
       const done = await pollJob(started.jobId as string);
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
       setFeedback(null);
-      setNote(`Regenerated with your feedback. ${(done.result as { hint?: string })?.hint ?? ""}`.trim());
+      setNote(
+        `${mode === "set" ? "New set generated" : "Picked option refined"} with your feedback. ${(done.result as { hint?: string })?.hint ?? ""}`.trim(),
+      );
       await refresh();
       await openSlot(slotId);
     } catch (e) {
@@ -1027,22 +1031,40 @@ export default function QueueConsole(): React.ReactNode {
                 nextStep={nextStep}
                 onSelect={(idx) => void selectOption(d.id, idx)}
                 onEdit={() => setEditing({ id: d.id, body: d.body })}
-                onFeedback={() => setFeedback({ draftId: d.id, body: "" })}
+                onFeedback={() => setFeedback({ draftId: d.id, body: "", standing: false })}
               />
               {feedback && feedback.draftId === d.id ? (
                 <div className="feedback-form">
                   <textarea
                     value={feedback.body}
-                    onChange={(e) => setFeedback({ draftId: d.id, body: e.target.value })}
-                    placeholder="What should change about your picked option? e.g. more specific facts, no emojis…"
+                    onChange={(e) =>
+                      setFeedback({ draftId: d.id, body: e.target.value, standing: feedback.standing })
+                    }
+                    placeholder="What should change? e.g. more specific facts, no nationalism framing…"
                   />
+                  <label className="checkline">
+                    <input
+                      type="checkbox"
+                      checked={feedback.standing}
+                      onChange={(e) =>
+                        setFeedback({ draftId: d.id, body: feedback.body, standing: e.target.checked })
+                      }
+                    />
+                    Save as standing rule for all future drafts
+                  </label>
                   <div className="row">
                     <button
                       className="primary"
                       disabled={busy || feedback.body.trim().length === 0}
-                      onClick={() => void sendFeedback(selected.id)}
+                      onClick={() => void sendFeedback(selected.id, "refine")}
                     >
-                      Regenerate
+                      Refine picked
+                    </button>
+                    <button
+                      disabled={busy || feedback.body.trim().length === 0}
+                      onClick={() => void sendFeedback(selected.id, "set")}
+                    >
+                      New set
                     </button>
                     <button onClick={() => setFeedback(null)}>Cancel</button>
                   </div>

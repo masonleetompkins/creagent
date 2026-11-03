@@ -186,13 +186,21 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "redraft_slot",
-    description: "Regenerate a slot's draft from revision feedback (appends a new draft version).",
-    parameters: objParam({ slotId: S("Slot UUID"), feedback: S("What should change") }, ["slotId", "feedback"]),
+    description:
+      "Regenerate a slot's draft from revision feedback (appends a new draft version). Mode refine revises the picked option only; mode set regenerates all options with the note. Standing=true also banks the note as a global style rule.",
+    parameters: objParam({
+      slotId: S("Slot UUID"),
+      feedback: S("What should change"),
+      mode: S("refine (default) or set"),
+      standing: B("Bank as a global standing rule (default false)"),
+    }),
     run: async (a) =>
       safe(async () => ({
         jobId: enqueue("redraft_slot", {
           slotId: uuid(a.slotId, "slotId"),
           feedback: str(a.feedback, "feedback"),
+          mode: a.mode === "set" ? "set" : "refine",
+          standing: a.standing === true,
         }),
       })),
   },

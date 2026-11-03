@@ -6,7 +6,8 @@ import { runCarouselImage } from "./lib/carousel-image";
 import { runAutopick, runPlanImages } from "./lib/carousel-plan";
 import { runPhotoScan } from "./lib/photo-vision";
 import { closeDb } from "./lib/db";
-import { runDraftAll, runDraftSlot, runRedraftSlot } from "./lib/drafting";
+import { runDraftAll, runDraftSlot, runRedraftSet, runRedraftSlot } from "./lib/drafting";
+import { upsertRules } from "./lib/feedback";
 import { distillSlotFeedback } from "./lib/feedback";
 import { runMigrations } from "./scripts/migrate";
 import {
@@ -124,11 +125,16 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return { drafted: 1 };
   }
   if (job.name === "redraft_slot") {
-    const { slotId, feedback } = data;
+    const { slotId, feedback, mode, standing } = data;
     if (typeof slotId !== "string" || !slotId) throw new Error("slotId is required");
     if (typeof feedback !== "string" || !feedback.trim()) throw new Error("feedback is empty");
-    updateProgress(job.id, { stage: "Rewriting with your feedback…" });
-    const draftId = await runRedraftSlot(slotId, feedback);
+    // Standing notes bank first so this very regeneration obeys them.
+    if (standing === true) upsertRules(null, null, [feedback.trim()]);
+    updateProgress(job.id, {
+      stage: mode === "set" ? "Regenerating all options…" : "Rewriting with your feedback…",
+    });
+    const draftId =
+      mode === "set" ? await runRedraftSet(slotId, feedback) : await runRedraftSlot(slotId, feedback);
     return { redrafted: 1, draftId };
   }
   if (job.name === "distill_feedback") {

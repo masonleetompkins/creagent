@@ -367,6 +367,29 @@ async function draftOne(slot: SlotRow): Promise<void> {
   saveDraft(slot.id, slot.content_type, assembled.body, assembled.structure);
 }
 
+// Full-set redraft: same fan-out as a fresh draft, with the note in every
+// call. For standing notes ("no nationalism framing anywhere") that must
+// reshape all options, not just the pick.
+export async function runRedraftSet(slotId: string, feedback: string): Promise<string> {
+  const note = feedback.trim();
+  if (!note) throw new Error("feedback is empty");
+  const slot = loadSlot(slotId);
+  if (!slot) throw new Error("slot not found");
+  const prev = latestDraft(slotId);
+  if (!prev) throw new Error("draft this slot before giving feedback");
+  const metaKey = loadKeys().meta;
+  if (!metaKey) throw new Error("save a Meta key in Settings first");
+  const client = getMetaClient(metaKey);
+  const ctx = await buildFanoutContext(slot, prev.body, note);
+  const calls = buildFanoutPrompts(slot.content_type, ctx);
+  const assembled = assembleStructure(slot.content_type, await runFanout(client, slot.content_type, calls));
+  if (!assembled) {
+    throw new Error(`model returned an empty redraft (all ${calls.length} calls came back empty)`);
+  }
+  saveFeedback(slotId, prev.id, note);
+  return saveDraft(slot.id, slot.content_type, assembled.body, assembled.structure);
+}
+
 export function saveDraft(
   slotId: string,
   kind: string,

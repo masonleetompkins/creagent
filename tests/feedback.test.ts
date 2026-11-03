@@ -66,6 +66,13 @@ describe("style_rules", () => {
     assert.deepEqual(parseRulesJson(`not json at all`), []);
   });
 
+  it("global standing rules match every scope", async () => {
+    const { upsertRules, rulesFor } = await import("../lib/feedback");
+    assert.equal(upsertRules(null, null, ["No nationalism framing anywhere."]), 1);
+    const rules = rulesFor(randomUUID(), "short_post", 5).map((r) => r.rule);
+    assert.ok(rules.includes("No nationalism framing anywhere."));
+  });
+
   it("rulesFor prefers scoped rules over global", async () => {
     const { upsertRules, rulesFor } = await import("../lib/feedback");
     upsertRules(null, null, ["Always end with a question?"]);
