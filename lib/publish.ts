@@ -5,8 +5,10 @@
 // per-platform receipts land in slot_posts; the slot flips gray only when
 // every platform published. Docs: docs.zernio.com/posts/create-post
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { PLATFORM_POST_CAPS, THREAD_KINDS } from "./content";
 import { getDb, nowIso } from "./db";
+import { attachmentPath, listAttachments } from "./uploads";
 import { resolveApproval } from "./draft-approval";
 import { clampSelection, parseStructure, splitLegacyOptions } from "./draft-structure";
 import { parseSlotPlatforms } from "./platform-fit";
@@ -15,6 +17,7 @@ import {
   zernioCreatePost,
   zernioDeletePost,
   zernioGetPost,
+  zernioUploadMedia,
   type ZernioAccount,
 } from "./zernio";
 
@@ -32,6 +35,19 @@ export const ZERNIO_SLUGS: Record<string, string> = {
 
 const THREAD_SLUGS = new Set(["twitter", "threads"]);
 const TEXT_KINDS = new Set(["short_post", "thread", "article_thread"]);
+const IMAGE_KINDS = new Set(["carousel"]);
+const VIDEO_KINDS = new Set(["video_trend", "video_series", "video_yap", "long_video", "clip"]);
+
+function mimeForPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "mp4" || ext === "m4v") return "video/mp4";
+  if (ext === "mov") return "video/quicktime";
+  return "application/octet-stream";
+}
 
 // Length caps: singles from the shared platform map (their API rejects
 // over these, so we preflight and fail before a multi-platform send can
@@ -43,9 +59,12 @@ function singleCap(slug: string): number | undefined {
   return PLATFORM_POST_CAPS[slug];
 }
 
+export type MediaFile = { path: string; mime: string };
+
 export type PublishText =
   | { mode: "single"; content: string }
-  | { mode: "thread"; items: string[] };
+  | { mode: "thread"; items: string[] }
+  | { mode: "media"; caption: string; files: MediaFile[]; label: string };
 
 export type PublishTarget = {
   platform: string;
@@ -100,9 +119,32 @@ export function buildPublishBody(
   text: PublishText,
   targets: PublishTarget[],
   scheduledFor?: string,
+  mediaUrls?: string[],
 ): { body: Record<string, unknown>; payloads: Record<string, string> } | { error: string } {
   if (targets.length === 0) return { error: "no publish targets" };
   const timing = scheduledFor ? { scheduledFor } : { publishNow: true };
+  if (text.mode === "media") {
+    if (!mediaUrls || mediaUrls.length === 0) return { error: "media upload produced no URLs" };
+    if (text.caption) {
+      for (const t of targets) {
+        const cap = singleCap(t.slug);
+        if (cap !== undefined && overCap(text.caption, cap)) {
+          return {
+            error: `${t.platform} caps captions at ${cap} characters — this one is ${Array.from(text.caption.trim()).length}. Shorten the caption, then post.`,
+          };
+        }
+      }
+    }
+    return {
+      body: {
+        ...(text.caption ? { content: text.caption } : {}),
+        mediaItems: mediaUrls.map((url) => ({ url })),
+        platforms: targets.map((t) => ({ platform: t.slug, accountId: t.accountId })),
+        ...timing,
+      },
+      payloads: Object.fromEntries(targets.map((t) => [t.platform, text.label])),
+    };
+  }
   if (text.mode === "single") {
     for (const t of targets) {
       const cap = singleCap(t.slug);
@@ -216,10 +258,54 @@ function loadDraft(draftId: string): DraftRow | null {
 // The shippable text: the pinned pick when the slot carries a pin, else the
 // latest version's pick. Thread kinds need real hooks-plus-body structure —
 // legacy soup can't be split into post items, so those re-draft.
+// Post caption from approved copy: carousels ship their Caption section,
+// video kinds ship the opening paragraph (the hook) as the caption.
+export function extractPostCaption(kind: string, approvedText: string): string {
+  const text = approvedText.trim();
+  if (IMAGE_KINDS.has(kind)) {
+    const withoutTag = text.replace(/^\s*\*{0,2}caption:\*{0,2}\s*/i, "");
+    const cutAt = withoutTag.search(/\n\s*\*{0,2}\d+\s*-\s*slide|\n\s*\*{0,2}slide\s*1\b/i);
+    const caption = (cutAt >= 0 ? withoutTag.slice(0, cutAt) : withoutTag).trim();
+    if (caption) return caption;
+  }
+  return text.split(/\n\s*\n/)[0]?.trim() ?? "";
+}
+
+// Postable media for a slot: carousel slide images (filename order) or the
+// latest video export, falling back to an attached finished file.
+export function slotMediaFiles(slotId: string, kind: string): MediaFile[] {
+  if (IMAGE_KINDS.has(kind)) {
+    return listAttachments(slotId)
+      .filter((a) => a.kind === "image")
+      .sort((a, b) => a.filename.localeCompare(b.filename))
+      .map((a) => attachmentPath(a.id))
+      .filter((p): p is string => !!p && existsSync(p))
+      .map((path) => ({ path, mime: mimeForPath(path) }));
+  }
+  if (VIDEO_KINDS.has(kind)) {
+    const latest = getDb()
+      .prepare(
+        `SELECT e.path FROM video_exports e JOIN video_projects p ON p.id = e.project_id
+         WHERE p.slot_id = ? ORDER BY e.created_at DESC LIMIT 1`,
+      )
+      .get(slotId) as { path: string } | undefined;
+    if (latest && existsSync(latest.path)) {
+      return [{ path: latest.path, mime: mimeForPath(latest.path) }];
+    }
+    const attached = listAttachments(slotId)
+      .filter((a) => a.kind === "video")
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((a) => attachmentPath(a.id))
+      .find((p) => p && existsSync(p));
+    return attached ? [{ path: attached, mime: mimeForPath(attached) }] : [];
+  }
+  return [];
+}
+
 function publishTextFor(slot: SlotRow): PublishText | { error: string } {
-  if (!TEXT_KINDS.has(slot.content_type)) {
+  if (!TEXT_KINDS.has(slot.content_type) && !IMAGE_KINDS.has(slot.content_type) && !VIDEO_KINDS.has(slot.content_type)) {
     return {
-      error: `Zernio posting covers text posts and threads in v1 — this is a ${slot.content_type.replace(/_/g, " ")}. Media upload (images, carousels, video) is next; post this one manually for now.`,
+      error: `Zernio posting covers posts, threads, carousels, and video — this is a ${slot.content_type.replace(/_/g, " ")}. Post it manually for now.`,
     };
   }
   const pin =
@@ -229,6 +315,26 @@ function publishTextFor(slot: SlotRow): PublishText | { error: string } {
   if (!pin) return { error: "draft this slot before posting" };
   const draft = loadDraft(pin.draftId);
   if (!draft) return { error: "the approved draft is gone — re-approve, then post" };
+  if (IMAGE_KINDS.has(slot.content_type) || VIDEO_KINDS.has(slot.content_type)) {
+    const structure = parseStructure(draft.structure);
+    const count = structure?.options.length ?? 1;
+    const idx = clampSelection(String(pin.optionIndex ?? draft.selection ?? 0), count);
+    const approved = structure ? (structure.options[idx]?.body ?? draft.body) : draft.body;
+    const files = slotMediaFiles(slot.id, slot.content_type);
+    if (files.length === 0) {
+      return {
+        error: IMAGE_KINDS.has(slot.content_type)
+          ? "no slide images attached — open the carousel editor and Attach export first"
+          : "no finished video found — Export in the video editor first, or attach a finished file",
+      };
+    }
+    return {
+      mode: "media",
+      caption: extractPostCaption(slot.content_type, approved),
+      files,
+      label: IMAGE_KINDS.has(slot.content_type) ? `carousel (${files.length} images)` : "video",
+    };
+  }
   const structure = parseStructure(draft.structure);
   if (!THREAD_KINDS.has(slot.content_type)) {
     const count = structure?.options.length ?? splitLegacyOptions(draft.body)?.length ?? 1;
@@ -252,6 +358,7 @@ export type PublishDeps = {
   createPost: (apiKey: string, body: Record<string, unknown>, key: string) => Promise<unknown>;
   getPost: (apiKey: string, postId: string) => Promise<unknown>;
   deletePost: (apiKey: string, postId: string) => Promise<unknown>;
+  uploadFile: (apiKey: string, path: string, contentType: string) => Promise<string>;
 };
 
 const DEFAULT_DEPS: PublishDeps = {
@@ -259,6 +366,7 @@ const DEFAULT_DEPS: PublishDeps = {
   createPost: zernioCreatePost,
   getPost: zernioGetPost,
   deletePost: zernioDeletePost,
+  uploadFile: zernioUploadMedia,
 };
 
 function matchTargets(platforms: string[], accounts: ZernioAccount[]): PublishTarget[] | { error: string } {
@@ -405,7 +513,20 @@ export async function publishSlot(
       error: `already scheduled for ${fmtWhen(slot.scheduled_at)} — Cancel scheduled first to change the text or time.`,
     };
   }
-  const built = buildPublishBody(text, targets, scheduledFor);
+  // Media uploads happen before the send so a failed upload fails the
+  // whole attempt with nothing posted (all-or-nothing preflight).
+  let mediaUrls: string[] | undefined;
+  if (text.mode === "media") {
+    try {
+      mediaUrls = [];
+      for (const f of text.files) {
+        mediaUrls.push(await deps.uploadFile(apiKey, f.path, f.mime));
+      }
+    } catch (error) {
+      return { ok: false, error: `media upload failed (${(error as Error).message}) — nothing was sent` };
+    }
+  }
+  const built = buildPublishBody(text, targets, scheduledFor, mediaUrls);
   if ("error" in built) return { ok: false, error: built.error };
 
   const { attempt, key } = nextAttempt(slotId);

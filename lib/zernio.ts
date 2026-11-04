@@ -1,4 +1,6 @@
 // Zernio unified social API client. Docs: docs.zernio.com
+import { readFileSync, statSync } from "node:fs";
+import { basename } from "node:path";
 import { fetchWithRetry } from "./fetch-retry";
 
 export const ZERNIO_BASE_URL = "https://zernio.com/api";
@@ -128,6 +130,46 @@ export async function zernioGetPost(apiKey: string, postId: string): Promise<unk
 // those need unpublish, which this app never calls (posted is posted).
 export async function zernioDeletePost(apiKey: string, postId: string): Promise<unknown> {
   return zernioRequest(apiKey, "DELETE", `/v1/posts/${encodeURIComponent(postId)}`);
+}
+
+// Local file -> postable URL: presign, PUT the bytes (no auth on the
+// presigned URL), return the public URL for mediaItems. Uploads sit in
+// temp storage 7 days and go permanent once a post uses them.
+export async function zernioPresignMedia(
+  apiKey: string,
+  file: { filename: string; contentType: string; size: number },
+): Promise<{ uploadUrl: string; publicUrl: string }> {
+  const res = (await zernioRequest(apiKey, "POST", "/v1/media/presign", {
+    filename: file.filename,
+    contentType: file.contentType,
+    size: file.size,
+  })) as Record<string, unknown>;
+  const uploadUrl = typeof res["uploadUrl"] === "string" ? res["uploadUrl"] : "";
+  const publicUrl = typeof res["publicUrl"] === "string" ? res["publicUrl"] : "";
+  if (!uploadUrl || !publicUrl) throw new Error("presign returned no upload URL");
+  return { uploadUrl, publicUrl };
+}
+
+export async function zernioUploadMedia(
+  apiKey: string,
+  path: string,
+  contentType: string,
+): Promise<string> {
+  const size = statSync(path).size;
+  if (size === 0) throw new Error("media file is empty");
+  const { uploadUrl, publicUrl } = await zernioPresignMedia(apiKey, {
+    filename: basename(path),
+    contentType,
+    size,
+  });
+  const put = await fetchWithRetry(
+    uploadUrl,
+    { method: "PUT", headers: { "Content-Type": contentType }, body: readFileSync(path) as unknown as BodyInit },
+    2,
+    2000,
+  );
+  if (!put.ok) throw new Error(`media upload failed: HTTP ${put.status}`);
+  return publicUrl;
 }
 
 export async function testZernio(apiKey: string): Promise<string> {

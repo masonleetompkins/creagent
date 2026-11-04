@@ -206,11 +206,17 @@ describe("publishSlot", () => {
   }
 
   function fullDeps(d: ReturnType<typeof deps>) {
+    const uploaded: string[] = [];
     return {
+      uploaded,
       listAccounts: async () => d.accounts,
       createPost: d.createPost,
       getPost: d.getPost,
       deletePost: d.deletePost,
+      uploadFile: async (_apiKey: string, path: string, _contentType: string) => {
+        uploaded.push(path);
+        return `https://media.zernio.com/${path.split("/").pop()}`;
+      },
     };
   }
 
@@ -225,7 +231,7 @@ describe("publishSlot", () => {
     }
   });
 
-  it("refuses media kinds and account mismatches without sending", async () => {
+  it("refuses media-less slots and account mismatches without sending", async () => {
     const { publishSlot } = await import("../lib/publish");
     const run = async (slotId: string, accounts: Array<{ id: string; platform: string; username: string }>) => {
       const d = deps({ accounts });
@@ -240,7 +246,17 @@ describe("publishSlot", () => {
       platforms: ["tiktok"],
       draft: { structure: null },
     });
-    assert.match(await run(video, [{ id: "t1", platform: "tiktok", username: "me" }]), /text posts and threads/);
+    assert.match(await run(video, [{ id: "t1", platform: "tiktok", username: "me" }]), /no finished video/);
+    const bareCarousel = await seed({
+      status: "green",
+      contentType: "carousel",
+      platforms: ["instagram"],
+      draft: { structure: { layout: "prose", options: [{ label: "D", body: "caption" }] } },
+    });
+    assert.match(
+      await run(bareCarousel, [{ id: "i1", platform: "instagram", username: "me" }]),
+      /no slide images attached/,
+    );
     const missing = await seed({
       status: "green",
       contentType: "short_post",
@@ -507,5 +523,126 @@ describe("publishSlot", () => {
     assert.ok(flipped.includes(slotB));
     const statusB = (getDb().prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotB) as { status: string }).status;
     assert.equal(statusB, "gray");
+  });
+
+  it("extracts carousel captions and video hooks", async () => {
+    const { extractPostCaption } = await import("../lib/publish");
+    assert.equal(
+      extractPostCaption("carousel", "**Caption:**\nHook line here.\n\n**7-SLIDE CAROUSEL:**\n\n**SLIDE 1:**\nx"),
+      "Hook line here.",
+    );
+    assert.equal(extractPostCaption("carousel", "plain caption, no markers"), "plain caption, no markers");
+    assert.equal(
+      extractPostCaption("video_yap", "Bold claim opener.\n\nSecond beat here."),
+      "Bold claim opener.",
+    );
+  });
+
+  it("collects slide images in order, prefers the latest export for video", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { slotMediaFiles } = await import("../lib/publish");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    process.env.UPLOADS_DIR = join(mkdtempSync(join(tmpdir(), "creagent-uploads-")), "uploads");
+    mkdirSync(process.env.UPLOADS_DIR, { recursive: true });
+    const db = getDb();
+    const slotId = randomUUID();
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, brief, created_at)
+       VALUES (?, ?, 'carousel', '[]', 'green', '{}', ?)`,
+    ).run(slotId, nowIso(), nowIso());
+    for (const name of ["slide-2.png", "slide-1.png"]) {
+      const id = randomUUID();
+      db.prepare(
+        `INSERT INTO slot_attachments (id, slot_id, kind, filename, mime, size, created_at)
+         VALUES (?, ?, 'image', ?, 'image/png', 3, ?)`,
+      ).run(id, slotId, name, nowIso());
+      writeFileSync(join(process.env.UPLOADS_DIR, `${id}.png`), "png");
+    }
+    const files = slotMediaFiles(slotId, "carousel");
+    assert.equal(files.length, 2);
+    assert.ok(files[0].path.endsWith(".png") && files[0].mime === "image/png");
+    // Filename order decides slide order regardless of insert order.
+    const first = db.prepare(`SELECT filename FROM slot_attachments WHERE id = ?`).get(
+      files[0].path.split("/").pop()?.replace(".png", "") ?? "",
+    ) as { filename: string };
+    assert.equal(first.filename, "slide-1.png");
+    // Missing files on disk are skipped, not shipped.
+    db.prepare(`DELETE FROM slot_attachments WHERE slot_id = ?`).run(slotId);
+    assert.deepEqual(slotMediaFiles(slotId, "carousel"), []);
+  });
+
+  it("publishes carousel slots with uploaded mediaItems", async () => {
+    const { publishSlot } = await import("../lib/publish");
+    const { getDb, nowIso } = await import("../lib/db");
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const slotId = await seed({
+      status: "green",
+      contentType: "carousel",
+      platforms: ["instagram"],
+      draft: {
+        structure: {
+          layout: "prose",
+          options: [{ label: "D", body: "**Caption:**\nBig idea.\n\n**SLIDE 1:**\nx" }],
+        },
+      },
+    });
+    const db = getDb();
+    const attId = randomUUID();
+    db.prepare(
+      `INSERT INTO slot_attachments (id, slot_id, kind, filename, mime, size, created_at)
+       VALUES (?, ?, 'image', 'slide-1.png', 'image/png', 3, ?)`,
+    ).run(attId, slotId, nowIso());
+    writeFileSync(join(process.env.UPLOADS_DIR as string, `${attId}.png`), "png");
+    const d = deps({
+      accounts: [{ id: "i1", platform: "instagram", username: "me" }],
+      onPost: () => ({
+        post: {
+          _id: "zmc",
+          platforms: [{ platform: "instagram", status: "published", platformPostUrl: "https://ig.me/p/1" }],
+        },
+      }),
+    });
+    const fd = fullDeps(d);
+    const res = await publishSlot(slotId, "k", fd);
+    assert.equal(res.ok, true);
+    assert.equal(fd.uploaded.length, 1);
+    const sent = d.sent[0].body;
+    assert.equal(sent["content"], "Big idea.");
+    assert.deepEqual((sent["mediaItems"] as Array<{ url: string }>).map((m) => m.url), [
+      `https://media.zernio.com/${attId}.png`,
+    ]);
+  });
+
+  it("fails the whole attempt when an upload fails", async () => {
+    const { publishSlot } = await import("../lib/publish");
+    const { getDb, nowIso } = await import("../lib/db");
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const slotId = await seed({
+      status: "green",
+      contentType: "carousel",
+      platforms: ["instagram"],
+      draft: { structure: { layout: "prose", options: [{ label: "D", body: "cap" }] } },
+    });
+    const attId = randomUUID();
+    getDb()
+      .prepare(
+        `INSERT INTO slot_attachments (id, slot_id, kind, filename, mime, size, created_at)
+         VALUES (?, ?, 'image', 'slide-1.png', 'image/png', 3, ?)`,
+      )
+      .run(attId, slotId, nowIso());
+    writeFileSync(join(process.env.UPLOADS_DIR as string, `${attId}.png`), "png");
+    const d = deps({ accounts: [{ id: "i1", platform: "instagram", username: "me" }] });
+    const fd = fullDeps(d);
+    fd.uploadFile = async () => {
+      throw new Error("R2 down");
+    };
+    const res = await publishSlot(slotId, "k", fd);
+    assert.equal(res.ok, false);
+    if (res.ok) throw new Error("unreachable");
+    assert.match(res.error, /media upload failed/);
+    assert.equal(d.sent.length, 0);
   });
 });
