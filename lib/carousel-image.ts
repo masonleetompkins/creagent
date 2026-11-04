@@ -7,6 +7,7 @@ import { basename, join } from "node:path";
 import { getDb } from "./db";
 import { getSlide, updateSlide } from "./carousel";
 import { fetchWithRetry } from "./fetch-retry";
+import { withHouseStyle } from "./house-style";
 import { setRequestStatus } from "./gen-requests";
 import { loadKeys } from "./keys";
 import { META_IMAGE_MODEL, getMetaClient } from "./meta";
@@ -54,6 +55,12 @@ async function fetchBytes(url: string, cap: number): Promise<{ data: Buffer; con
   return { data: buf, contentType: res.headers.get("content-type") };
 }
 
+// House style at the choke point: planned, story, and hand-typed prompts
+// all render in-style. Pure so tests can pin it without a model call.
+export function styledImagePrompt(prompt: string): string {
+  return withHouseStyle(prompt.trim());
+}
+
 export async function runCarouselImage(
   slideId: string,
   prompt: string,
@@ -65,6 +72,7 @@ export async function runCarouselImage(
   if (!slide) throw new Error("slide not found");
   const cleanPrompt = prompt.trim();
   if (!cleanPrompt) throw new Error("image prompt is empty");
+  const styledPrompt = styledImagePrompt(cleanPrompt);
 
   const client = getMetaClient(metaKey);
   const sizes = ["1024x1792", "1024x1024"];
@@ -73,7 +81,7 @@ export async function runCarouselImage(
     try {
       const out = await client.images.generate({
         model: META_IMAGE_MODEL,
-        prompt: cleanPrompt,
+        prompt: styledPrompt,
         size: size as "1024x1024",
       });
       const item = out.data?.[0];
@@ -97,7 +105,7 @@ export async function runCarouselImage(
       updateSlide(slideId, {
         image_path: filename,
         image_source: "generated",
-        image_prompt: cleanPrompt.slice(0, 500),
+        image_prompt: styledPrompt.slice(0, 2000),
       });
       if (options.requestId) setRequestStatus(options.requestId, "done");
       return { path: filename };

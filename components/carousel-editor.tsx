@@ -1132,7 +1132,9 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             }
             return (
               <div>
-                <p className="note">Agent requested a generated image: {req.prompt}</p>
+                <p className="note">
+                  Agent requested a generated image: {req.prompt} (house anime style applied on generate)
+                </p>
                 <div className="row">
                   <button className="primary" onClick={() => void decideRequest(req.id, "approve")}>
                     Approve + generate

@@ -2,7 +2,7 @@
 import { getDb } from "./db";
 import { addSlide, createProject, deleteSlide, getProject, isLayout, listSlides, updateSlide } from "./carousel";
 import { runAutoDesign } from "./carousel-design";
-import { runPlanImages } from "./carousel-plan";
+import { resolveSlotOutline, runPlanImages } from "./carousel-plan";
 import { approvedBody } from "./draft-structure";
 import { buildDraftContext } from "./drafting";
 import { loadKeys } from "./keys";
@@ -111,33 +111,9 @@ export type CarouselCopyResult = {
   seeded: boolean;
 };
 
-// The copy Generate-copy must honor on a slot-linked project: the approved
-// pick first, else the newest draft's selected option (or full body). The
-// user revised that text by hand — inventing a fresh post instead is the
-// "random new post" bug.
-export function resolveSlotOutline(slotId: string): string {
-  const db = getDb();
-  const slot = db
-    .prepare(`SELECT approved_draft_id, approved_option FROM queue_slots WHERE id = ?`)
-    .get(slotId) as { approved_draft_id: string | null; approved_option: number | null } | undefined;
-  if (slot?.approved_draft_id) {
-    const pinned = db
-      .prepare(`SELECT body, structure FROM drafts WHERE id = ?`)
-      .get(slot.approved_draft_id) as { body: string; structure: string | null } | undefined;
-    if (pinned) {
-      const text = approvedBody(pinned, slot.approved_option).trim();
-      if (text) return text;
-    }
-  }
-  const latest = db
-    .prepare(
-      `SELECT body, structure, selection FROM drafts WHERE slot_id = ? ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(slotId) as { body: string; structure: string | null; selection: string | null } | undefined;
-  if (!latest) return "";
-  const parsed = Number.parseInt(latest.selection ?? "", 10);
-  return approvedBody(latest, Number.isNaN(parsed) ? 0 : parsed).trim();
-}
+// Re-exported: the outline lives in carousel-plan so the story pass can use
+// it without an import cycle.
+export { resolveSlotOutline };
 
 // Image-draft pipeline: approved queue-slot copy -> parsed slides ->
 // auto-matched library photos -> art direction (layouts + backgrounds).

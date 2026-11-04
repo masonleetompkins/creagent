@@ -76,7 +76,13 @@ export async function runAutoDesign(projectId: string): Promise<AutoDesignResult
   const metaKey = loadKeys().meta;
   // Offline hatch for tests and key-less machines: the fallback still
   // art-directs every slide, it just doesn't consult the model.
-  if (!metaKey || process.env.CREAGENT_DESIGN_OFFLINE === "1") return applyFallback();
+  if (
+    !metaKey ||
+    process.env.CREAGENT_DESIGN_OFFLINE === "1" ||
+    process.env.CREAGENT_MODEL_OFFLINE === "1"
+  ) {
+    return applyFallback();
+  }
 
   try {
     const brief = slides

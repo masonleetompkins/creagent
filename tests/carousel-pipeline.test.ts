@@ -8,6 +8,7 @@ import { join } from "node:path";
 process.env.SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "creagent-carousel-pipe-")), "test.sqlite");
 process.env.PHOTOS_DIR = mkdtempSync(join(tmpdir(), "creagent-photos-"));
 process.env.CREAGENT_DESIGN_OFFLINE = "1";
+process.env.CREAGENT_MODEL_OFFLINE = "1";
 
 before(async () => {
   await import("../scripts/migrate");
@@ -151,6 +152,82 @@ describe("draftCarouselFromSlot full build", () => {
     assert.equal(reqs.n, 4);
     const status = db.prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotId) as { status: string };
     assert.equal(status.status, "orange");
+  });
+});
+
+describe("house image style", () => {
+  it("locks every prompt to the anime style, exactly once", async () => {
+    const { HOUSE_IMAGE_STYLE, withHouseStyle } = await import("../lib/house-style");
+    assert.match(HOUSE_IMAGE_STYLE, /Pantheon/);
+    assert.match(HOUSE_IMAGE_STYLE, /bold outlines/);
+    assert.match(HOUSE_IMAGE_STYLE, /no text in the image/);
+    const styled = withHouseStyle("a jar of cookies");
+    assert.match(styled, /a jar of cookies/);
+    assert.match(styled, /Pantheon/);
+    assert.equal(withHouseStyle(styled), styled);
+    assert.equal(withHouseStyle("   "), HOUSE_IMAGE_STYLE);
+  });
+
+  it("locks style at generation while plans stay content-only", async () => {
+    const { buildImagePrompt } = await import("../lib/carousel-plan");
+    const { styledImagePrompt } = await import("../lib/carousel-image");
+    assert.equal(
+      buildImagePrompt({ heading: "H", body: "B", image_prompt: "a kitchen scene" }),
+      "a kitchen scene",
+    );
+    const styled = styledImagePrompt("a kitchen scene");
+    assert.match(styled, /a kitchen scene/);
+    assert.match(styled, /Pantheon/);
+    assert.match(styled, /bold outlines/);
+    assert.equal(styledImagePrompt(styled), styled);
+  });
+});
+
+describe("parseStoryJson", () => {
+  it("keeps valid entries and drops malformed ones", async () => {
+    const { parseStoryJson } = await import("../lib/carousel-plan");
+    assert.deepEqual(parseStoryJson('[{"slide":3,"prompt":"the jar"}]'), [{ slide: 3, prompt: "the jar" }]);
+    assert.deepEqual(parseStoryJson('```json\n[{"slide":1,"prompt":"x"}]\n```'), [{ slide: 1, prompt: "x" }]);
+    assert.deepEqual(
+      parseStoryJson('[{"slide":0,"prompt":"bad"},{"slide":2},{"slide":"3","prompt":"bad"},{"slide":2,"prompt":"ok"}]'),
+      [{ slide: 2, prompt: "ok" }],
+    );
+    assert.throws(() => parseStoryJson("nope"), /story JSON/);
+    assert.throws(() => parseStoryJson('{"a":1}'), /not an array/);
+  });
+});
+
+describe("story-aware planning offline", () => {
+  it("leaves prompts to the heuristic without a model call", async () => {
+    const { addSlide, createProject, listSlides } = await import("../lib/carousel");
+    const { planStoryPrompts } = await import("../lib/carousel-plan");
+    const project = createProject({ title: "story" });
+    const a = addSlide(project.id, { heading: "Jar", body: "cookies" });
+    const out = await planStoryPrompts(project.id, [a.id]);
+    assert.deepEqual(out, { planned: 0, fallback: true });
+    assert.equal(listSlides(project.id)[0].image_prompt, null);
+    assert.deepEqual(await planStoryPrompts(project.id, []), { planned: 0, fallback: false });
+  });
+
+  it("files content-only requests for unmatched slides", async () => {
+    const { getDb } = await import("../lib/db");
+    const { addSlide, createProject } = await import("../lib/carousel");
+    const { runPlanImages } = await import("../lib/carousel-plan");
+    const project = createProject({ title: "plan" });
+    addSlide(project.id, { heading: "Cookie jar", body: "oatmeal at the bottom" });
+    addSlide(project.id, { heading: "Taste test", body: "dig down" });
+    const out = await runPlanImages(project.id);
+    assert.equal(out.attached, 0);
+    assert.equal(out.requested, 2);
+    assert.equal(out.story, 0);
+    assert.equal(out.storyFallback, true);
+    const rows = getDb()
+      .prepare(`SELECT prompt FROM gen_requests WHERE project_id = ? ORDER BY created_at ASC`)
+      .all(project.id) as Array<{ prompt: string }>;
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].prompt, /Cookie jar/);
+    assert.match(rows[0].prompt, /no text in the image/);
+    assert.match(rows[1].prompt, /Taste test/);
   });
 });
 
