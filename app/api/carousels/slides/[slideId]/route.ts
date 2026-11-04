@@ -28,6 +28,11 @@ export async function PATCH(
   ) {
     return NextResponse.json({ error: "unknown background" }, { status: 400 });
   }
+  // Detach only via PATCH (image_path: null clears path + source, keeps the
+  // prompt so a replacement can generate); attaches go through their routes.
+  if (patch.image_path !== undefined && patch.image_path !== null) {
+    return NextResponse.json({ error: "image_path only accepts null here" }, { status: 400 });
+  }
   try {
     const slide = updateSlide(slideId, {
       layout: patch.layout as string | undefined,
@@ -35,6 +40,8 @@ export async function PATCH(
       body: typeof patch.body === "string" ? patch.body : undefined,
       image_prompt: typeof patch.image_prompt === "string" ? patch.image_prompt : undefined,
       background: patch.background === null ? null : (patch.background as string | undefined),
+      image_path: patch.image_path === null ? null : undefined,
+      image_source: patch.image_path === null ? null : undefined,
     });
     if (!slide) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json({ slide });

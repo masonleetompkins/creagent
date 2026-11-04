@@ -509,20 +509,32 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "edit_slide",
-    description: "Edit a carousel slide's heading/body/layout/background directly.",
+    description: "Edit a carousel slide's heading/body/layout/background directly; optionally detach its image.",
     parameters: objParam({
       slideId: S("Slide UUID"),
       heading: S("Optional heading"),
       body: S("Optional body"),
       layout: S("Optional layout: cover|content|photo|cta"),
       background: S("Optional background: kit|null|white|black|gradient|#rrggbb"),
+      clearImage: B("Detach the slide's image (back to unmatched)"),
     }, ["slideId"]),
     run: async (a) =>
       safe(async () => {
         const { isLayout, normalizeBackground, updateSlide } = await import("./carousel");
-        const edit: { heading?: string; body?: string; layout?: string; background?: string | null } = {};
+        const edit: {
+          heading?: string;
+          body?: string;
+          layout?: string;
+          background?: string | null;
+          image_path?: string | null;
+          image_source?: string | null;
+        } = {};
         if (typeof a.heading === "string") edit.heading = a.heading;
         if (typeof a.body === "string") edit.body = a.body;
+        if (a.clearImage === true) {
+          edit.image_path = null;
+          edit.image_source = null;
+        }
         if (typeof a.layout === "string") {
           if (!isLayout(a.layout)) throw new Error("unknown layout");
           edit.layout = a.layout;

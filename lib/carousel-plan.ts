@@ -61,9 +61,36 @@ export type AutopickResult = {
   unmatched: string[];
 };
 
+// Match bar, set by eval (2026-11-04, live library): 19 personal photos x
+// 7 conceptual ELI5 slides scored median 0.038, max 0.264 — pure noise,
+// yet 0.15 attached selfies to every slide. 0.30 leaves conceptual slides
+// for generation while genuine topical matches (same people/places/words,
+// typically 0.4+) still attach. Re-run the eval before moving this.
+export const AUTOPICK_THRESHOLD = 0.3;
+
+export type PhotoCandidate = { url: string; asset_id: string | null; vec: number[] };
+
+export function bestPhotoMatch(
+  queryVec: number[],
+  photos: PhotoCandidate[],
+  used: Set<string>,
+  threshold: number,
+): { url: string; asset_id: string | null; score: number } | null {
+  let best: { url: string; asset_id: string | null; score: number } | null = null;
+  for (const photo of photos) {
+    if (used.has(photo.url) || photo.vec.length === 0 || queryVec.length === 0) continue;
+    const score = cosineSimilarity(queryVec, photo.vec);
+    if (!best || score > best.score) {
+      best = { url: photo.url, asset_id: photo.asset_id, score };
+    }
+  }
+  if (!best || best.score < threshold) return null;
+  return best;
+}
+
 export async function runAutopick(
   projectId: string,
-  threshold = 0.15,
+  threshold = AUTOPICK_THRESHOLD,
 ): Promise<AutopickResult> {
   const project = getProject(projectId);
   if (!project) throw new Error("carousel project not found");
@@ -95,15 +122,8 @@ export async function runAutopick(
       continue;
     }
     const q = await embed(query);
-    let best: { url: string; asset_id: string | null; score: number } | null = null;
-    for (const photo of photoVecs) {
-      if (used.has(photo.url) || photo.vec.length === 0) continue;
-      const score = cosineSimilarity(q, photo.vec);
-      if (!best || score > best.score) {
-        best = { url: photo.url, asset_id: photo.asset_id, score };
-      }
-    }
-    if (!best || best.score < threshold) {
+    const best = bestPhotoMatch(q, photoVecs, used, threshold);
+    if (!best) {
       out.unmatched.push(slide.id);
       continue;
     }

@@ -464,6 +464,24 @@ export default function CarouselEditor({
     }
   }
 
+  async function detachImage(): Promise<void> {
+    if (!current?.image_path) return;
+    try {
+      await readJson(
+        await fetch(`/api/carousels/slides/${current.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_path: null }),
+        }),
+      );
+      setImgTick((t) => t + 1);
+      await load();
+      setNote("Image detached — plan or generate a replacement.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function deleteSlide(id: string): Promise<void> {
     try {
       await readJson(await fetch(`/api/carousels/slides/${id}`, { method: "DELETE" }));
@@ -1145,6 +1163,11 @@ export default function CarouselEditor({
                 />
                 <button onClick={() => void move(-1)}>↑</button>
                 <button onClick={() => void move(1)}>↓</button>
+                {current.image_path ? (
+                  <button onClick={() => void detachImage()} title="Detach this image — the slide goes back to unmatched">
+                    Remove image
+                  </button>
+                ) : null}
                 <button onClick={() => void deleteSlide(current.id)}>Delete</button>
               </div>
               <div className="row">

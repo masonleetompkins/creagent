@@ -331,3 +331,52 @@ describe("edit_slide agent tool", () => {
     assert.equal((res.data as { designed: number }).designed, 2);
   });
 });
+
+describe("bestPhotoMatch", () => {
+  it("picks the best above the bar, nothing below it", async () => {
+    const { bestPhotoMatch } = await import("../lib/carousel-plan");
+    const photos = [
+      { url: "a", asset_id: null, vec: [1, 0] },
+      { url: "b", asset_id: null, vec: [0, 1] },
+    ];
+    const hit = bestPhotoMatch([1, 0], photos, new Set(), 0.3);
+    assert.equal(hit?.url, "a");
+    assert.equal(hit?.score, 1);
+    // Orthogonal query: best is 0, below the bar.
+    assert.equal(bestPhotoMatch([0, 1], [photos[0]], new Set(), 0.3), null);
+    // Used and empty vectors are skipped.
+    assert.equal(bestPhotoMatch([1, 0], photos, new Set(["a"]), 0.3), null);
+    assert.equal(
+      bestPhotoMatch([1, 0], [{ url: "c", asset_id: null, vec: [] }], new Set(), 0.3),
+      null,
+    );
+  });
+});
+
+describe("detach slide image", () => {
+  it("clears path and source, keeps the prompt", async () => {
+    const { addSlide, createProject, listSlides, updateSlide } = await import("../lib/carousel");
+    const project = createProject({ title: "detach" });
+    const slide = addSlide(project.id, { heading: "h" });
+    updateSlide(slide.id, { image_path: "x.png", image_source: "photo:u", image_prompt: "idea" });
+    const cleared = updateSlide(slide.id, { image_path: null, image_source: null });
+    assert.equal(cleared?.image_path, null);
+    assert.equal(cleared?.image_source, null);
+    assert.equal(cleared?.image_prompt, "idea");
+    assert.equal(listSlides(project.id)[0].image_path, null);
+  });
+
+  it("detaches through the agent tool", async () => {
+    const { AGENT_TOOLS } = await import("../lib/agent-tools");
+    const { addSlide, createProject, listSlides, updateSlide } = await import("../lib/carousel");
+    const project = createProject({ title: "agent-detach" });
+    const slide = addSlide(project.id, { heading: "h" });
+    updateSlide(slide.id, { image_path: "x.png", image_source: "generated" });
+    const tool = AGENT_TOOLS.find((t) => t.name === "edit_slide");
+    assert.ok(tool);
+    const res = await tool.run({ slideId: slide.id, clearImage: true });
+    assert.equal(res.ok, true);
+    assert.equal(listSlides(project.id)[0].image_path, null);
+    assert.equal(listSlides(project.id)[0].image_source, null);
+  });
+});

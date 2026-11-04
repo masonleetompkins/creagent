@@ -185,6 +185,41 @@ export async function renderSlide(
   }
 
   if (slide.layout === "cover" || slide.layout === "cta") {
+    // Attached image: full-bleed photo treatment so the image (and its
+    // no-text zones) is honored instead of silently ignored.
+    if (slide.image) {
+      coverImage(ctx, slide.image, 0, 0, W, SLIDE_H);
+      const hSize = slide.layout === "cover" ? 100 : 88;
+      ctx.font = `${kit.headingFont.weight} ${hSize}px ${kit.headingFont.stack}`;
+      const hLines = wrap(ctx, heading || " ", W - M * 2, 5);
+      ctx.font = `400 46px ${kit.bodyFont.stack}`;
+      const bLines = wrap(ctx, body, W - M * 2, 6);
+      const lh = hSize + 14;
+      const blockH = hLines.length * lh + 40 + bLines.length * 60;
+      const bandTop = bandTopClearOf(slide.regions ?? [], (blockH + M * 2) / SLIDE_H);
+      const bandTopPx = bandTop * SLIDE_H;
+      const bandBottomPx = Math.min(SLIDE_H, bandTopPx + blockH + M * 2);
+      const scrim = ctx.createLinearGradient(0, Math.max(0, bandTopPx - 220), 0, bandBottomPx);
+      scrim.addColorStop(0, "rgba(0,0,0,0)");
+      scrim.addColorStop(1, "rgba(0,0,0,0.72)");
+      ctx.fillStyle = scrim;
+      ctx.fillRect(0, Math.max(0, bandTopPx - 220), W, bandBottomPx - Math.max(0, bandTopPx - 220));
+      ctx.fillStyle = "#ffffff";
+      let cy = bandTopPx + M;
+      ctx.font = `${kit.headingFont.weight} ${hSize}px ${kit.headingFont.stack}`;
+      cy = drawLines(ctx, hLines, W / 2, cy, lh, "center");
+      ctx.globalAlpha = 0.9;
+      ctx.font = `400 46px ${kit.bodyFont.stack}`;
+      cy = drawLines(ctx, bLines, W / 2, cy + 40, 60, "center");
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = kit.primary;
+      ctx.fillRect(0, 0, W, 26);
+      ctx.fillRect(0, SLIDE_H - 26, W, 26);
+      if (slide.layout === "cta") {
+        ctx.fillRect(W / 2 - 90, cy + 30, 180, 12);
+      }
+      return;
+    }
     ctx.fillStyle = kit.primary;
     ctx.fillRect(0, 0, W, 26);
     ctx.fillRect(0, SLIDE_H - 26, W, 26);
