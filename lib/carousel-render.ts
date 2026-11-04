@@ -212,17 +212,8 @@ export async function renderSlide(
       ctx.font = `400 46px ${kit.bodyFont.stack}`;
       cy = drawLines(ctx, bLines, W / 2, cy + 40, 60, "center");
       ctx.globalAlpha = 1;
-      ctx.fillStyle = kit.primary;
-      ctx.fillRect(0, 0, W, 26);
-      ctx.fillRect(0, SLIDE_H - 26, W, 26);
-      if (slide.layout === "cta") {
-        ctx.fillRect(W / 2 - 90, cy + 30, 180, 12);
-      }
       return;
     }
-    ctx.fillStyle = kit.primary;
-    ctx.fillRect(0, 0, W, 26);
-    ctx.fillRect(0, SLIDE_H - 26, W, 26);
     ctx.fillStyle = ink;
     const hSize = slide.layout === "cover" ? 104 : 92;
     ctx.font = `${kit.headingFont.weight} ${hSize}px ${kit.headingFont.stack}`;
@@ -236,43 +227,50 @@ export async function renderSlide(
     cy = drawLines(ctx, hLines, W / 2, cy, lh, "center");
     ctx.globalAlpha = 0.82;
     ctx.font = `400 46px ${kit.bodyFont.stack}`;
-    cy = drawLines(ctx, bLines, W / 2, cy + 40, 60, "center");
+    drawLines(ctx, bLines, W / 2, cy + 40, 60, "center");
     ctx.globalAlpha = 1;
-    if (slide.layout === "cta") {
-      ctx.fillStyle = kit.primary;
-      ctx.fillRect(W / 2 - 90, cy + 30, 180, 12);
-    }
     return;
   }
 
-  // content (default): heading, accent rule, body, optional image below.
+  // content with an image: the image is always the full-bleed background
+  // with text on top, banded clear of no-text zones like every imaged layout.
+  if (slide.image) {
+    coverImage(ctx, slide.image, 0, 0, W, SLIDE_H);
+    ctx.font = `${kit.headingFont.weight} 76px ${kit.headingFont.stack}`;
+    const hLines = wrap(ctx, heading || " ", W - M * 2, 3);
+    ctx.font = `400 44px ${kit.bodyFont.stack}`;
+    const bLines = wrap(ctx, body, W - M * 2, 7);
+    const blockH = hLines.length * 92 + bLines.length * 58 + 24;
+    const bandTop = bandTopClearOf(slide.regions ?? [], (blockH + M * 2) / SLIDE_H);
+    const bandTopPx = bandTop * SLIDE_H;
+    const bandBottomPx = Math.min(SLIDE_H, bandTopPx + blockH + M * 2);
+    const scrim = ctx.createLinearGradient(0, Math.max(0, bandTopPx - 220), 0, bandBottomPx);
+    scrim.addColorStop(0, "rgba(0,0,0,0)");
+    scrim.addColorStop(1, "rgba(0,0,0,0.72)");
+    ctx.fillStyle = scrim;
+    ctx.fillRect(0, Math.max(0, bandTopPx - 220), W, bandBottomPx - Math.max(0, bandTopPx - 220));
+    ctx.fillStyle = "#ffffff";
+    let cy = bandTopPx + M;
+    ctx.font = `${kit.headingFont.weight} 76px ${kit.headingFont.stack}`;
+    cy = drawLines(ctx, hLines, M, cy, 92, "left");
+    ctx.font = `400 44px ${kit.bodyFont.stack}`;
+    drawLines(ctx, bLines, M, cy + 24, 58, "left");
+    return;
+  }
+
+  // content (default): heading and body on the flat background.
   ctx.fillStyle = ink;
   ctx.font = `${kit.headingFont.weight} 76px ${kit.headingFont.stack}`;
   const hLines = wrap(ctx, heading || " ", W - M * 2, 3);
   let cy = M + 60;
   cy = drawLines(ctx, hLines, M, cy, 92, "left");
-  ctx.fillStyle = kit.primary;
-  ctx.fillRect(M, cy + 18, 140, 12);
-  cy += 90;
+  cy += 30;
   ctx.fillStyle = ink;
   ctx.globalAlpha = 0.88;
   ctx.font = `400 44px ${kit.bodyFont.stack}`;
-  const maxBodyLines = slide.image ? 7 : 14;
-  const bLines = wrap(ctx, body, W - M * 2, maxBodyLines);
-  cy = drawLines(ctx, bLines, M, cy, 58, "left");
+  const bLines = wrap(ctx, body, W - M * 2, 14);
+  drawLines(ctx, bLines, M, cy, 58, "left");
   ctx.globalAlpha = 1;
-  if (slide.image) {
-    const imgTop = Math.min(cy + 40, SLIDE_H - M - 420);
-    const imgH = SLIDE_H - M - imgTop;
-    if (imgH > 160) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(M, imgTop, W - M * 2, imgH, 28);
-      ctx.clip();
-      coverImage(ctx, slide.image, M, imgTop, W - M * 2, imgH);
-      ctx.restore();
-    }
-  }
 }
 
 export function loadImage(url: string): Promise<HTMLImageElement> {
