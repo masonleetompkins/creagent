@@ -2200,6 +2200,7 @@ a.asset-chip:hover {
 }
 .edgrid.work > div:first-child,
 .edgrid.work > div:last-child {
+  min-height: 0;
   max-height: calc(100dvh - 420px);
   overflow-y: auto;
   scrollbar-gutter: stable;
