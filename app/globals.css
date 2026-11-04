@@ -392,6 +392,7 @@ a {
   font-size: 12px;
   font-weight: 800;
   color: var(--good);
+  margin-left: 6px;
 }
 
 .overlay {

@@ -42,7 +42,7 @@ async function pollJob(jobId: string): Promise<Record<string, unknown>> {
 
 function fmtAvg(value: number | null): string {
   if (value === null) return "—";
-  return value >= 100 ? Math.round(value).toString() : value.toFixed(1);
+  return value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(1);
 }
 
 function Metric({
@@ -165,7 +165,7 @@ export default function DataConsole(): React.ReactNode {
                 <>
                   <div className="big">{fmtAvg(p.averages.likes)} reactions</div>
                   <div className="d">
-                    from {p.averages.count} posts · comments {fmtAvg(p.averages.comments)} ·
+                    from {p.averages.count.toLocaleString()} posts · comments {fmtAvg(p.averages.comments)} ·
                     shares {fmtAvg(p.averages.shares)}
                   </div>
                 </>
@@ -173,7 +173,7 @@ export default function DataConsole(): React.ReactNode {
                 <>
                   <div className="big">{fmtAvg(p.averages.views)} views</div>
                   <div className="d">
-                    from {p.averages.count} posts · likes {fmtAvg(p.averages.likes)} ·
+                    from {p.averages.count.toLocaleString()} posts · likes {fmtAvg(p.averages.likes)} ·
                     comments {fmtAvg(p.averages.comments)} · shares {fmtAvg(p.averages.shares)}
                   </div>
                 </>
