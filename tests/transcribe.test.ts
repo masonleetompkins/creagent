@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseWhisperJson } from "../lib/transcribe";
+import { parseSilenceOutput, parseWhisperJson } from "../lib/transcribe";
 
 const SAMPLE = {
   transcription: [
@@ -62,5 +62,23 @@ describe("parseWhisperJson", () => {
     assert.equal(words[1].end_ms, 600);
     assert.ok(words[0].end_ms <= words[1].end_ms);
     assert.equal(text, "one two");
+  });
+});
+
+describe("parseSilenceOutput", () => {
+  it("pairs starts with ends, filters short and unclosed intervals", () => {
+    const stderr = [
+      "[silencedetect @ 0x1] silence_start: 0",
+      "[silencedetect @ 0x1] silence_end: 3.1115 | silence_duration: 3.1115",
+      "[silencedetect @ 0x1] silence_start: 18.657958",
+      "[silencedetect @ 0x1] silence_end: 19.077854 | silence_duration: 0.419896",
+      "[silencedetect @ 0x1] silence_start: 99.0",
+    ].join("\n");
+    assert.deepEqual(parseSilenceOutput(stderr, 400), [
+      { start_ms: 0, end_ms: 3112 },
+      { start_ms: 18658, end_ms: 19078 },
+    ]);
+    assert.deepEqual(parseSilenceOutput(stderr, 1000), [{ start_ms: 0, end_ms: 3112 }]);
+    assert.deepEqual(parseSilenceOutput("no silence here", 400), []);
   });
 });

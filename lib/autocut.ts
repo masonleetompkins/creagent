@@ -3,7 +3,7 @@
 // overlap + confidence/completeness scoring. Pure core is unit-tested.
 import { randomUUID } from "node:crypto";
 import { getDb, nowIso, withTransaction } from "./db";
-import type { Word } from "./transcribe";
+import type { Silence, Word } from "./transcribe";
 import { addClip } from "./video";
 
 export type TakeVerdict = "keep" | "cut" | "unsure";
@@ -33,7 +33,7 @@ function normalize(word: string): string {
   return word.toLowerCase().replace(/[^a-z0-9'\- ]/g, "").trim();
 }
 
-function splitSentences(words: Word[], sentenceGapMs: number): Sentence[] {
+function splitSentences(words: Word[], sentenceGapMs: number, silences: Silence[]): Sentence[] {
   const out: Sentence[] = [];
   let current: Word[] = [];
   const flush = (): void => {
@@ -57,9 +57,17 @@ function splitSentences(words: Word[], sentenceGapMs: number): Sentence[] {
   };
   // Whisper word tokens often carry no punctuation at all — without the gap
   // rule a whole take collapses into one sentence and the cut finds nothing.
+  // And word timestamps can be flat (no gaps anywhere), so measured speech
+  // pauses split too: the first word after a pause starts a new sentence.
   let prev: Word | null = null;
+  let sentStart = 0;
   for (const w of words) {
-    if (prev && current.length > 0 && w.start_ms - prev.end_ms >= sentenceGapMs) flush();
+    if (prev && current.length > 0) {
+      const gap = w.start_ms - prev.end_ms >= sentenceGapMs;
+      const paused = silences.some((s) => s.start_ms >= sentStart && s.end_ms <= w.start_ms);
+      if (gap || paused) flush();
+    }
+    if (current.length === 0) sentStart = w.start_ms;
     current.push(w);
     if (END_PUNCT.test(w.word.trim()) || /[.!?]/.test(w.word)) flush();
     prev = w;
@@ -122,6 +130,7 @@ export function detectTakes(
     sentenceGapMs?: number;
     script?: string;
     scriptMinOverlap?: number;
+    silences?: Silence[];
   },
 ): Take[] {
   const similarity = options?.similarity ?? 0.75;
@@ -129,8 +138,9 @@ export function detectTakes(
   const handleMs = options?.handleMs ?? 120;
   const minConf = options?.minConf ?? 0.3;
   const sentenceGapMs = options?.sentenceGapMs ?? 600;
+  const silences = options?.silences ?? [];
   const takes: Take[] = [];
-  const sentences = splitSentences(words, sentenceGapMs).filter((s) => s.tokens.length > 0);
+  const sentences = splitSentences(words, sentenceGapMs, silences).filter((s) => s.tokens.length > 0);
 
   // Cluster near-duplicate sentences (repeated takes of the same line).
   const clusterOf = new Array<number>(sentences.length).fill(-1);
@@ -203,19 +213,38 @@ export function detectTakes(
 
   demoteOffScript(takes, options?.script, options?.scriptMinOverlap ?? 0.2);
 
-  // Silence between consecutive words becomes cut regions.
-  for (let i = 1; i < words.length; i++) {
-    const gap = words[i].start_ms - words[i - 1].end_ms;
-    if (gap >= silenceMs) {
-      takes.push({
-        id: randomUUID(),
-        label: `silence ${(gap / 1000).toFixed(1)}s`,
-        start_ms: words[i - 1].end_ms,
-        end_ms: words[i].start_ms,
-        text: "",
-        score: null,
-        verdict: "cut",
-      });
+  // Measured pauses become cut regions when provided (word timestamps can
+  // be flat, in which case the word-gap loop below finds nothing); the
+  // word-gap loop stays as the offline fallback, never both at once.
+  if (silences.length > 0) {
+    for (const s of silences) {
+      const dur = s.end_ms - s.start_ms;
+      if (dur >= silenceMs) {
+        takes.push({
+          id: randomUUID(),
+          label: `silence ${(dur / 1000).toFixed(1)}s`,
+          start_ms: s.start_ms,
+          end_ms: s.end_ms,
+          text: "",
+          score: null,
+          verdict: "cut",
+        });
+      }
+    }
+  } else {
+    for (let i = 1; i < words.length; i++) {
+      const gap = words[i].start_ms - words[i - 1].end_ms;
+      if (gap >= silenceMs) {
+        takes.push({
+          id: randomUUID(),
+          label: `silence ${(gap / 1000).toFixed(1)}s`,
+          start_ms: words[i - 1].end_ms,
+          end_ms: words[i].start_ms,
+          text: "",
+          score: null,
+          verdict: "cut",
+        });
+      }
     }
   }
 

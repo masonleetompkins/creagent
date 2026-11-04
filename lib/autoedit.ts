@@ -8,7 +8,7 @@ import { detectTakes, saveTakes } from "./autocut";
 import { clearCaptions, generateCaptions } from "./captions";
 import { resolveSlotOutline } from "./carousel-plan";
 import { registerLocalFile } from "./media";
-import { getTranscript, runTranscription, type Word } from "./transcribe";
+import { detectSilences, getTranscript, runTranscription, type Silence, type Word } from "./transcribe";
 import { attachmentPath, listAttachments } from "./uploads";
 import { addClip, addTrack } from "./video";
 
@@ -105,7 +105,15 @@ export async function runSlotAutoEdit(
     await runTranscription(asset.id);
     onStage?.("takes", `Detecting takes in ${file.filename}`);
     const { transcript, words } = getTranscript(asset.id);
-    const detected = transcript ? saveTakes(transcript.id, detectTakes(words, { script })) : [];
+    // Measured pauses steer sentence splits and silence cuts — best
+    // effort, the word-timing heuristics still run without them.
+    let silences: Silence[] = [];
+    try {
+      silences = detectSilences(disk);
+    } catch {
+      silences = [];
+    }
+    const detected = transcript ? saveTakes(transcript.id, detectTakes(words, { script, silences })) : [];
     const kept = detected.filter((t) => t.verdict === "keep");
     takes += kept.length > 0 ? kept.length : 0;
     onStage?.("timeline", "Laying keeps on the Main track");

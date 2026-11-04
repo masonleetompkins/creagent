@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { applyTakesToTrack, detectTakes, getTakesByAsset, saveTakes } from "@/lib/autocut";
-import { getTranscript } from "@/lib/transcribe";
+import { getMedia } from "@/lib/media";
+import { detectSilences, getTranscript, type Silence } from "@/lib/transcribe";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,15 @@ export async function POST(
     if (!transcript) {
       return NextResponse.json({ error: "transcribe the footage first" }, { status: 409 });
     }
-    const takes = saveTakes(transcript.id, detectTakes(words));
+    // Same measured pauses auto-edit uses — best effort, heuristics remain.
+    let silences: Silence[] = [];
+    try {
+      const media = getMedia(body.assetId);
+      silences = media ? detectSilences(media.path) : [];
+    } catch {
+      silences = [];
+    }
+    const takes = saveTakes(transcript.id, detectTakes(words, { silences }));
     return NextResponse.json({ transcriptId: transcript.id, takes });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 503 });

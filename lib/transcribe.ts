@@ -1,7 +1,7 @@
 // Whisper transcription with word-level timecodes into transcripts/words.
 // Audio is normalized to 16kHz mono WAV (via ffmpeg, or direct when the
 // source already qualifies), then whisper-cli -ml 1 -ojf does the rest.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -141,6 +141,57 @@ function runWhisper(wav: string, outBase: string, lang: string): void {
   if (!existsSync(`${outBase}.json`)) {
     throw new Error("whisper produced no JSON output");
   }
+}
+
+export type Silence = { start_ms: number; end_ms: number };
+
+// Pure: parse ffmpeg silencedetect stderr into silence intervals. Paired
+// start/end lines only — a trailing unclosed silence is dropped.
+export function parseSilenceOutput(stderr: string, minDurMs: number): Silence[] {
+  const out: Silence[] = [];
+  let pending: number | null = null;
+  for (const line of stderr.split("\n")) {
+    const start = line.match(/silence_start: ([\d.]+)/);
+    if (start) {
+      pending = Math.round(Number(start[1]) * 1000);
+      continue;
+    }
+    const end = line.match(/silence_end: ([\d.]+) \| silence_duration: ([\d.]+)/);
+    if (end && pending !== null) {
+      const s = { start_ms: pending, end_ms: Math.round(Number(end[1]) * 1000) };
+      if (s.end_ms - s.start_ms >= minDurMs) out.push(s);
+      pending = null;
+    }
+  }
+  return out;
+}
+
+// True speech pauses from the audio itself, via ffmpeg silencedetect.
+// Whisper word timestamps under -ml 1 are often flat (max gap 40ms on real
+// footage), so takes and sentence splits key off these instead. Throws on
+// ffmpeg failure — callers treat VAD as best-effort and fall back.
+export function detectSilences(mediaPath: string, minDurMs = 400): Silence[] {
+  const ffmpeg = ffmpegPath();
+  if (!ffmpeg) throw new Error("ffmpeg is missing (run scripts/ensure-tools.sh)");
+  const res = spawnSync(
+    ffmpeg,
+    [
+      "-hide_banner",
+      "-i",
+      mediaPath,
+      "-af",
+      `silencedetect=noise=-30dB:d=${minDurMs / 1000}`,
+      "-f",
+      "null",
+      "-",
+    ],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60 * 1000 },
+  );
+  if (res.error) throw res.error;
+  if (res.status !== 0) {
+    throw new Error(`silence scan failed: ${String(res.stderr ?? "").slice(-300) || `exit ${res.status}`}`);
+  }
+  return parseSilenceOutput(String(res.stderr ?? ""), minDurMs);
 }
 
 export type TranscribeResult = {

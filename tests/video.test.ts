@@ -152,6 +152,28 @@ describe("detectTakes", () => {
     assert.ok(lines.every((t) => t.verdict === "keep"));
   });
 
+  it("splits flat words at measured pauses", async () => {
+    const { autocut } = await libs();
+    const takes = autocut.detectTakes(
+      words("alpha beta gamma delta epsilon zeta omega psi chi", 0),
+      { silences: [{ start_ms: 1000, end_ms: 1600 }] },
+    );
+    const lines = takes.filter((t) => t.label === "line");
+    assert.equal(lines.length, 2);
+    assert.ok(lines.every((t) => t.verdict === "keep"));
+  });
+
+  it("cuts measured long pauses once, never doubling the word-gap loop", async () => {
+    const { autocut } = await libs();
+    const takes = autocut.detectTakes(
+      words("one two three four", 0).concat(words("five six seven eight", 9000)),
+      { silences: [{ start_ms: 1200, end_ms: 9000 }] },
+    );
+    const silence = takes.filter((t) => t.label.startsWith("silence"));
+    assert.equal(silence.length, 1);
+    assert.equal(silence[0].verdict, "cut");
+  });
+
   it("parks off-script rambling as unsure, keeps on-script and short lines", async () => {
     const { autocut } = await libs();
     const script = "Imagine you're trading snacks at school. I say my cupcake costs ten cookies.";
