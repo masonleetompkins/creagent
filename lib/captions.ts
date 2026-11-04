@@ -124,8 +124,9 @@ export function blockWords(block: CaptionBlock): Word[] {
   return block.lines.flatMap((l) => splitLineWords(l));
 }
 
-// Pure: move a word across a line boundary. dir -1 pulls the word up to the
-// previous line's end, +1 pushes it down to the next line's start.
+// Pure: move a word across a line boundary. dir -1 pulls the word at any
+// index up to the previous line's end, +1 pushes it down to the next
+// line's start. Out-of-range selections leave the block untouched.
 export function moveWordAcrossLines(
   lines: CaptionLine[],
   lineIndex: number,
@@ -135,16 +136,13 @@ export function moveWordAcrossLines(
   const wordsPerLine = lines.map((l) => splitLineWords(l));
   const target = lineIndex + dir;
   if (target < 0 || target >= wordsPerLine.length) return lines;
+  const source = wordsPerLine[lineIndex];
+  if (!source || wordIndex < 0 || wordIndex >= source.length) return lines;
+  const [moved] = source.splice(wordIndex, 1);
+  if (!moved) return lines;
   if (dir === -1) {
-    if (wordIndex !== 0) return lines;
-    const [moved] = wordsPerLine[lineIndex].splice(0, 1);
-    if (!moved) return lines;
     wordsPerLine[target].push(moved);
   } else {
-    const last = wordsPerLine[lineIndex].length - 1;
-    if (wordIndex !== last) return lines;
-    const [moved] = wordsPerLine[lineIndex].splice(last, 1);
-    if (!moved) return lines;
     wordsPerLine[target].unshift(moved);
   }
   if (wordsPerLine[lineIndex].length === 0) wordsPerLine.splice(lineIndex, 1);

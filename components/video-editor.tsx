@@ -99,7 +99,7 @@ const ZONES: Record<string, { label: string; top: number; bottom: number; left: 
 function fmt(ms: number): string {
   const s = Math.max(0, ms) / 1000;
   const m = Math.floor(s / 60);
-  return `${m}:${(s % 60).toFixed(2).padStart(5, "0")}`;
+  return `${String(m).padStart(2, "0")}:${(s % 60).toFixed(2).padStart(5, "0")}`;
 }
 
 function tickStep(pxPerSec: number): number {
@@ -107,6 +107,48 @@ function tickStep(pxPerSec: number): number {
     if (s * pxPerSec >= 70) return s;
   }
   return 120;
+}
+
+// Waveform overlay for one timeline clip: draws the slice of the asset's
+// cached peaks covered by [inMs, inMs + durMs].
+function WaveCanvas(props: {
+  peaks: Float32Array | null;
+  assetMs: number;
+  inMs: number;
+  durMs: number;
+  width: number;
+}): React.ReactNode {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const { peaks, assetMs, inMs, durMs, width } = props;
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !peaks || peaks.length === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    const startF = assetMs > 0 ? Math.min(1, Math.max(0, inMs / assetMs)) : 0;
+    const endF = assetMs > 0 ? Math.min(1, Math.max(startF, (inMs + durMs) / assetMs)) : 1;
+    const bars = Math.max(1, Math.floor(W / 3));
+    for (let i = 0; i < bars; i++) {
+      const f = startF + ((endF - startF) * (i + 0.5)) / bars;
+      const v = peaks[Math.min(peaks.length - 1, Math.max(0, Math.floor(f * peaks.length)))] ?? 0;
+      const h = Math.max(1, Math.min(H, v * H));
+      ctx.fillRect(i * 3, (H - h) / 2, 2, h);
+    }
+  }, [peaks, assetMs, inMs, durMs, width]);
+  if (!peaks || peaks.length === 0) return null;
+  return (
+    <canvas
+      ref={ref}
+      className="ved-wave"
+      width={Math.max(8, Math.round(width))}
+      height={30}
+      aria-hidden="true"
+    />
+  );
 }
 
 export default function VideoEditor({
@@ -118,7 +160,9 @@ export default function VideoEditor({
 }): React.ReactNode {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [buildStage, setBuildStage] = useState<string | null>(null);
-  const buildWatched = useRef(false);
+  const [sceneBusy, setSceneBusy] = useState(false);
+  const [sceneJob, setSceneJob] = useState<string | null>(null);
+  const watchedJob = useRef<string | null>(null);
   const [media, setMedia] = useState<Asset[]>([]);
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -166,24 +210,75 @@ export default function VideoEditor({
     if (res.ok) setMedia(((await res.json()) as { media: Asset[] }).media);
   }, []);
 
-  // Live auto-edit watch: after "Auto-edit footage" lands here, poll the
-  // job, refresh on every tick so clips land visibly, and report.
+  // Waveform peaks, decoded in-browser per asset and cached for the session.
+  const peaksCache = useRef(new Map<string, Float32Array>());
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const [, setPeaksTick] = useState(0);
+  const peaksFor = useCallback(async (assetId: string): Promise<void> => {
+    if (peaksCache.current.has(assetId)) return;
+    peaksCache.current.set(assetId, new Float32Array(0));
+    try {
+      const res = await fetch(`/api/media/${assetId}/file`);
+      if (!res.ok) return;
+      const buf = await res.arrayBuffer();
+      if (!audioCtxRef.current) {
+        const AC =
+          window.AudioContext ??
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        audioCtxRef.current = new AC();
+      }
+      const decoded = await audioCtxRef.current.decodeAudioData(buf);
+      const ch0 = decoded.getChannelData(0);
+      const buckets = 240;
+      const peaks = new Float32Array(buckets);
+      const per = Math.max(1, Math.floor(ch0.length / buckets));
+      for (let b = 0; b < buckets; b++) {
+        let m = 0;
+        const start = b * per;
+        const end = Math.min(start + per, ch0.length);
+        for (let i = start; i < end; i += 11) {
+          const v = Math.abs(ch0[i] ?? 0);
+          if (v > m) m = v;
+        }
+        peaks[b] = m;
+      }
+      peaksCache.current.set(assetId, peaks);
+    } catch {
+      /* clip renders without a waveform */
+    } finally {
+      setPeaksTick((t) => t + 1);
+    }
+  }, []);
   useEffect(() => {
-    if (!buildJobId || buildWatched.current) return;
-    buildWatched.current = true;
-    setBuildStage("Starting auto-edit");
+    if (!detail) return;
+    const ids = new Set<string>();
+    for (const t of detail.tracks) {
+      if (t.kind !== "audio" && t.kind !== "video") continue;
+      for (const c of t.clips) if (c.asset_id) ids.add(c.asset_id);
+    }
+    for (const id of ids) void peaksFor(id);
+  }, [detail, peaksFor]);
+
+  // Live job watch: auto-edit arrivals (?job=) and in-editor scene builds
+  // poll here, refresh on every tick so work lands visibly, and report.
+  const watchId = buildJobId ?? sceneJob;
+  useEffect(() => {
+    if (!watchId || watchedJob.current === watchId) return;
+    watchedJob.current = watchId;
+    setBuildStage("Starting job");
     let cancelled = false;
     (async () => {
       for (let i = 0; i < 900 && !cancelled; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         if (cancelled) return;
-        const poll = await fetch(`/api/jobs/${buildJobId}`);
+        const poll = await fetch(`/api/jobs/${watchId}`);
         if (!poll.ok) break;
         const job = (await poll.json()) as {
+          name: string;
           state: string;
           failedReason?: string;
           progress?: { label?: unknown };
-          result?: { assets?: unknown; clips?: unknown; takes?: unknown };
+          result?: { assets?: unknown; clips?: unknown; takes?: unknown; scenes?: unknown };
         };
         const label = job.progress?.label;
         if (typeof label === "string" && label) setBuildStage(label);
@@ -194,7 +289,9 @@ export default function VideoEditor({
           setBuildStage(null);
           const r = job.result ?? {};
           setNote(
-            `Auto-edit finished: ${String(r.assets ?? 0)} footage files, ${String(r.clips ?? 0)} clips on Main, ${String(r.takes ?? 0)} takes kept. Review the cut.`,
+            job.name === "video_scenes"
+              ? `Scenes done: ${String(r.scenes ?? 0)} anime cutaways laid on the Scenes track.`
+              : `Auto-edit finished: ${String(r.assets ?? 0)} footage files, ${String(r.clips ?? 0)} clips on Main, ${String(r.takes ?? 0)} takes kept. Review the cut.`,
           );
           await refresh();
           await refreshMedia();
@@ -203,19 +300,52 @@ export default function VideoEditor({
         if (job.state === "failed") {
           window.history.replaceState(null, "", window.location.pathname);
           setBuildStage(null);
-          setError(`auto-edit failed: ${job.failedReason ?? "unknown"}`);
+          setError(`job failed: ${job.failedReason ?? "unknown"}`);
           return;
         }
       }
       if (!cancelled) {
         setBuildStage(null);
-        setNote("Still cutting — the timeline refreshes when it lands.");
+        setNote("Still working — the timeline refreshes when it lands.");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [buildJobId, refresh, refreshMedia]);
+  }, [watchId, refresh, refreshMedia]);
+
+  async function autoScenes(): Promise<void> {
+    try {
+      setSceneBusy(true);
+      setError("");
+      const count = await fetch(`/api/video-projects/${projectId}/scenes`);
+      if (!count.ok) {
+        setError(`scene count failed: ${count.status}`);
+        return;
+      }
+      const { statements } = (await count.json()) as { statements: number };
+      if (!statements) {
+        setError("No spoken statements on the timeline — transcribe first.");
+        return;
+      }
+      if (
+        !window.confirm(
+          `Generate ${statements} anime scene images in your house style and lay them on the Scenes track? This rebuilds any existing scenes.`,
+        )
+      ) {
+        return;
+      }
+      const started = await fetch(`/api/video-projects/${projectId}/scenes`, { method: "POST" });
+      if (!started.ok) {
+        setError(`scene build failed to start: ${started.status}`);
+        return;
+      }
+      const { jobId } = (await started.json()) as { jobId: string };
+      setSceneJob(jobId);
+    } finally {
+      setSceneBusy(false);
+    }
+  }
 
   useEffect(() => {
     void refresh();
@@ -260,6 +390,10 @@ export default function VideoEditor({
 
   // Preview sync: timeline playhead -> source frame under the topmost clip.
   const previewClip = rawPreview ? null : clipAt(playhead, "video");
+  const previewIsImage =
+    !rawPreview &&
+    previewClip?.asset_id != null &&
+    media.find((m) => m.id === previewClip.asset_id)?.kind === "image";
   const previewAudio = rawPreview ? null : clipAt(playhead, "audio");
   const rawAssetObj = rawPreview ? media.find((m) => m.id === rawPreview.assetId) ?? null : null;
 
@@ -1351,7 +1485,7 @@ export default function VideoEditor({
   const ticks: number[] = [];
   for (let t = 0; t <= duration + step * 1000; t += step * 1000) ticks.push(Math.round(t));
   const contentWidth = (Math.max(duration, 30000) / 1000) * pxPerSec + 240;
-  const z = ZONES[zone] ?? ZONES.reels;
+  const z = zone === "off" ? null : (ZONES[zone] ?? ZONES.reels);
   const rawObj = media.find((m) => m.id === rawAsset) ?? null;
   const rawEnd = Math.max(
     1,
@@ -1367,7 +1501,7 @@ export default function VideoEditor({
       {note !== "" && <p className="note ok">{note}</p>}
       {buildStage !== null && (
         <p className="note">
-          <span className="spin" aria-hidden="true" /> Auto-edit — {buildStage}…
+          <span className="spin" aria-hidden="true" /> {buildStage}…
         </p>
       )}
       {detail.project.slot_id ? (
@@ -1381,20 +1515,32 @@ export default function VideoEditor({
             className="ved-screen"
             style={{ aspectRatio: `${detail.project.width} / ${detail.project.height}` }}
           >
-            <video ref={videoRef} playsInline preload="auto" />
-            <div className="ved-zone" style={{ top: 0, height: `${z.top * 100}%`, left: 0, right: 0 }} />
-            <div
-              className="ved-zone"
-              style={{ bottom: 0, height: `${z.bottom * 100}%`, left: 0, right: 0 }}
-            />
-            <div
-              className="ved-zone"
-              style={{ left: 0, width: `${z.left * 100}%`, top: 0, bottom: 0 }}
-            />
-            <div
-              className="ved-zone"
-              style={{ right: 0, width: `${z.right * 100}%`, top: 0, bottom: 0 }}
-            />
+            {previewIsImage && previewClip?.asset_id ? (
+              <img
+                src={`/api/media/${previewClip.asset_id}/file`}
+                alt="Scene cutaway"
+                className="ved-preview-img"
+              />
+            ) : (
+              <video ref={videoRef} playsInline preload="auto" />
+            )}
+            {z ? (
+              <>
+                <div className="ved-zone" style={{ top: 0, height: `${z.top * 100}%`, left: 0, right: 0 }} />
+                <div
+                  className="ved-zone"
+                  style={{ bottom: 0, height: `${z.bottom * 100}%`, left: 0, right: 0 }}
+                />
+                <div
+                  className="ved-zone"
+                  style={{ left: 0, width: `${z.left * 100}%`, top: 0, bottom: 0 }}
+                />
+                <div
+                  className="ved-zone"
+                  style={{ right: 0, width: `${z.right * 100}%`, top: 0, bottom: 0 }}
+                />
+              </>
+            ) : null}
             {activeCaption && (
               <div
                 className="ved-caption"
@@ -1687,6 +1833,17 @@ export default function VideoEditor({
           )}
           {tab === "graphics" && (
             <div className="ved-gfx">
+              <h3 style={{ marginTop: 0 }}>Auto scenes</h3>
+              <p className="muted">
+                One anime cutaway per spoken statement, planned from the script and laid on the
+                Scenes track. Uses your carousel house style.
+              </p>
+              <div className="row">
+                <button className="primary" disabled={sceneBusy} onClick={() => void autoScenes()}>
+                  Auto-plan scenes
+                </button>
+              </div>
+              <h3>Text card</h3>
               <div className="row">
                 <input
                   type="text"
@@ -1997,8 +2154,9 @@ export default function VideoEditor({
                   ))}
                   <div className="row">
                     <button
+                      title="Move the selected word up to the previous line"
                       disabled={
-                        !selWord || selWord.block !== b.id || selWord.line === 0 || selWord.word !== 0
+                        !selWord || selWord.block !== b.id || selWord.line === 0
                       }
                       onClick={() =>
                         selWord &&
@@ -2012,16 +2170,11 @@ export default function VideoEditor({
                       Move word ↑
                     </button>
                     <button
+                      title="Move the selected word down to the next line"
                       disabled={
                         !selWord ||
                         selWord.block !== b.id ||
-                        selWord.line >= b.lines.length - 1 ||
-                        selWord.word !==
-                          (typeof b.lines[selWord.line] === "string"
-                            ? (b.lines[selWord.line] as unknown as string)
-                                .split(/\s+/)
-                                .filter(Boolean).length - 1
-                            : b.lines[selWord.line].text.split(/\s+/).filter(Boolean).length - 1)
+                        selWord.line >= b.lines.length - 1
                       }
                       onClick={() =>
                         selWord &&
@@ -2123,10 +2276,11 @@ export default function VideoEditor({
         <button onClick={() => setPlaying((p) => !p)}>
           {playing ? "Pause" : "Play"}
         </button>
-        <span className="muted">
+        <span className="muted ved-tc">
           {fmt(rawPreview ? rawPreview.atMs : playhead)} / {fmt(duration)}
         </span>
         <select value={zone} onChange={(e) => setZone(e.target.value)} aria-label="Safe zone">
+          <option value="off">Zones off</option>
           {Object.entries(ZONES).map(([key, value]) => (
             <option key={key} value={key}>
               {value.label}
@@ -2258,6 +2412,15 @@ export default function VideoEditor({
                         className="ved-handle l"
                         onPointerDown={(e) => beginDrag(e, c, "trim-l")}
                       />
+                      {(t.kind === "audio" || t.kind === "video") && c.asset_id ? (
+                        <WaveCanvas
+                          peaks={peaksCache.current.get(c.asset_id) ?? null}
+                          assetMs={c.asset?.duration_ms ?? 0}
+                          inMs={c.in_ms}
+                          durMs={s.duration_ms}
+                          width={Math.max(8, (s.duration_ms / 1000) * pxPerSec)}
+                        />
+                      ) : null}
                       <span className="ved-clipname">{c.name || c.asset?.filename || "clip"}</span>
                       <span
                         className="ved-handle r"

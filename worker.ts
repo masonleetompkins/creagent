@@ -2,6 +2,7 @@
 // Usage: npm run worker
 import { consolidatePillars, runAnalysis, runBrainRegenerate } from "./lib/analysis";
 import { finishCarouselBuild, runCarouselCopy } from "./lib/carousel-copy";
+import { generateScenes } from "./lib/video-scenes";
 import { runCarouselImage } from "./lib/carousel-image";
 import { runAutopick, runPlanImages } from "./lib/carousel-plan";
 import { runPhotoScan } from "./lib/photo-vision";
@@ -212,6 +213,12 @@ async function dispatch(job: JobRow): Promise<unknown> {
     const { projectId } = data;
     if (typeof projectId !== "string" || !projectId) throw new Error("projectId is required");
     return runPlanImages(projectId);
+  }
+  if (job.name === "video_scenes") {
+    const { projectId } = data;
+    if (typeof projectId !== "string" || !projectId) throw new Error("projectId is required");
+    updateProgress(job.id, { stage: "starting", label: "Starting scene build" });
+    return generateScenes(projectId, (stage, label) => updateProgress(job.id, { stage, label }));
   }
   if (job.name === "carousel_build") {
     const { projectId } = data;

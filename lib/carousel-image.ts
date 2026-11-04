@@ -61,19 +61,14 @@ export function styledImagePrompt(prompt: string): string {
   return withHouseStyle(prompt.trim());
 }
 
-export async function runCarouselImage(
-  slideId: string,
-  prompt: string,
-  options: { requestId?: string } = {},
-): Promise<{ path: string }> {
+// Shared anime image render: styled prompt in, bytes + sniffed extension
+// out. Used by carousel slides and video scenes alike.
+export async function generateStyledImageBytes(prompt: string): Promise<{ bytes: Buffer; ext: string }> {
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
-  const slide = getSlide(slideId);
-  if (!slide) throw new Error("slide not found");
   const cleanPrompt = prompt.trim();
   if (!cleanPrompt) throw new Error("image prompt is empty");
   const styledPrompt = styledImagePrompt(cleanPrompt);
-
   const client = getMetaClient(metaKey);
   const sizes = ["1024x1792", "1024x1024"];
   let lastError = "";
@@ -99,21 +94,33 @@ export async function runCarouselImage(
         bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
         bytes.subarray(8, 12).toString("ascii") === "WEBP";
       const isJpeg = bytes.length > 2 && bytes[0] === 0xff && bytes[1] === 0xd8;
-      const ext = isWebp ? ".webp" : isJpeg ? ".jpg" : ".png";
-      const filename = `${slideId}${ext}`;
-      await writeFile(join(carouselImagesDir(), filename), bytes);
-      updateSlide(slideId, {
-        image_path: filename,
-        image_source: "generated",
-        image_prompt: styledPrompt.slice(0, 2000),
-      });
-      if (options.requestId) setRequestStatus(options.requestId, "done");
-      return { path: filename };
+      return { bytes, ext: isWebp ? ".webp" : isJpeg ? ".jpg" : ".png" };
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
   }
   throw new Error(`Muse Image failed (${META_IMAGE_MODEL}): ${lastError.slice(0, 300)}`);
+}
+
+export async function runCarouselImage(
+  slideId: string,
+  prompt: string,
+  options: { requestId?: string } = {},
+): Promise<{ path: string }> {
+  const metaKey = loadKeys().meta;
+  if (!metaKey) throw new Error("save a Meta key in Settings first");
+  const slide = getSlide(slideId);
+  if (!slide) throw new Error("slide not found");
+  const { bytes, ext } = await generateStyledImageBytes(prompt);
+  const filename = `${slideId}${ext}`;
+  await writeFile(join(carouselImagesDir(), filename), bytes);
+  updateSlide(slideId, {
+    image_path: filename,
+    image_source: "generated",
+    image_prompt: styledImagePrompt(prompt).slice(0, 2000),
+  });
+  if (options.requestId) setRequestStatus(options.requestId, "done");
+  return { path: filename };
 }
 
 export async function downloadPhotoForSlide(

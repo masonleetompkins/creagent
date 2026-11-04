@@ -1269,6 +1269,32 @@ button:disabled {
 .ved-bar .row {
   margin-top: 0;
 }
+/* Fixed-width timecode: tabular digits plus room for 99:59.99 on both
+   sides so playback never stutters the control row. */
+.ved-tc {
+  font-variant-numeric: tabular-nums;
+  min-width: 22ch;
+  text-align: center;
+  display: inline-block;
+}
+.ved-wave {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.ved-preview-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ved-clip .ved-clipname {
+  position: relative;
+  z-index: 1;
+}
 .ved-bar .ved-exports {
   display: flex;
   flex-wrap: wrap;

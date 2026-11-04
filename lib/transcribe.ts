@@ -34,22 +34,62 @@ export function parseWhisperJson(input: unknown): { words: Word[]; text: string 
   const words: Word[] = [];
   const segs = (input as { transcription?: unknown })?.transcription;
   if (!Array.isArray(segs)) return { words, text: "" };
-  const parts: string[] = [];
-  for (const raw of segs as WhisperSegment[]) {
-    const text = (raw.text ?? "").trim();
-    if (isSpecial(raw.text ?? "")) continue;
-    const from = Math.max(0, Math.round(raw.offsets?.from ?? 0));
-    const to = Math.max(from, Math.round(raw.offsets?.to ?? from));
+  const usable = (segs as WhisperSegment[]).filter((raw) => !isSpecial(raw.text ?? ""));
+  // whisper.cpp -ml 1 emits one BPE token per segment: token texts carry
+  // their own leading space, and subwords ("hel" + "lo") must merge or
+  // captions show spaces inside words. Full-sentence segments have no
+  // leading spaces and split on whitespace with interpolated timings.
+  const tokenMode = usable.some((raw, i) => i > 0 && /^\s/.test(raw.text ?? ""));
+  const pushWord = (word: string, start_ms: number, end_ms: number, conf: number | null): void => {
+    const clean = word.trim();
+    if (clean) words.push({ word: clean, start_ms, end_ms, conf });
+  };
+  const segConf = (raw: WhisperSegment): number | null => {
     let conf: number | null = null;
     if (Array.isArray(raw.tokens)) {
       for (const t of raw.tokens) {
-        if (typeof t.p === "number" && (conf === null || t.p > conf)) conf = t.p;
+        if (typeof t.p === "number" && (conf === null || t.p < conf)) conf = t.p;
       }
     }
-    words.push({ word: text, start_ms: from, end_ms: to, conf });
-    parts.push(text);
+    return conf;
+  };
+  if (tokenMode) {
+    for (const raw of usable) {
+      const piece = raw.text ?? "";
+      const from = Math.max(0, Math.round(raw.offsets?.from ?? 0));
+      const to = Math.max(from, Math.round(raw.offsets?.to ?? from));
+      const conf = segConf(raw);
+      const last = words[words.length - 1];
+      if (last && !/^\s/.test(piece) && piece.trim()) {
+        last.word += piece.trim();
+        last.end_ms = to;
+        if (conf !== null) last.conf = last.conf === null ? conf : Math.min(last.conf, conf);
+      } else {
+        pushWord(piece, from, to, conf);
+      }
+    }
+  } else {
+    for (const raw of usable) {
+      const text = (raw.text ?? "").trim();
+      const from = Math.max(0, Math.round(raw.offsets?.from ?? 0));
+      const to = Math.max(from, Math.round(raw.offsets?.to ?? from));
+      const conf = segConf(raw);
+      const tokens = text.split(/\s+/).filter(Boolean);
+      if (tokens.length <= 1) {
+        pushWord(text, from, to, conf);
+        continue;
+      }
+      const total = tokens.reduce((n, t) => n + t.length, 0) || 1;
+      let cursor = from;
+      tokens.forEach((token, i) => {
+        const share = Math.round(((to - from) * token.length) / total);
+        const end = i === tokens.length - 1 ? to : cursor + share;
+        pushWord(token, cursor, end, conf);
+        cursor = end;
+      });
+    }
   }
-  return { words, text: parts.join(" ") };
+  return { words, text: words.map((w) => w.word).join(" ") };
 }
 
 // True when the file is already 16kHz mono PCM WAV (whisper-ready).

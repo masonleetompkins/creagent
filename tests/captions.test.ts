@@ -83,6 +83,39 @@ describe("captions", () => {
     );
   });
 
+  it("moves mid-line words and guards bad indices", async () => {
+    const { captions } = await libs();
+    const lines = [
+      { text: "one two three", start_ms: 0, end_ms: 600 },
+      { text: "four five", start_ms: 600, end_ms: 1000 },
+    ];
+    assert.deepEqual(
+      captions.moveWordAcrossLines(lines, 0, 1, 1).map((l) => l.text),
+      ["one three", "two four five"],
+    );
+    assert.deepEqual(
+      captions.moveWordAcrossLines(lines, 1, 1, -1).map((l) => l.text),
+      ["one two three five", "four"],
+    );
+    assert.deepEqual(
+      captions.moveWordAcrossLines(lines, 0, 9, 1).map((l) => l.text),
+      ["one two three", "four five"],
+    );
+    // Moving the only word dissolves its line.
+    assert.deepEqual(
+      captions.moveWordAcrossLines(lines, 1, 0, -1).map((l) => l.text).length,
+      2,
+    );
+    const single = [
+      { text: "solo", start_ms: 0, end_ms: 200 },
+      { text: "rest here", start_ms: 200, end_ms: 600 },
+    ];
+    assert.deepEqual(
+      captions.moveWordAcrossLines(single, 0, 0, 1).map((l) => l.text),
+      ["solo rest here"],
+    );
+  });
+
   it("generates timeline-mapped captions and splits blocks", async () => {
     const { captions, video, db } = await libs();
     const conn = db.getDb();
