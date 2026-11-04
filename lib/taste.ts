@@ -94,17 +94,19 @@ export function buildVoiceExemplarSection(
 // human-readable remainder. Unparseable verdicts keep the original.
 export const CRITIC_THRESHOLD = 3;
 
-export function buildCriticPrompt(draft: string): string {
+export function buildCriticPrompt(draft: string, shapeNote = ""): string {
+  const shape = shapeNote ? `\n${shapeNote}\n` : "";
+  const preserve = shapeNote ? " and preserving the required format" : "";
   return `You are a ruthless social-media editor scoring ONE draft post for ORIGINALITY + voice match, 1-5:
 1 = generic AI slop anyone could write; 3 = competent but safe; 5 = sharp, specific, unmistakably this creator.
 
 ${ANTI_SLOP}
-
+${shape}
 DRAFT TO SCORE:
 ${draft}
 
 First line of your reply: SCORE: n/5
-Score 4+ and stop there. Score 3 or lower, then add a blank line and the full rewritten post — same idea and facts, sharper voice, obeying every taste rule. Output only the score line and (when rewriting) the post.`;
+Score 4+ and stop there. Score 3 or lower, then add a blank line and the full rewritten post — same idea and facts, sharper voice, obeying every taste rule${preserve}. Output only the score line and (when rewriting) the post.`;
 }
 
 export function parseCriticScore(verdict: string): number | null {

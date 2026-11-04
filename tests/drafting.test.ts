@@ -142,3 +142,43 @@ describe("carouselOutlineIssues", () => {
     assert.ok(carouselOutlineIssues(short).some((i) => i.includes("2 SLIDE markers")));
   });
 });
+
+describe("critic shape lock", () => {
+  const outline = [
+    "A caption long enough to pass the check",
+    "",
+    "SLIDE 1",
+    "hook",
+    "",
+    "SLIDE 2",
+    "a",
+    "",
+    "SLIDE 3",
+    "b",
+    "",
+    "SLIDE 4",
+    "c",
+  ].join("\n");
+  const stripped = "Just a sharpened post.\n\nNo markers here at all.";
+
+  it("locks carousel and thread bodies, leaves singles alone", async () => {
+    const { criticShapeNote } = await import("../lib/drafting");
+    assert.match(criticShapeNote("carousel", "body"), /SLIDE 1 through SLIDE 7/);
+    assert.match(criticShapeNote("carousel", "body"), /never compress/);
+    assert.match(criticShapeNote("thread", "body"), /numbered thread posts/);
+    assert.equal(criticShapeNote("thread", "option"), "");
+    assert.equal(criticShapeNote("short_post", "option"), "");
+  });
+
+  it("rejects rewrites that break the kind shape", async () => {
+    const { acceptRevision } = await import("../lib/drafting");
+    assert.equal(acceptRevision("carousel", "body", outline, outline), true);
+    assert.equal(acceptRevision("carousel", "body", outline, stripped), false);
+    assert.equal(acceptRevision("carousel", "body", outline, "  "), false);
+    const thread = "1/ hook\n\n2/ point\n\n3/ tail";
+    assert.equal(acceptRevision("thread", "body", thread, thread), true);
+    assert.equal(acceptRevision("thread", "body", thread, "one merged post"), false);
+    assert.equal(acceptRevision("short_post", "option", "old", "x".repeat(281)), false);
+    assert.equal(acceptRevision("short_post", "option", "old", "fine"), true);
+  });
+});

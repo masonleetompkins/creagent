@@ -495,15 +495,16 @@ export async function runFanout(
   }
   // Taste pass: one critic score per surviving piece — options AND bodies;
   // the longest text is the most important to review. 3/5 or below earns
-  // a rewrite. Unparseable verdicts, errors, and over-limit rewrites keep
-  // the original — the critic can only improve, never destroy.
+  // a rewrite. Unparseable verdicts, errors, over-limit rewrites, and
+  // shape-breaking rewrites keep the original — the critic can only
+  // improve, never destroy.
   await Promise.all(
     calls.map(async (c) => {
       const body = (out.get(c.key) ?? "").trim();
       if (!body) return;
       let verdict = "";
       try {
-        verdict = await callText(client, buildCriticPrompt(body), CRITIC_TEMPERATURE);
+        verdict = await callText(client, buildCriticPrompt(body, criticShapeNote(kind, c.role)), CRITIC_TEMPERATURE);
       } catch {
         return;
       }
@@ -511,12 +512,47 @@ export async function runFanout(
       if (score === null || score > CRITIC_THRESHOLD) return;
       const revision = extractRevision(verdict);
       if (!revision) return;
-      // Caps apply to options only — bodies are multi-post by design.
-      if (c.role === "option" && limit && overLimit(kind, revision) > 0) return;
+      if (!acceptRevision(kind, c.role, body, revision)) return;
       out.set(c.key, revision);
     }),
   );
   return out;
+}
+
+// The critic scores "ONE draft post" by default — multi-part kinds need an
+// explicit format lock or a rewrite compresses the outline into prose.
+export function criticShapeNote(kind: string, role: "option" | "body"): string {
+  if (kind === "carousel") {
+    return "FORMAT (preserve exactly): this is a carousel OUTLINE — Caption first, then SLIDE 1 through SLIDE 7 markers. Score the outline as an outline; never compress it into a single post.";
+  }
+  if (THREAD_KINDS.has(kind) && role === "body") {
+    return "FORMAT (preserve exactly): numbered thread posts separated by blank lines. Score the thread as a thread; never merge it into one post.";
+  }
+  return "";
+}
+
+// A critic rewrite must keep the kind's shape: carousel revisions need a
+// valid outline, thread revisions keep their numbered posts, options keep
+// their caps. Anything else keeps the original.
+export function acceptRevision(
+  kind: string,
+  role: "option" | "body",
+  original: string,
+  revision: string,
+): boolean {
+  const rev = revision.trim();
+  if (!rev) return false;
+  if (role === "option") {
+    const limit = CHAR_LIMITS[kind];
+    if (limit && overLimit(kind, rev) > 0) return false;
+    return true;
+  }
+  if (kind === "carousel") return carouselOutlineIssues(rev).length === 0;
+  if (THREAD_KINDS.has(kind)) {
+    const count = (t: string): number => t.match(/^\s*\d+\s*\//gm)?.length ?? 0;
+    if (count(original) >= 2 && count(rev) < 2) return false;
+  }
+  return true;
 }
 
 // First blank-line-separated post over the cap (thread bodies ship split).

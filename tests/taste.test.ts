@@ -54,6 +54,13 @@ describe("buildCriticPrompt", () => {
     assert.ok(prompt.includes("my draft post"));
     assert.ok(prompt.includes("SCORE: n/5"));
   });
+
+  it("pins the required format when a shape note is given", async () => {
+    const { buildCriticPrompt } = await import("../lib/taste");
+    const prompt = buildCriticPrompt("outline", "FORMAT (preserve exactly): SLIDE markers.");
+    assert.ok(prompt.includes("FORMAT (preserve exactly): SLIDE markers."));
+    assert.ok(prompt.includes("preserving the required format"));
+  });
 });
 
 describe("pillarVoiceExemplars", () => {
