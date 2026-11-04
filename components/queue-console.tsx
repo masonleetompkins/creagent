@@ -757,8 +757,11 @@ export default function QueueConsole(): React.ReactNode {
   async function imageDraft(slot: Slot): Promise<void> {
     try {
       setBusy(true);
-      const data = await readJson(await fetch(`/api/slots/${slot.id}/carousel-draft`, { method: "POST" }));
-      window.location.href = `/carousels/${(data as { projectId: string }).projectId}`;
+      const data = (await readJson(
+        await fetch(`/api/slots/${slot.id}/carousel-draft`, { method: "POST" }),
+      )) as { projectId: string; jobId: string };
+      // The shell is instant; the build finishes live in the editor.
+      window.location.href = `/carousels/${data.projectId}?build=${data.jobId}`;
     } catch (e) {
       setBusy(false);
       setError((e as Error).message);

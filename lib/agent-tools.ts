@@ -612,12 +612,15 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "carousel_from_slot",
-    description: "Build a full carousel from a queue slot's approved copy: parses slides, auto-matches library photos, art-directs layouts/backgrounds, plans generated images for approval.",
+    description: "Build a full carousel from a queue slot's approved copy: parses slides instantly, then a background job auto-matches library photos, art-directs layouts/backgrounds, and plans generated images for approval. Returns projectId plus the finish jobId to poll.",
     parameters: objParam({ slotId: S("Queue slot UUID") }, ["slotId"]),
     run: async (a) =>
       safe(async () => {
-        const { draftCarouselFromSlot } = await import("./carousel-copy");
-        return draftCarouselFromSlot(uuid(a.slotId, "slotId"));
+        const { createCarouselShellFromSlot } = await import("./carousel-copy");
+        const { enqueue } = await import("./queue");
+        const shell = createCarouselShellFromSlot(uuid(a.slotId, "slotId"));
+        const jobId = enqueue("carousel_build", { projectId: shell.projectId });
+        return { ...shell, jobId };
       }),
   },
   {

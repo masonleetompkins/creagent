@@ -118,10 +118,10 @@ describe("runAutoDesign offline", () => {
   });
 });
 
-describe("draftCarouselFromSlot full build", () => {
+describe("carousel shell plus finish", () => {
   it("parses slides, plans images, and designs without review gaps", async () => {
     const { getDb, nowIso } = await import("../lib/db");
-    const { draftCarouselFromSlot } = await import("../lib/carousel-copy");
+    const { createCarouselShellFromSlot, finishCarouselBuild } = await import("../lib/carousel-copy");
     const { listSlides } = await import("../lib/carousel");
     const db = getDb();
     const slotId = randomUUID();
@@ -137,16 +137,18 @@ describe("draftCarouselFromSlot full build", () => {
     db.prepare(
       `UPDATE queue_slots SET approved_draft_id = ?, approved_option = 0 WHERE id = ?`,
     ).run(draftId, slotId);
-    const out = await draftCarouselFromSlot(slotId);
+    const shell = createCarouselShellFromSlot(slotId);
+    assert.equal(shell.slides, 4);
+    const out = await finishCarouselBuild(shell.projectId);
     assert.equal(out.slides, 4);
     assert.equal(out.picks, 0);
     assert.equal(out.requested, 4);
     assert.equal(out.designFallback, true);
-    const slides = listSlides(out.projectId);
+    const slides = listSlides(shell.projectId);
     assert.equal(slides[0].layout, "cover");
     assert.equal(slides[0].background, "gradient");
     assert.equal(slides[3].layout, "cta");
-    const reqs = db.prepare(`SELECT COUNT(*) AS n FROM gen_requests WHERE project_id = ?`).get(out.projectId) as {
+    const reqs = db.prepare(`SELECT COUNT(*) AS n FROM gen_requests WHERE project_id = ?`).get(shell.projectId) as {
       n: number;
     };
     assert.equal(reqs.n, 4);

@@ -204,12 +204,18 @@ Write an image prompt for each slide marked NEEDS IMAGE. Each prompt is one vivi
   }
 }
 
-export async function runPlanImages(projectId: string): Promise<PlanImagesResult> {
+export async function runPlanImages(
+  projectId: string,
+  onStage?: (stage: "photos" | "story" | "requests") => void,
+): Promise<PlanImagesResult> {
   const project = getProject(projectId);
   if (!project) throw new Error("carousel project not found");
+  onStage?.("photos");
   const auto = await runAutopick(projectId);
   const plannable = auto.unmatched.filter((id) => !pendingForSlide(id));
+  onStage?.("story");
   const story = await planStoryPrompts(projectId, plannable);
+  onStage?.("requests");
   let requested = 0;
   const unmatched: string[] = [];
   for (const slideId of auto.unmatched) {

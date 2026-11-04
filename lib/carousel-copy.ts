@@ -115,20 +115,28 @@ export type CarouselCopyResult = {
 // it without an import cycle.
 export { resolveSlotOutline };
 
-// Image-draft pipeline: approved queue-slot copy -> parsed slides ->
-// auto-matched library photos -> art direction (layouts + backgrounds).
-// Slides the matcher can't place get a generation request for approval,
-// so the editor opens with every decision made except image spend.
+// Image-draft pipeline, split for instant navigation: the shell (approved
+// queue-slot copy -> parsed slides) builds synchronously so the editor
+// opens immediately; the finish (photo matching, story prompts, art
+// direction, image requests) runs as a carousel_build job while the user
+// watches each stage land.
+export type SlotDraftShell = {
+  projectId: string;
+  slides: number;
+};
+
 export type SlotDraftResult = {
   projectId: string;
   slides: number;
   picks: number;
   unmatched: string[];
   requested: number;
+  story: number;
+  storyFallback: boolean;
   designFallback: boolean;
 };
 
-export async function draftCarouselFromSlot(slotId: string): Promise<SlotDraftResult> {
+export function createCarouselShellFromSlot(slotId: string): SlotDraftShell {
   const db = getDb();
   const slot = db
     .prepare(
@@ -155,16 +163,30 @@ export async function draftCarouselFromSlot(slotId: string): Promise<SlotDraftRe
   for (const s of slides) {
     addSlide(project.id, { layout: s.layout, heading: s.heading, body: s.body });
   }
-  const planned = await runPlanImages(project.id);
-  const design = await runAutoDesign(project.id);
   // Images need user review before this slot can ship.
   db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slot.id);
+  return { projectId: project.id, slides: slides.length };
+}
+
+export type BuildStage = "photos" | "story" | "requests" | "design";
+
+export async function finishCarouselBuild(
+  projectId: string,
+  onStage?: (stage: BuildStage) => void,
+): Promise<SlotDraftResult> {
+  const project = getProject(projectId);
+  if (!project) throw new Error("carousel project not found");
+  const planned = await runPlanImages(projectId, (s) => onStage?.(s));
+  onStage?.("design");
+  const design = await runAutoDesign(projectId);
   return {
-    projectId: project.id,
-    slides: slides.length,
+    projectId,
+    slides: listSlides(projectId).length,
     picks: planned.attached,
     unmatched: planned.unmatched,
     requested: planned.requested,
+    story: planned.story,
+    storyFallback: planned.storyFallback,
     designFallback: design.fallback,
   };
 }

@@ -1,7 +1,7 @@
 // Local job worker. Polls the embedded SQLite queue, no daemons.
 // Usage: npm run worker
 import { consolidatePillars, runAnalysis, runBrainRegenerate } from "./lib/analysis";
-import { runCarouselCopy } from "./lib/carousel-copy";
+import { finishCarouselBuild, runCarouselCopy } from "./lib/carousel-copy";
 import { runCarouselImage } from "./lib/carousel-image";
 import { runAutopick, runPlanImages } from "./lib/carousel-plan";
 import { runPhotoScan } from "./lib/photo-vision";
@@ -212,6 +212,20 @@ async function dispatch(job: JobRow): Promise<unknown> {
     const { projectId } = data;
     if (typeof projectId !== "string" || !projectId) throw new Error("projectId is required");
     return runPlanImages(projectId);
+  }
+  if (job.name === "carousel_build") {
+    const { projectId } = data;
+    if (typeof projectId !== "string" || !projectId) throw new Error("projectId is required");
+    const labels: Record<string, string> = {
+      photos: "Matching library photos",
+      story: "Writing story image prompts",
+      requests: "Filing image requests",
+      design: "Art-directing layouts",
+    };
+    updateProgress(job.id, { stage: "photos", label: labels.photos });
+    return finishCarouselBuild(projectId, (stage) =>
+      updateProgress(job.id, { stage, label: labels[stage] ?? stage }),
+    );
   }
   if (job.name === "transcribe") {
     const { assetId, lang } = data;

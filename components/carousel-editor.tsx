@@ -82,7 +82,13 @@ function photoSrc(url: string): string {
     : url;
 }
 
-export default function CarouselEditor({ projectId }: { projectId: string }): React.ReactNode {
+export default function CarouselEditor({
+  projectId,
+  buildJobId,
+}: {
+  projectId: string;
+  buildJobId?: string;
+}): React.ReactNode {
   const [project, setProject] = useState<Project | null>(null);
   const [slides, setSlides] = useState<Slide[]>([]);
   const [requests, setRequests] = useState<GenRequest[]>([]);
@@ -92,6 +98,8 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [buildStage, setBuildStage] = useState<string | null>(null);
+  const buildWatched = useRef(false);
   const [kit, setKit] = useState({ title: "", primary: "#0b5fff", secondary: "#111111", background: "#ffffff", heading: "system-black", body: "system" });
   const [draft, setDraft] = useState({ layout: "content", heading: "", body: "", background: "" });
   const [brief, setBrief] = useState("");
@@ -134,6 +142,34 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live build watch: after "Build full carousel" lands here, poll the
+  // finish job, refresh on every tick so stages visibly land, and report.
+  useEffect(() => {
+    if (!buildJobId || buildWatched.current) return;
+    buildWatched.current = true;
+    setBuildStage("Starting build");
+    (async () => {
+      try {
+        const done = await pollJob(buildJobId, (d) => {
+          const prog = (d.progress ?? {}) as { label?: unknown };
+          if (typeof prog.label === "string" && prog.label) setBuildStage(prog.label);
+          void load();
+        });
+        window.history.replaceState(null, "", window.location.pathname);
+        if (done.state === "failed") throw new Error((done.failedReason as string) ?? "build failed");
+        const r = (done.result ?? {}) as { slides?: unknown; picks?: unknown; requested?: unknown };
+        setBuildStage(null);
+        setNote(
+          `Build finished: ${String(r.slides ?? 0)} slides, ${String(r.picks ?? 0)} photos matched, ${String(r.requested ?? 0)} image requests filed for approval.`,
+        );
+        await load();
+      } catch (e) {
+        setBuildStage(null);
+        setError((e as Error).message);
+      }
+    })();
+  }, [buildJobId, load]);
 
   useEffect(() => {
     const onAgent = (e: Event): void => {
@@ -779,6 +815,11 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     <>
       {note ? <p className="note ok">{note}</p> : null}
       {error ? <p className="note err">{error}</p> : null}
+      {buildStage ? (
+        <p className="note">
+          <span className="spin" aria-hidden="true" /> Building carousel — {buildStage}…
+        </p>
+      ) : null}
 
       <section className="keycard">
         <div className="row" style={{ marginTop: 0 }}>

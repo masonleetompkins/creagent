@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 process.env.SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "creagent-carousel-v1-")), "test.sqlite");
 process.env.PHOTOS_DIR = mkdtempSync(join(tmpdir(), "creagent-photos-"));
+process.env.CREAGENT_MODEL_OFFLINE = "1";
 
 before(async () => {
   await import("../scripts/migrate");
@@ -189,10 +190,10 @@ describe("downloadPhotoForSlide with uploads", () => {
   });
 });
 
-describe("draftCarouselFromSlot", () => {
-  it("builds slides from approved copy with no library matches", async () => {
+describe("carousel shell and finish", () => {
+  it("builds the shell instantly, finishes in the background", async () => {
     const { getDb, nowIso } = await import("../lib/db");
-    const { draftCarouselFromSlot } = await import("../lib/carousel-copy");
+    const { createCarouselShellFromSlot, finishCarouselBuild } = await import("../lib/carousel-copy");
     const { listSlides } = await import("../lib/carousel");
     const db = getDb();
     const slotId = randomUUID();
@@ -208,20 +209,27 @@ describe("draftCarouselFromSlot", () => {
     db.prepare(
       `UPDATE queue_slots SET approved_draft_id = ?, approved_option = 0 WHERE id = ?`,
     ).run(draftId, slotId);
-    const out = await draftCarouselFromSlot(slotId);
-    assert.equal(out.slides, 4);
-    assert.equal(out.picks, 0);
-    assert.equal(out.unmatched.length, 4);
-    assert.equal(listSlides(out.projectId).length, 4);
+    const shell = createCarouselShellFromSlot(slotId);
+    assert.equal(shell.slides, 4);
+    assert.equal(listSlides(shell.projectId).length, 4);
     const status = db.prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotId) as {
       status: string;
     };
     assert.equal(status.status, "orange");
+    const stages: string[] = [];
+    const out = await finishCarouselBuild(shell.projectId, (s) => stages.push(s));
+    assert.deepEqual(stages, ["photos", "story", "requests", "design"]);
+    assert.equal(out.slides, 4);
+    assert.equal(out.picks, 0);
+    assert.equal(out.unmatched.length, 4);
+    assert.equal(out.requested, 4);
+    assert.equal(out.designFallback, true);
+    assert.equal(listSlides(shell.projectId)[0].background, "gradient");
   });
 
   it("refuses slots without an approval", async () => {
     const { getDb, nowIso } = await import("../lib/db");
-    const { draftCarouselFromSlot } = await import("../lib/carousel-copy");
+    const { createCarouselShellFromSlot, finishCarouselBuild } = await import("../lib/carousel-copy");
     const slotId = randomUUID();
     getDb()
       .prepare(
@@ -229,8 +237,9 @@ describe("draftCarouselFromSlot", () => {
          VALUES (?, ?, 'carousel', '[]', 'red', ?)`,
       )
       .run(slotId, "2026-11-01T09:00:00.000Z", nowIso());
-    await assert.rejects(() => draftCarouselFromSlot(slotId), /approve/);
-    await assert.rejects(() => draftCarouselFromSlot(randomUUID()), /not found/);
+    assert.throws(() => createCarouselShellFromSlot(slotId), /approve/);
+    assert.throws(() => createCarouselShellFromSlot(randomUUID()), /not found/);
+    await assert.rejects(() => finishCarouselBuild(randomUUID()), /not found/);
   });
 });
 
