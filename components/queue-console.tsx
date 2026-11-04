@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
-import { CONTENT_TYPES, PLATFORM_POST_CAPS, PLATFORMS, THREAD_KINDS } from "@/lib/content";
+import { CONTENT_TYPES, IMAGE_KINDS, PLATFORM_POST_CAPS, PLATFORMS, THREAD_KINDS, VIDEO_KINDS } from "@/lib/content";
 import DraftReview from "./draft-review";
 import {
   approvedBody,
+  carouselCaptionFromOutline,
   charCount,
   clampSelection,
   longestParagraph,
@@ -25,6 +26,7 @@ type Slot = {
   draft_count: number;
   approved_draft_id?: string | null;
   approved_option?: number | null;
+  approved_media?: string | null;
 };
 
 type Draft = {
@@ -34,7 +36,21 @@ type Draft = {
   status: string;
   structure: string | null;
   selection: string | null;
+  caption: string | null;
   created_at: string;
+};
+
+type SlotMedia = {
+  pin: string | null;
+  candidates: Array<{
+    source: "export" | "attachment";
+    id: string;
+    label: string;
+    url: string;
+    created_at: string;
+  }>;
+  resolved: { source: string; id?: string; label: string; url?: string } | null;
+  error?: string;
 };
 
 type Attachment = {
@@ -160,6 +176,14 @@ function isThreadKind(contentType: string): boolean {
   return THREAD_KINDS.has(contentType);
 }
 
+// Legacy caption preview: what a media draft without a saved caption
+// block ships (mirrors the publish fallback exactly).
+function legacyCaption(kind: string, text: string): string {
+  if (IMAGE_KINDS.has(kind)) return carouselCaptionFromOutline(text);
+  if (VIDEO_KINDS.has(kind)) return text.split(/\n\s*\n/)[0]?.trim() ?? "";
+  return "";
+}
+
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -237,9 +261,10 @@ export default function QueueConsole(): React.ReactNode {
   const [editing, setEditing] = useState<{
     id: string;
     body: string;
-    target: number | "thread" | null;
+    target: number | "thread" | "caption" | null;
     title: string;
   } | null>(null);
+  const [slotMedia, setSlotMedia] = useState<SlotMedia | null>(null);
   const [busy, setBusy] = useState(false);
   const [dump, setDump] = useState(() => {
     try {
@@ -437,12 +462,14 @@ export default function QueueConsole(): React.ReactNode {
     setVersionsOpen(null);
     setCopied(false);
     setPublishResult(null);
+    setSlotMedia(null);
     try {
-      const [data, files, reqs, pubs] = await Promise.all([
+      const [data, files, reqs, pubs, media] = await Promise.all([
         readJson(await fetch(`/api/slots/${id}/drafts`)),
         readJson(await fetch(`/api/slots/${id}/attachments`)),
         readJson(await fetch(`/api/slots/${id}/gen-requests`)),
         readJson(await fetch(`/api/slots/${id}/publish`)),
+        readJson(await fetch(`/api/slots/${id}/media`)),
       ]);
       setPublishHistory((pubs.history as PublishHistoryRow[]) ?? []);
       setSelected({ ...((data.slot as Slot) ?? {}), drafts: (data.drafts as Draft[]) ?? [] } as Slot & {
@@ -450,6 +477,7 @@ export default function QueueConsole(): React.ReactNode {
       });
       setAttachments((files.attachments as Attachment[]) ?? []);
       setGenRequests((reqs.requests as GenRequest[]) ?? []);
+      setSlotMedia(media as unknown as SlotMedia);
       requestAnimationFrame(() => {
         document
           .querySelector(".slot-inspector")
@@ -621,6 +649,21 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
+  async function pinMedia(slotId: string, pin: string | null): Promise<void> {
+    try {
+      await readJson(
+        await fetch(`/api/slots/${slotId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ approved_media: pin }),
+        }),
+      );
+      await openSlot(slotId);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function saveEdit(): Promise<void> {
     if (!editing || !selected) return;
     try {
@@ -629,7 +672,9 @@ export default function QueueConsole(): React.ReactNode {
           ? { body: editing.body }
           : editing.target === "thread"
             ? { threadBody: editing.body }
-            : { optionIndex: editing.target, body: editing.body };
+            : editing.target === "caption"
+              ? { caption: editing.body }
+              : { optionIndex: editing.target, body: editing.body };
       await readJson(
         await fetch(`/api/drafts/${editing.id}`, {
           method: "PATCH",
@@ -1040,8 +1085,8 @@ export default function QueueConsole(): React.ReactNode {
     if (view === "week") setWeekOffset((o) => o + 1);
     else setMonthOffset((o) => o + 1);
   };
-  const isVideoType = (t: string): boolean =>
-    ["video_trend", "video_series", "video_yap", "long_video", "clip"].includes(t);
+  const isVideoType = (t: string): boolean => VIDEO_KINDS.has(t);
+  const isMediaKind = (t: string): boolean => VIDEO_KINDS.has(t) || IMAGE_KINDS.has(t);
   const byDay = (day: Date): Slot[] =>
     slots.filter((s) => {
       const t = new Date(s.scheduled_at);
@@ -1418,8 +1463,12 @@ export default function QueueConsole(): React.ReactNode {
             const hero = approvedBody(pinned, heroIdx);
             const vnum = versions.length > 1 ? `Draft ${versions.indexOf(pinned) + 1} · ` : "";
             const heroThread = isThreadKind(selected.content_type);
-            const heroParas = hero.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-            const heroN = heroThread ? longestParagraph(hero) : charCount(hero);
+            // Media slots ship the caption block (stored, else parsed from
+            // the picked copy) — never the script or outline.
+            const heroMedia = isMediaKind(selected.content_type);
+            const ship = heroMedia ? pinned.caption?.trim() || legacyCaption(selected.content_type, hero) : hero;
+            const heroParas = ship.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+            const heroN = heroThread ? longestParagraph(ship) : charCount(ship);
             const heroCap = slotCap(selected.platforms);
             const overCaps = parsePlatforms(selected.platforms).filter((p) => {
               const cap = PLATFORM_POST_CAPS[p];
@@ -1431,7 +1480,7 @@ export default function QueueConsole(): React.ReactNode {
             return (
               <div className="aphero">
                 <p className="dr-sub">
-                  {selected.status === "gray" ? "Posted" : "Approved post"} · {vnum}Option {heroIdx + 1} ·{" "}
+                  {selected.status === "gray" ? "Posted" : heroMedia ? "Approved caption" : "Approved post"} · {vnum}Option {heroIdx + 1} ·{" "}
                   {heroThread ? "longest " : ""}
                   {heroN}
                   {heroCap !== null ? `/${heroCap}` : ""}
@@ -1445,14 +1494,73 @@ export default function QueueConsole(): React.ReactNode {
                   ) : null}
                 </p>
                 <div className="dr-prose">
-                  <p>{hero}</p>
+                  <p>{ship}</p>
                 </div>
+                {heroMedia && isVideoType(selected.content_type) && slotMedia ? (
+                  slotMedia.resolved ? (
+                    <>
+                      <p className="dr-sub">
+                        Video to upload · {slotMedia.resolved.label}
+                        {slotMedia.resolved.source === "auto" ? " (auto)" : ""}
+                      </p>
+                      {slotMedia.resolved.url ? (
+                        <video controls preload="none" src={slotMedia.resolved.url} style={{ maxWidth: "100%" }} />
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="note err">{slotMedia.error ?? "No finished video yet."}</p>
+                  )
+                ) : null}
                 <div className="row">
-                  <button onClick={() => void copyPost(hero)}>{copied ? "Copied ✓" : "Copy post"}</button>
+                  <button onClick={() => void copyPost(ship)}>{copied ? "Copied ✓" : heroMedia ? "Copy caption" : "Copy post"}</button>
                 </div>
               </div>
             );
           })()}
+          {isVideoType(selected.content_type) && slotMedia ? (
+            <div>
+              <h2>Video to upload</h2>
+              {slotMedia.error && !slotMedia.resolved ? (
+                <p className="note err">{slotMedia.error}</p>
+              ) : null}
+              {slotMedia.candidates.length === 0 ? (
+                <p className="muted">
+                  No finished videos yet — Export in the video editor, or attach a file below.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    <label>
+                      <input
+                        type="radio"
+                        name="slot-media"
+                        checked={!slotMedia.pin}
+                        onChange={() => void pinMedia(selected.id, null)}
+                      />{" "}
+                      Auto — latest finished file
+                      {slotMedia.resolved?.source === "auto" ? ` (${slotMedia.resolved.label})` : ""}
+                    </label>
+                  </p>
+                  {slotMedia.candidates.map((c) => (
+                    <div key={`${c.source}:${c.id}`}>
+                      <p>
+                        <label>
+                          <input
+                            type="radio"
+                            name="slot-media"
+                            checked={slotMedia.pin === `${c.source}:${c.id}`}
+                            onChange={() => void pinMedia(selected.id, `${c.source}:${c.id}`)}
+                          />{" "}
+                          {c.source === "export" ? "Export" : "Attached"} · {c.label}
+                        </label>
+                      </p>
+                      <video controls preload="none" src={c.url} style={{ maxWidth: "100%" }} />
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          ) : null}
           {(selected.drafts ?? []).length > 0 ? (
             <div className="row">
               <button onClick={() => setVersionsOpen((v) => !(v ?? !isDone(selected.status)))}>
@@ -1476,12 +1584,16 @@ export default function QueueConsole(): React.ReactNode {
                 ? "Pick the post to run with — then Approve above."
                 : layout === "hooks-plus-body"
                   ? "Pick a hook — it tops the thread below. Then Approve above."
-                  : "Review — then Approve above, or Edit / Feedback to revise.";
+                  : isMediaKind(d.kind)
+                    ? "Review the draft and caption — then Approve above, or Edit / Feedback to revise."
+                    : "Review — then Approve above, or Edit / Feedback to revise.";
             const nextStep =
               parsePlatforms(selected.platforms).includes("x") &&
               (d.kind === "short_post" || isThreadKind(d.kind))
                 ? `${nextStepBase} Reply to early comments — the algorithm's top signal.`
                 : nextStepBase;
+            const pickedBody = structure ? (structure.options[picked]?.body ?? d.body) : d.body;
+            const captionFallback = isMediaKind(d.kind) ? legacyCaption(d.kind, pickedBody) : null;
             return (
             <div key={d.id}>
               <DraftReview
@@ -1493,7 +1605,20 @@ export default function QueueConsole(): React.ReactNode {
                 selection={picked}
                 nextStep={nextStep}
                 limit={slotCap(selected.platforms)}
+                caption={d.caption}
+                captionFallback={captionFallback}
                 onSelect={(idx) => void selectOption(d.id, idx)}
+                onEditCaption={
+                  isMediaKind(d.kind)
+                    ? () =>
+                        setEditing({
+                          id: d.id,
+                          body: d.caption ?? captionFallback ?? "",
+                          target: "caption",
+                          title: "Edit post caption",
+                        })
+                    : undefined
+                }
                 onEdit={(target) => {
                   if (target === null || !structure) {
                     setEditing({ id: d.id, body: d.body, target: null, title: "Edit draft" });

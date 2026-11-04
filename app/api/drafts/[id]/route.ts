@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { updateDraftOption, updateDraftThreadBody } from "@/lib/drafting";
+import { updateDraftCaption, updateDraftOption, updateDraftThreadBody } from "@/lib/drafting";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +23,13 @@ export async function PATCH(
     selection,
     optionIndex,
     threadBody,
+    caption,
   } = body as {
     body?: unknown;
     selection?: unknown;
     optionIndex?: unknown;
     threadBody?: unknown;
+    caption?: unknown;
   };
   if (selection !== undefined && typeof selection !== "string") {
     return NextResponse.json({ error: "selection must be a string" }, { status: 400 });
@@ -43,6 +45,30 @@ export async function PATCH(
     (typeof optionIndex !== "number" || !Number.isInteger(optionIndex))
   ) {
     return NextResponse.json({ error: "optionIndex must be an integer" }, { status: 400 });
+  }
+  if (caption !== undefined && (typeof caption !== "string" || !caption.trim())) {
+    return NextResponse.json({ error: "caption must be a non-empty string" }, { status: 400 });
+  }
+  // Caption-block edits are orthogonal: they never touch the body,
+  // structure, or pick, and combine with any other field in one call.
+  if (caption !== undefined) {
+    try {
+      updateDraftCaption(id, caption);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message.includes("not found")) {
+        return NextResponse.json({ error: message }, { status: 404 });
+      }
+      return NextResponse.json({ error: message }, { status: 422 });
+    }
+    if (
+      text === undefined &&
+      selection === undefined &&
+      optionIndex === undefined &&
+      threadBody === undefined
+    ) {
+      return NextResponse.json({ ok: true });
+    }
   }
   // Scoped edits keep the structure (other options survive); whole-body
   // edits still clear it to clean prose.

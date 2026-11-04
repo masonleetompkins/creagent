@@ -6,11 +6,16 @@
 // every platform published. Docs: docs.zernio.com/posts/create-post
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { PLATFORM_POST_CAPS, THREAD_KINDS } from "./content";
+import { IMAGE_KINDS, PLATFORM_POST_CAPS, THREAD_KINDS, VIDEO_KINDS } from "./content";
 import { getDb, nowIso } from "./db";
 import { attachmentPath, listAttachments } from "./uploads";
 import { resolveApproval } from "./draft-approval";
-import { clampSelection, parseStructure, splitLegacyOptions } from "./draft-structure";
+import {
+  carouselCaptionFromOutline,
+  clampSelection,
+  parseStructure,
+  splitLegacyOptions,
+} from "./draft-structure";
 import { parseSlotPlatforms } from "./platform-fit";
 import {
   zernioAccounts,
@@ -35,8 +40,6 @@ export const ZERNIO_SLUGS: Record<string, string> = {
 
 const THREAD_SLUGS = new Set(["twitter", "threads"]);
 const TEXT_KINDS = new Set(["short_post", "thread", "article_thread"]);
-const IMAGE_KINDS = new Set(["carousel"]);
-const VIDEO_KINDS = new Set(["video_trend", "video_series", "video_yap", "long_video", "clip"]);
 
 function mimeForPath(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -234,6 +237,7 @@ type DraftRow = {
   body: string;
   structure: string | null;
   selection: string | null;
+  caption: string | null;
 };
 
 function loadSlot(slotId: string): SlotRow | null {
@@ -250,7 +254,7 @@ function loadSlot(slotId: string): SlotRow | null {
 function loadDraft(draftId: string): DraftRow | null {
   return (
     (getDb()
-      .prepare(`SELECT id, body, structure, selection FROM drafts WHERE id = ?`)
+      .prepare(`SELECT id, body, structure, selection, caption FROM drafts WHERE id = ?`)
       .get(draftId) as DraftRow | undefined) ?? null
   );
 }
@@ -258,17 +262,134 @@ function loadDraft(draftId: string): DraftRow | null {
 // The shippable text: the pinned pick when the slot carries a pin, else the
 // latest version's pick. Thread kinds need real hooks-plus-body structure —
 // legacy soup can't be split into post items, so those re-draft.
-// Post caption from approved copy: carousels ship their Caption section,
-// video kinds ship the opening paragraph (the hook) as the caption.
+// Legacy caption fallback (drafts without a separate caption block):
+// carousels ship their Caption section, video kinds ship the opening
+// paragraph (the hook) as the caption.
 export function extractPostCaption(kind: string, approvedText: string): string {
   const text = approvedText.trim();
   if (IMAGE_KINDS.has(kind)) {
-    const withoutTag = text.replace(/^\s*\*{0,2}caption:\*{0,2}\s*/i, "");
-    const cutAt = withoutTag.search(/\n\s*\*{0,2}\d+\s*-\s*slide|\n\s*\*{0,2}slide\s*1\b/i);
-    const caption = (cutAt >= 0 ? withoutTag.slice(0, cutAt) : withoutTag).trim();
+    const caption = carouselCaptionFromOutline(text);
     if (caption) return caption;
   }
   return text.split(/\n\s*\n/)[0]?.trim() ?? "";
+}
+
+// Stored caption wins; uncaptioned legacy drafts parse from the copy.
+export function captionFor(kind: string, stored: string | null, approvedText: string): string {
+  return stored?.trim() ? stored.trim() : extractPostCaption(kind, approvedText);
+}
+
+// Upload pin: export:<uuid> pins a finished export, attachment:<uuid> pins
+// an attached video file. Anything else is not a pin.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function parseMediaPin(raw: string | null | undefined): { source: "export" | "attachment"; id: string } | null {
+  if (!raw) return null;
+  const match = raw.match(/^(export|attachment):(.+)$/);
+  if (!match || !UUID_RE.test(match[2])) return null;
+  return { source: match[1] as "export" | "attachment", id: match[2] };
+}
+
+export type MediaCandidate = {
+  source: "export" | "attachment";
+  id: string;
+  label: string;
+  url: string;
+  created_at: string;
+};
+
+// Every finished video a slot could upload: its projects' exports plus its
+// attached video files, newest first. Powers the inspector picker.
+export function listSlotMedia(slotId: string): MediaCandidate[] {
+  const db = getDb();
+  const exports = db
+    .prepare(
+      `SELECT e.id, e.path, e.width, e.height, e.created_at
+       FROM video_exports e JOIN video_projects p ON p.id = e.project_id
+       WHERE p.slot_id = ? ORDER BY e.created_at DESC`,
+    )
+    .all(slotId) as Array<{ id: string; path: string; width: number; height: number; created_at: string }>;
+  const attached = db
+    .prepare(
+      `SELECT id, filename, created_at FROM slot_attachments
+       WHERE slot_id = ? AND kind = 'video' ORDER BY created_at DESC`,
+    )
+    .all(slotId) as Array<{ id: string; filename: string; created_at: string }>;
+  const out: MediaCandidate[] = [];
+  for (const e of exports) {
+    const base = e.path.split("/").pop() || "export.mp4";
+    out.push({
+      source: "export",
+      id: e.id,
+      label: `${base} · ${e.width}x${e.height}`,
+      url: `/api/exports/${e.id}/file`,
+      created_at: e.created_at,
+    });
+  }
+  for (const a of attached) {
+    out.push({
+      source: "attachment",
+      id: a.id,
+      label: a.filename,
+      url: `/api/attachments/${a.id}/file`,
+      created_at: a.created_at,
+    });
+  }
+  return out.sort((x, y) => y.created_at.localeCompare(x.created_at));
+}
+
+export type ResolvedSlotMedia =
+  | { file: MediaFile; label: string; source: "export" | "attachment" | "auto" }
+  | { error: string };
+
+// The one video a slot uploads: the pinned file when the slot carries a
+// pin, else the legacy auto-pick (latest export, then latest attachment).
+// A pin pointing at a missing row or a file gone from disk is an explicit
+// error — never silently a different video.
+export function resolveSlotMedia(slotId: string, kind: string): ResolvedSlotMedia {
+  if (!VIDEO_KINDS.has(kind)) return { error: "video picks are for video slots" };
+  const db = getDb();
+  const slot = db.prepare(`SELECT approved_media FROM queue_slots WHERE id = ?`).get(slotId) as
+    | { approved_media: string | null }
+    | undefined;
+  if (!slot) return { error: "slot not found" };
+  const pin = parseMediaPin(slot.approved_media);
+  if (slot.approved_media && !pin) {
+    return { error: "the saved video pick is damaged — pick the video again" };
+  }
+  if (pin?.source === "attachment") {
+    const row = db
+      .prepare(`SELECT id, filename FROM slot_attachments WHERE id = ? AND slot_id = ? AND kind = 'video'`)
+      .get(pin.id, slotId) as { id: string; filename: string } | undefined;
+    const path = row ? attachmentPath(row.id) : null;
+    if (!row || !path || !existsSync(path)) {
+      return { error: "the pinned video is gone — pick another in the slot inspector" };
+    }
+    return { file: { path, mime: mimeForPath(path) }, label: row.filename, source: "attachment" };
+  }
+  if (pin?.source === "export") {
+    const row = db
+      .prepare(
+        `SELECT e.id, e.path, e.width, e.height FROM video_exports e
+         JOIN video_projects p ON p.id = e.project_id
+         WHERE e.id = ? AND p.slot_id = ?`,
+      )
+      .get(pin.id, slotId) as { id: string; path: string; width: number; height: number } | undefined;
+    if (!row || !existsSync(row.path)) {
+      return { error: "the pinned video is gone — pick another in the slot inspector" };
+    }
+    const base = row.path.split("/").pop() || "export.mp4";
+    return {
+      file: { path: row.path, mime: mimeForPath(row.path) },
+      label: `${base} · ${row.width}x${row.height}`,
+      source: "export",
+    };
+  }
+  const files = slotMediaFiles(slotId, kind);
+  if (files.length === 0) {
+    return { error: "no finished video found — Export in the video editor first, or attach a finished file" };
+  }
+  return { file: files[0], label: files[0].path.split("/").pop() || "video", source: "auto" };
 }
 
 // Postable media for a slot: carousel slide images (filename order) or the
@@ -320,20 +441,19 @@ function publishTextFor(slot: SlotRow): PublishText | { error: string } {
     const count = structure?.options.length ?? 1;
     const idx = clampSelection(String(pin.optionIndex ?? draft.selection ?? 0), count);
     const approved = structure ? (structure.options[idx]?.body ?? draft.body) : draft.body;
+    const caption = captionFor(slot.content_type, draft.caption, approved);
+    if (VIDEO_KINDS.has(slot.content_type)) {
+      const media = resolveSlotMedia(slot.id, slot.content_type);
+      if ("error" in media) return media;
+      return { mode: "media", caption, files: [media.file], label: `video (${media.label})` };
+    }
     const files = slotMediaFiles(slot.id, slot.content_type);
     if (files.length === 0) {
       return {
-        error: IMAGE_KINDS.has(slot.content_type)
-          ? "no slide images attached — open the carousel editor and Attach PNGs to slot first"
-          : "no finished video found — Export in the video editor first, or attach a finished file",
+        error: "no slide images attached — open the carousel editor and Attach PNGs to slot first",
       };
     }
-    return {
-      mode: "media",
-      caption: extractPostCaption(slot.content_type, approved),
-      files,
-      label: IMAGE_KINDS.has(slot.content_type) ? `carousel (${files.length} images)` : "video",
-    };
+    return { mode: "media", caption, files, label: `carousel (${files.length} images)` };
   }
   const structure = parseStructure(draft.structure);
   if (!THREAD_KINDS.has(slot.content_type)) {

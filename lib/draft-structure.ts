@@ -58,6 +58,15 @@ export function longestParagraph(text: string): number {
     .reduce((m, n) => Math.max(m, n), 0);
 }
 
+// The Caption section of a carousel outline: everything before the SLIDE
+// markers, minus a leading "Caption:" tag. Pure so the inspector can show
+// legacy drafts (no separate caption block) exactly what would ship.
+export function carouselCaptionFromOutline(text: string): string {
+  const withoutTag = text.trim().replace(/^\s*\*{0,2}caption:\*{0,2}\s*/i, "");
+  const cutAt = withoutTag.search(/\n\s*\*{0,2}\d+\s*-\s*slide|\n\s*\*{0,2}slide\s*1\b/i);
+  return (cutAt >= 0 ? withoutTag.slice(0, cutAt) : withoutTag).trim();
+}
+
 // The shippable post text: the picked option, plus the thread body when the
 // pick is a hook. Falls back to raw body for unstructured drafts.
 export function approvedBody(

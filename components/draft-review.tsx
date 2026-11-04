@@ -26,9 +26,15 @@ type Props = {
   nextStep: string | null;
   // Tightest platform cap for N/Total counts; null shows bare counts.
   limit?: number | null;
+  // Separate post-caption block (media drafts). The block renders only
+  // when onEditCaption is set; captionFallback shows what legacy drafts
+  // (no saved caption) would ship.
+  caption?: string | null;
+  captionFallback?: string | null;
   onSelect: (index: number) => void;
   // Edit target: an option index, the thread body, or the whole draft.
   onEdit: (target: number | "thread" | null) => void;
+  onEditCaption?: () => void;
   onFeedback: () => void;
 };
 
@@ -184,6 +190,25 @@ export default function DraftReview(props: Props): React.ReactNode {
           ))}
         </div>
       ) : null}
+      {props.onEditCaption ? (
+        <>
+          <p className="dr-sub">
+            Post caption
+            {props.caption ? "" : props.captionFallback ? " — parsed from draft" : " — none yet"}
+          </p>
+          {props.caption || props.captionFallback ? (
+            <div className="dr-prose">
+              {paragraphs(props.caption ?? props.captionFallback ?? "").map((p, i) => (
+                <p key={i}>
+                  {p} <Count n={charCount(p)} limit={props.limit} />
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No caption yet.</p>
+          )}
+        </>
+      ) : null}
       <div className="row">
         {layout === "pick-one" ? (
           <button onClick={() => props.onEdit(selection)}>Edit picked</button>
@@ -195,6 +220,11 @@ export default function DraftReview(props: Props): React.ReactNode {
           </>
         ) : null}
         {layout === "prose" ? <button onClick={() => props.onEdit(null)}>Edit</button> : null}
+        {props.onEditCaption ? (
+          <button onClick={props.onEditCaption}>
+            {props.caption || props.captionFallback ? "Edit caption" : "Add caption"}
+          </button>
+        ) : null}
         <button onClick={props.onFeedback}>Feedback</button>
         {bankable ? (
           <button

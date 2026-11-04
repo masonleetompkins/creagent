@@ -525,6 +525,135 @@ describe("publishSlot", () => {
     assert.equal(statusB, "gray");
   });
 
+  it("parses media pins, rejects garbage", async () => {
+    const { parseMediaPin } = await import("../lib/publish");
+    const id = randomUUID();
+    assert.deepEqual(parseMediaPin(`export:${id}`), { source: "export", id });
+    assert.deepEqual(parseMediaPin(`attachment:${id}`), { source: "attachment", id });
+    assert.equal(parseMediaPin(null), null);
+    assert.equal(parseMediaPin(""), null);
+    assert.equal(parseMediaPin("export:not-a-uuid"), null);
+    assert.equal(parseMediaPin(`photo:${id}`), null);
+    assert.equal(parseMediaPin(id), null);
+  });
+
+  it("resolves pinned and auto video picks, errors on gone pins", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { resolveSlotMedia } = await import("../lib/publish");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "creagent-slotmedia-"));
+    process.env.UPLOADS_DIR = join(dir, "uploads");
+    mkdirSync(process.env.UPLOADS_DIR, { recursive: true });
+    const db = getDb();
+    const at = nowIso();
+    const slotId = randomUUID();
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, brief, created_at)
+       VALUES (?, ?, 'video_yap', '["tiktok"]', 'green', '{}', ?)`,
+    ).run(slotId, at, at);
+    const projectId = randomUUID();
+    db.prepare(
+      `INSERT INTO video_projects (id, slot_id, title, width, height, fps, created_at, updated_at)
+       VALUES (?, ?, 'v', 1080, 1920, 30, ?, ?)`,
+    ).run(projectId, slotId, at, at);
+    const exportPath = join(dir, "cut.mp4");
+    writeFileSync(exportPath, "mp4");
+    const exportId = randomUUID();
+    db.prepare(
+      `INSERT INTO video_exports (id, project_id, path, width, height, fps, created_at)
+       VALUES (?, ?, ?, 1080, 1920, 30, ?)`,
+    ).run(exportId, projectId, exportPath, at);
+    const attachId = randomUUID();
+    db.prepare(
+      `INSERT INTO slot_attachments (id, slot_id, kind, filename, mime, size, created_at)
+       VALUES (?, ?, 'video', 'final.mp4', 'video/mp4', 3, ?)`,
+    ).run(attachId, slotId, at);
+    writeFileSync(join(process.env.UPLOADS_DIR, `${attachId}.mp4`), "mp4");
+    // Auto prefers the latest export.
+    const auto = resolveSlotMedia(slotId, "video_yap");
+    assert.ok(!("error" in auto) && auto.source === "auto");
+    assert.equal(auto.file.path, exportPath);
+    // An attachment pin wins over the export.
+    db.prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`).run(
+      `attachment:${attachId}`,
+      slotId,
+    );
+    const pinned = resolveSlotMedia(slotId, "video_yap");
+    assert.ok(!("error" in pinned) && pinned.source === "attachment");
+    assert.equal(pinned.label, "final.mp4");
+    // An export pin resolves too.
+    db.prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`).run(
+      `export:${exportId}`,
+      slotId,
+    );
+    const pinnedExport = resolveSlotMedia(slotId, "video_yap");
+    assert.ok(!("error" in pinnedExport) && pinnedExport.source === "export");
+    // A pin to a deleted row errors explicitly — never a silent other video.
+    db.prepare(`DELETE FROM slot_attachments WHERE id = ?`).run(attachId);
+    db.prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`).run(
+      `attachment:${attachId}`,
+      slotId,
+    );
+    const gone = resolveSlotMedia(slotId, "video_yap");
+    assert.ok("error" in gone);
+    assert.match(gone.error, /pinned video is gone/);
+    // Another slot's export never leaks across the pin.
+    const otherId = randomUUID();
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, brief, created_at)
+       VALUES (?, ?, 'video_yap', '[]', 'green', '{}', ?)`,
+    ).run(otherId, at, at);
+    db.prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`).run(
+      `export:${exportId}`,
+      otherId,
+    );
+    const leaked = resolveSlotMedia(otherId, "video_yap");
+    assert.ok("error" in leaked);
+  });
+
+  it("ships the stored caption block for video, not the script", async () => {
+    const { publishSlot } = await import("../lib/publish");
+    const { getDb, nowIso } = await import("../lib/db");
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "creagent-videocap-"));
+    const slotId = await seed({
+      status: "green",
+      contentType: "video_yap",
+      platforms: ["tiktok"],
+      draft: {
+        structure: { layout: "prose", options: [{ label: "D", body: "Script hook line.\n\nSecond beat." }] },
+      },
+    });
+    const db = getDb();
+    const at = nowIso();
+    db.prepare(`UPDATE drafts SET caption = ? WHERE slot_id = ?`).run("Tease the payoff #eli5", slotId);
+    const projectId = randomUUID();
+    db.prepare(
+      `INSERT INTO video_projects (id, slot_id, title, width, height, fps, created_at, updated_at)
+       VALUES (?, ?, 'v', 1080, 1920, 30, ?, ?)`,
+    ).run(projectId, slotId, at, at);
+    const exportPath = join(dir, "cut.mp4");
+    writeFileSync(exportPath, "mp4");
+    db.prepare(
+      `INSERT INTO video_exports (id, project_id, path, width, height, fps, created_at)
+       VALUES (?, ?, ?, 1080, 1920, 30, ?)`,
+    ).run(randomUUID(), projectId, exportPath, at);
+    const d = deps({
+      accounts: [{ id: "t1", platform: "tiktok", username: "me" }],
+      onPost: () => ({
+        post: {
+          _id: "zmv",
+          platforms: [{ platform: "tiktok", status: "published", platformPostUrl: "https://tt.me/v/1" }],
+        },
+      }),
+    });
+    const res = await publishSlot(slotId, "k", fullDeps(d));
+    assert.equal(res.ok, true);
+    assert.equal(d.sent[0].body["content"], "Tease the payoff #eli5");
+  });
+
   it("extracts carousel captions and video hooks", async () => {
     const { extractPostCaption } = await import("../lib/publish");
     assert.equal(

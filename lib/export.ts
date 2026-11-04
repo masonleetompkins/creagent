@@ -633,6 +633,12 @@ export async function attachExportToSlot(
     size: buf.length,
     arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
   });
+  // Attaching declares "this one ships" — pin it as the upload pick (the
+  // inspector can switch to another file or back to auto).
+  db.prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`).run(
+    `attachment:${attachment.id}`,
+    project.slot_id,
+  );
   return { attachmentId: attachment.id, filename, size: buf.length };
 }
 

@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvedBody, charCount, clampSelection, longestParagraph, parseStructure, splitLegacyOptions } from "../lib/draft-structure";
+import { approvedBody, carouselCaptionFromOutline, charCount, clampSelection, longestParagraph, parseStructure, splitLegacyOptions } from "../lib/draft-structure";
 
 process.env.SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "creagent-approval-")), "test.sqlite");
 
@@ -139,5 +139,20 @@ describe("longestParagraph", () => {
     assert.equal(longestParagraph("short\n\nmuch longer here"), 16);
     assert.equal(longestParagraph("single"), 6);
     assert.equal(longestParagraph(""), 0);
+  });
+});
+
+describe("carouselCaptionFromOutline", () => {
+  it("splits the Caption section off the SLIDE markers", () => {
+    assert.equal(
+      carouselCaptionFromOutline("**Caption:**\nHook line here.\n\n**7-SLIDE CAROUSEL:**\n\n**SLIDE 1:**\nx"),
+      "Hook line here.",
+    );
+    assert.equal(
+      carouselCaptionFromOutline("Hook line here.\n\nSLIDE 1:\nx\n\nSLIDE 2:\ny"),
+      "Hook line here.",
+    );
+    assert.equal(carouselCaptionFromOutline("plain caption, no markers"), "plain caption, no markers");
+    assert.equal(carouselCaptionFromOutline("   "), "");
   });
 });

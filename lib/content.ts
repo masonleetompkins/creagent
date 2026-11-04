@@ -18,6 +18,17 @@ export type ContentType = keyof typeof CONTENT_TYPES;
 // craft, banking, publishing, and the UI).
 export const THREAD_KINDS: ReadonlySet<string> = new Set(["thread", "article_thread"]);
 
+// Media kinds: carousel ships slide images, video kinds ship one finished
+// file. Both carry a separate post-caption block alongside the draft.
+export const IMAGE_KINDS: ReadonlySet<string> = new Set(["carousel"]);
+export const VIDEO_KINDS: ReadonlySet<string> = new Set([
+  "video_trend",
+  "video_series",
+  "video_yap",
+  "long_video",
+  "clip",
+]);
+
 export function isContentType(value: string): value is ContentType {
   return value in CONTENT_TYPES;
 }

@@ -121,7 +121,7 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "get_slot",
-    description: "Slot detail with drafts, attachments, and gen requests.",
+    description: "Slot detail with drafts, attachments, gen requests, and uploadable video files.",
     parameters: objParam({ slotId: S("Slot UUID") }, ["slotId"]),
     run: async (a) =>
       safe(async () => {
@@ -132,7 +132,9 @@ export const AGENT_TOOLS: ToolDef[] = [
         const drafts = db.prepare(`SELECT * FROM drafts WHERE slot_id = ? ORDER BY created_at ASC`).all(id);
         const attachments = db.prepare(`SELECT id, kind, filename, mime, size FROM slot_attachments WHERE slot_id = ?`).all(id);
         const requests = db.prepare(`SELECT * FROM gen_requests WHERE slot_id = ?`).all(id);
-        return { slot, drafts, attachments, requests };
+        const { listSlotMedia } = await import("./publish");
+        const media = listSlotMedia(id);
+        return { slot, drafts, attachments, requests, media };
       }),
   },
   {
@@ -157,16 +159,75 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "edit_draft",
-    description: "Replace a draft's body text (marks it edited).",
-    parameters: objParam({ draftId: S("Draft UUID"), body: S("New body text") }, ["draftId", "body"]),
+    description:
+      "Replace a draft's body text and/or its post caption (marks it edited). Body edits clear the option structure; caption edits leave everything else alone.",
+    parameters: objParam(
+      {
+        draftId: S("Draft UUID"),
+        body: S("New body text"),
+        caption: S("New post caption (media drafts)"),
+      },
+      ["draftId"],
+    ),
     run: async (a) =>
       safe(async () => {
         const id = uuid(a.draftId, "draftId");
+        const bodyText = typeof a.body === "string" && a.body.trim() ? a.body.trim() : null;
+        const captionText = typeof a.caption === "string" && a.caption.trim() ? a.caption.trim() : null;
+        if (!bodyText && !captionText) throw new Error("body or caption is required");
+        const sets = ["status = 'edited'"];
+        const vals: string[] = [];
+        if (bodyText) {
+          sets.push("body = ?", "structure = NULL");
+          vals.push(bodyText);
+        }
+        if (captionText) {
+          sets.push("caption = ?");
+          vals.push(captionText);
+        }
         const r = getDb()
-          .prepare(`UPDATE drafts SET body = ?, status = 'edited', structure = NULL WHERE id = ?`)
-          .run(str(a.body, "body"), id);
+          .prepare(`UPDATE drafts SET ${sets.join(", ")} WHERE id = ?`)
+          .run(...vals, id);
         if (r.changes === 0) throw new Error("draft not found");
         return { draftId: id };
+      }),
+  },
+  {
+    name: "pin_slot_media",
+    description:
+      "Pin which finished video a video slot uploads (IDs from get_slot media). Omit source and mediaId to clear back to auto (latest export).",
+    parameters: objParam(
+      {
+        slotId: S("Slot UUID"),
+        source: S("export|attachment"),
+        mediaId: S("Export or attachment UUID"),
+      },
+      ["slotId"],
+    ),
+    run: async (a) =>
+      safe(async () => {
+        const db = getDb();
+        const id = uuid(a.slotId, "slotId");
+        const slot = db.prepare(`SELECT content_type FROM queue_slots WHERE id = ?`).get(id) as
+          | { content_type: string }
+          | undefined;
+        if (!slot) throw new Error("slot not found");
+        const { parseMediaPin, resolveSlotMedia } = await import("./publish");
+        const hasSource = typeof a.source === "string" && a.source.trim();
+        const hasMedia = typeof a.mediaId === "string" && a.mediaId.trim();
+        if (!hasSource && !hasMedia) {
+          db.prepare(`UPDATE queue_slots SET approved_media = NULL WHERE id = ?`).run(id);
+          return { slotId: id, pin: null };
+        }
+        const pin = `${str(a.source, "source")}:${uuid(a.mediaId, "mediaId")}`;
+        if (!parseMediaPin(pin)) throw new Error("source must be export|attachment with a UUID mediaId");
+        db.prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`).run(pin, id);
+        const resolved = resolveSlotMedia(id, slot.content_type);
+        if ("error" in resolved) {
+          db.prepare(`UPDATE queue_slots SET approved_media = NULL WHERE id = ?`).run(id);
+          throw new Error(resolved.error);
+        }
+        return { slotId: id, pin, label: resolved.label };
       }),
   },
   {

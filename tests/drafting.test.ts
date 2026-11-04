@@ -33,6 +33,41 @@ describe("saveDraft", () => {
     };
     assert.equal(slot.status, "orange");
   });
+
+  it("stores the caption block; caption edits leave the script alone", async () => {
+    const { saveDraft, updateDraftCaption } = await import("../lib/drafting");
+    const { getDb, nowIso } = await import("../lib/db");
+    const db = getDb();
+    const slotId = randomUUID();
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, brief, created_at)
+       VALUES (?, ?, 'video_yap', '[]', 'red', '{}', ?)`,
+    ).run(slotId, new Date(Date.now() + 3600000).toISOString(), nowIso());
+    const draftId = saveDraft(
+      slotId,
+      "video_yap",
+      "script",
+      { layout: "prose", options: [{ label: "D", body: "script" }] },
+      null,
+      "cap #tag",
+    );
+    const row = db.prepare(`SELECT body, caption, structure FROM drafts WHERE id = ?`).get(draftId) as {
+      body: string;
+      caption: string | null;
+      structure: string | null;
+    };
+    assert.equal(row.caption, "cap #tag");
+    updateDraftCaption(draftId, "new cap");
+    const edited = db.prepare(`SELECT body, caption, structure, status FROM drafts WHERE id = ?`).get(
+      draftId,
+    ) as { body: string; caption: string | null; structure: string | null; status: string };
+    assert.equal(edited.caption, "new cap");
+    assert.equal(edited.body, "script");
+    assert.ok(edited.structure);
+    assert.equal(edited.status, "edited");
+    assert.throws(() => updateDraftCaption(randomUUID(), "x"), /draft not found/);
+    assert.throws(() => updateDraftCaption(draftId, "  "), /edited text is empty/);
+  });
 });
 
 describe("planner sync", () => {

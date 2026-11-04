@@ -16,7 +16,7 @@ export async function GET(
       .prepare(
         `SELECT s.id, s.scheduled_at, s.pillar_id, p.name AS pillar_name,
                 s.content_type, s.platforms, s.status, s.created_at,
-                s.approved_draft_id, s.approved_option
+                s.approved_draft_id, s.approved_option, s.approved_media
          FROM queue_slots s LEFT JOIN pillars p ON p.id = s.pillar_id
          WHERE s.id = ?`,
       )
@@ -24,7 +24,7 @@ export async function GET(
     if (!slot) return NextResponse.json({ error: "slot not found" }, { status: 404 });
     const drafts = getDb()
       .prepare(
-        `SELECT id, kind, body, status, structure, selection, created_at FROM drafts
+        `SELECT id, kind, body, status, structure, selection, caption, created_at FROM drafts
          WHERE slot_id = ? ORDER BY created_at ASC`,
       )
       .all(id);

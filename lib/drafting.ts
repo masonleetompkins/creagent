@@ -2,9 +2,16 @@
 // then flip to orange for review.
 import { randomUUID } from "node:crypto";
 import { getVoice } from "./brain";
-import { CONTENT_TYPES, PLAYBOOK, THREAD_KINDS, type ContentType } from "./content";
+import {
+  CONTENT_TYPES,
+  IMAGE_KINDS,
+  PLAYBOOK,
+  THREAD_KINDS,
+  VIDEO_KINDS,
+  type ContentType,
+} from "./content";
 import { getDb, nowIso } from "./db";
-import { parseStructure } from "./draft-structure";
+import { carouselCaptionFromOutline, parseStructure } from "./draft-structure";
 import { rulesFor, saveFeedback } from "./feedback";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
@@ -565,6 +572,35 @@ export function firstOverlongPost(text: string, cap: number): { index: number; o
   return null;
 }
 
+// Pure prompt builder: the video post caption, written from the finished
+// script (never from the bare brief) so the tease matches the payoff.
+export function buildCaptionPrompt(ctx: FanoutContext, script: string): string {
+  return `${ctx.voiceSection}\n\nPlatforms: ${ctx.platformsLine}\n\nVIDEO SCRIPT (the video says this — the caption teases it, never repeats it word-for-word):\n${script.slice(0, 4000)}\n\nWrite the post caption for this video: one hook line that teases the payoff, then 2-4 hashtags on their own line. Under 200 characters total. Output only the caption, no preamble.\n\n${ANTI_SLOP}`;
+}
+
+async function draftVideoCaption(
+  client: MetaClient,
+  ctx: FanoutContext,
+  script: string,
+): Promise<string | null> {
+  const caption = (await callText(client, buildCaptionPrompt(ctx, script))).trim();
+  return caption || null;
+}
+
+// The caption block for a fresh script version: video captions are written
+// from the script, carousel captions split off the outline's Caption
+// section (no extra model call — it's already written).
+async function captionForDraft(
+  client: MetaClient,
+  kind: string,
+  ctx: FanoutContext,
+  body: string,
+): Promise<string | null> {
+  if (VIDEO_KINDS.has(kind)) return draftVideoCaption(client, ctx, body);
+  if (IMAGE_KINDS.has(kind)) return carouselCaptionFromOutline(body) || null;
+  return null;
+}
+
 async function draftOne(slot: SlotRow, dump?: string): Promise<void> {
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
@@ -595,7 +631,14 @@ async function draftOne(slot: SlotRow, dump?: string): Promise<void> {
   if (!assembled) {
     throw new Error(`model returned an empty draft (all ${calls.length} calls came back empty)`);
   }
-  saveDraft(slot.id, slot.content_type, assembled.body, assembled.structure);
+  saveDraft(
+    slot.id,
+    slot.content_type,
+    assembled.body,
+    assembled.structure,
+    null,
+    await captionForDraft(client, slot.content_type, ctx, assembled.body),
+  );
 }
 
 // Full-set redraft: same fan-out as a fresh draft, with the note in every
@@ -621,7 +664,14 @@ export async function runRedraftSet(slotId: string, feedback: string): Promise<s
     throw new Error(`model returned an empty redraft (all ${calls.length} calls came back empty)`);
   }
   saveFeedback(slotId, prev.id, note);
-  return saveDraft(slot.id, slot.content_type, assembled.body, assembled.structure);
+  return saveDraft(
+    slot.id,
+    slot.content_type,
+    assembled.body,
+    assembled.structure,
+    null,
+    await captionForDraft(client, slot.content_type, ctx, assembled.body),
+  );
 }
 
 // Rebuild the assembled body column from an edited structure, mirroring
@@ -690,12 +740,13 @@ export function saveDraft(
   body: string,
   structure?: DraftStructure | null,
   selection?: string | null,
+  caption?: string | null,
 ): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO drafts (id, slot_id, kind, body, status, structure, selection, created_at)
-     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
+    `INSERT INTO drafts (id, slot_id, kind, body, status, structure, selection, caption, created_at)
+     VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
   ).run(
     id,
     slotId,
@@ -703,10 +754,22 @@ export function saveDraft(
     body,
     structure ? JSON.stringify(structure) : null,
     selection ?? null,
+    caption?.trim() ? caption.trim() : null,
     nowIso(),
   );
   db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slotId);
   return id;
+}
+
+// Caption-block edit: replace the post caption only — the outline/script,
+// structure, and pick are untouched. Throws "draft not found" (404).
+export function updateDraftCaption(draftId: string, text: string): void {
+  const clean = text.trim();
+  if (!clean) throw new Error("edited text is empty");
+  const result = getDb()
+    .prepare(`UPDATE drafts SET caption = ?, status = 'edited' WHERE id = ?`)
+    .run(clean, draftId);
+  if (result.changes === 0) throw new Error("draft not found");
 }
 
 function loadSlot(id: string): SlotRow | null {
@@ -832,6 +895,15 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
   if (!refined) {
     throw new Error("model returned an empty redraft (the refine call came back empty)");
   }
+  const finish = async (text: string): Promise<string> =>
+    finishRedraft(
+      slot,
+      prev.id,
+      note,
+      target,
+      text,
+      await captionForDraft(client, slot.content_type, ctx, text),
+    );
   if (overLimit(slot.content_type, refined) > 0) {
     // Length guard without the fan-out repair loop: one tighter retry.
     const retry = (
@@ -841,7 +913,7 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
       )
     ).trim();
     if (!retry) throw new Error("model returned an empty redraft (the refine call came back empty)");
-    return finishRedraft(slot, prev.id, note, target, retry);
+    return finish(retry);
   }
   if (slot.content_type === "carousel") {
     const issues = carouselOutlineIssues(refined);
@@ -853,11 +925,11 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
         )
       ).trim();
       if (retry && carouselOutlineIssues(retry).length === 0) {
-        return finishRedraft(slot, prev.id, note, target, retry);
+        return finish(retry);
       }
     }
   }
-  return finishRedraft(slot, prev.id, note, target, refined);
+  return finish(refined);
 }
 
 function finishRedraft(
@@ -866,6 +938,7 @@ function finishRedraft(
   note: string,
   target: RefineTarget,
   refined: string,
+  caption: string | null,
 ): string {
   const structure: DraftStructure = {
     layout: target.layout,
@@ -877,7 +950,7 @@ function finishRedraft(
       ? `Hook:\n${refined}\n\n---\n\nThread:\n${target.threadBody}`
       : refined;
   saveFeedback(slot.id, prevId, note);
-  return saveDraft(slot.id, slot.content_type, body, structure, "0");
+  return saveDraft(slot.id, slot.content_type, body, structure, "0", caption);
 }
 
 export async function runDraftAll(

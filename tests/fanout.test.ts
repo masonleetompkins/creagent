@@ -466,3 +466,15 @@ describe("scoped draft edits", () => {
     );
   });
 });
+
+describe("buildCaptionPrompt", () => {
+  it("grounds the caption in the voice and the finished script", async () => {
+    const { buildCaptionPrompt } = await import("../lib/drafting");
+    const prompt = buildCaptionPrompt(CTX, "Say this on camera: hooks are promises.");
+    assert.ok(prompt.includes("voice"));
+    assert.ok(prompt.includes("hooks are promises"));
+    assert.ok(prompt.includes("x"));
+    assert.match(prompt, /caption/i);
+    assert.ok(prompt.includes("Output only the caption"));
+  });
+});

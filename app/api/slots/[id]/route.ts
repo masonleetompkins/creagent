@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isContentType, isSlotStatus, PLATFORMS } from "@/lib/content";
 import { getDb } from "@/lib/db";
 import { clearApproval, pinApproval } from "@/lib/draft-approval";
-import { hasLiveScheduled } from "@/lib/publish";
+import { hasLiveScheduled, parseMediaPin, resolveSlotMedia } from "@/lib/publish";
 import { enqueue } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
@@ -21,10 +21,20 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const { status, scheduled_at, pillar_id, content_type, platforms } = body as Record<
+  const { status, scheduled_at, pillar_id, content_type, platforms, approved_media } = body as Record<
     string,
     unknown
   >;
+  if (
+    approved_media !== undefined &&
+    approved_media !== null &&
+    (typeof approved_media !== "string" || !parseMediaPin(approved_media))
+  ) {
+    return NextResponse.json(
+      { error: "approved_media must be export:<uuid>, attachment:<uuid>, or null" },
+      { status: 400 },
+    );
+  }
   if (status !== undefined && (typeof status !== "string" || !isSlotStatus(status))) {
     return NextResponse.json({ error: "unknown status" }, { status: 400 });
   }
@@ -81,6 +91,23 @@ export async function PATCH(
       );
     if (result.changes === 0) {
       return NextResponse.json({ error: "slot not found" }, { status: 404 });
+    }
+    // Video upload pick: set it, then prove it resolves — a pin to a
+    // missing row or a file gone from disk rolls back with a 422.
+    if (approved_media !== undefined) {
+      const slot = getDb()
+        .prepare(`SELECT content_type FROM queue_slots WHERE id = ?`)
+        .get(id) as { content_type: string };
+      getDb()
+        .prepare(`UPDATE queue_slots SET approved_media = ? WHERE id = ?`)
+        .run(typeof approved_media === "string" ? approved_media : null, id);
+      if (typeof approved_media === "string") {
+        const resolved = resolveSlotMedia(id, slot.content_type);
+        if ("error" in resolved) {
+          getDb().prepare(`UPDATE queue_slots SET approved_media = NULL WHERE id = ?`).run(id);
+          return NextResponse.json({ error: resolved.error }, { status: 422 });
+        }
+      }
     }
     if (status === "green") {
       // Approving pins the shipped post (latest version's pick) and banks
