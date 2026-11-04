@@ -22,7 +22,17 @@ export function getVoice(): VaultDoc | null {
   return row ?? null;
 }
 
-const VAULT_TYPES = ["qa", "principle", "quote", "pillar", "metric", "voice"] as const;
+export function getAudience(): VaultDoc | null {
+  const row = getDb()
+    .prepare(
+      `SELECT id, doc_type, title, body, created_at FROM vault_docs
+       WHERE doc_type = 'audience' ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get() as VaultDoc | undefined;
+  return row ?? null;
+}
+
+const VAULT_TYPES = ["qa", "principle", "quote", "pillar", "metric", "voice", "audience"] as const;
 
 export function listVault(type?: string, limit = 50): VaultDoc[] {
   const db = getDb();

@@ -491,6 +491,7 @@ const SYSTEM = `You analyze a content creator's posts and videos. Study the CONT
 "topics": "what they talk about and the stances they take",
 "donts": ["something they never do in their writing"],
 "examples": ["a short real or paraphrased line that nails their voice"]},
+"audience": {"who": "who reads/watches: role, level, situation in 1-2 sentences", "wants": "what they want from this creator in 1-2 sentences", "pain": "the painful problem they most want solved, 1 sentence"},
 "pillars": [{"name": "short pillar name", "description": "one sentence on what this pillar covers", "voice_notes": "how their voice shifts for this pillar: angles, references, energy"}],
 "qa": [{"q": "a question their audience would ask", "a": "the creator's likely answer in their voice"}],
 "principles": ["a belief or rule that guides their content"],
@@ -591,6 +592,34 @@ const EMPTY_VOICE: VoiceProfile = {
   donts: [],
   examples: [],
 };
+
+export type AudienceProfile = { who: string; wants: string; pain: string };
+
+export function extractAudienceProfile(parsed: Record<string, unknown>): AudienceProfile {
+  const o =
+    parsed["audience"] && typeof parsed["audience"] === "object"
+      ? (parsed["audience"] as Record<string, unknown>)
+      : {};
+  return {
+    who: asNonEmpty(o["who"]),
+    wants: asNonEmpty(o["wants"]),
+    pain: asNonEmpty(o["pain"]),
+  };
+}
+
+export function buildAudienceMarkdown(audience: AudienceProfile): string {
+  const lines = ["# Target reader", ""];
+  const sections: [string, string][] = [
+    ["Who", audience.who],
+    ["Wants", audience.wants],
+    ["Pain", audience.pain],
+  ];
+  for (const [head, body] of sections) {
+    if (!body) continue;
+    lines.push(`## ${head}`, "", body, "");
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
 
 // Tolerates the legacy shape (voice as a bare string) as summary-only.
 export function extractVoiceProfile(parsed: Record<string, unknown>): VoiceProfile {
@@ -809,6 +838,7 @@ export async function runAnalysis(
   const principles = asStringArray(parsed.principles);
   const quotes = asStringArray(parsed.quotes);
   const voice = extractVoiceProfile(parsed);
+  const audience = extractAudienceProfile(parsed);
 
   let pillarCount = 0;
   const pillarNotes: { name: string; voiceNotes: string }[] = [];
@@ -852,6 +882,16 @@ export async function runAnalysis(
       type: "voice",
       title: "Voice profile",
       body: buildVoiceMarkdown(voice, pillarNotes),
+    });
+  }
+  const hasAudience = db
+    .prepare(`SELECT id FROM vault_docs WHERE doc_type = 'audience' LIMIT 1`)
+    .get();
+  if (!hasAudience && audience.who) {
+    docs.push({
+      type: "audience",
+      title: "Target reader",
+      body: buildAudienceMarkdown(audience),
     });
   }
   for (const p of pillarBodies) {

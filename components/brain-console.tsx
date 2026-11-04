@@ -33,6 +33,7 @@ const TYPES = [
   { id: "voice", label: "Voice" },
   { id: "pillar", label: "Pillars" },
   { id: "metric", label: "Metrics" },
+  { id: "audience", label: "Audience" },
 ];
 
 // Minimal markdown renderer for the voice profile (headings, lists,

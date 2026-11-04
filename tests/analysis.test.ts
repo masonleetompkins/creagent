@@ -67,6 +67,20 @@ describe("extractVoiceProfile + buildVoiceMarkdown", () => {
     assert.equal(missing.summary, "");
   });
 
+  it("extracts the audience profile and tolerates garbage", async () => {
+    const { buildAudienceMarkdown, extractAudienceProfile } = await import("../lib/analysis");
+    const full = extractAudienceProfile({
+      audience: { who: "builders", wants: "ship faster", pain: "slow reviews" },
+    });
+    assert.deepEqual(full, { who: "builders", wants: "ship faster", pain: "slow reviews" });
+    assert.deepEqual(extractAudienceProfile({}), { who: "", wants: "", pain: "" });
+    assert.deepEqual(extractAudienceProfile({ audience: 42 }), { who: "", wants: "", pain: "" });
+    const md = buildAudienceMarkdown(full);
+    assert.ok(md.includes("# Target reader"));
+    assert.ok(md.includes("builders") && md.includes("slow reviews"));
+    assert.equal(buildAudienceMarkdown({ who: "", wants: "", pain: "" }), "# Target reader\n");
+  });
+
   it("renders every section and skips empty ones", async () => {
     const { buildVoiceMarkdown } = await import("../lib/analysis");
     const md = buildVoiceMarkdown(

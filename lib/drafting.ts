@@ -16,6 +16,14 @@ import {
   platformFitFor,
 } from "./platform-fit";
 import { craftBlock } from "./social-craft";
+import {
+  buildAudienceSection,
+  buildFreshnessSection,
+  buildIdeaPrompt,
+  buildIdeaSection,
+  ideate,
+  recentDraftTopics,
+} from "./ideation";
 import { buildNewsSection, fetchNews, needsNews } from "./news-ground";
 import {
   ANTI_SLOP,
@@ -143,6 +151,9 @@ export type FanoutContext = {
   newsy: boolean;
   vaultContext: string;
   voiceExemplars?: string;
+  audienceSection?: string;
+  ideaSection?: string;
+  freshnessSection?: string;
   previous?: string;
   feedback?: string;
 };
@@ -150,7 +161,10 @@ export type FanoutContext = {
 function headerFor(ctx: FanoutContext, revising: boolean): string {
   const role = revising ? "revising a draft" : "the creator's ghostwriter";
   const exemplars = ctx.voiceExemplars ? `\n\n${ctx.voiceExemplars}` : "";
-  let out = `You are ${role}.\n\n${ctx.voiceSection}${exemplars}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}`;
+  const audience = ctx.audienceSection ? `\n\n${ctx.audienceSection}` : "";
+  const idea = ctx.ideaSection ? `\n\n${ctx.ideaSection}` : "";
+  const fresh = ctx.freshnessSection ? `\n\n${ctx.freshnessSection}` : "";
+  let out = `You are ${role}.${idea}\n\n${ctx.voiceSection}${exemplars}${audience}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}${fresh}`;
   if (revising && ctx.previous) out += `\n\nPREVIOUS DRAFT:\n${ctx.previous}`;
   if (revising && ctx.feedback) {
     out += `\n\nCREATOR FEEDBACK (address every point):\n${ctx.feedback}\n\nKeep what the feedback doesn't touch; change everything it does.`;
@@ -315,6 +329,10 @@ async function buildFanoutContext(
       slot.pillar_name,
       parseSlotPlatforms(slot.platforms),
     ),
+    audienceSection: buildAudienceSection(),
+    // This slot's own versions are excluded — a redraft stays on its topic
+    // instead of fleeing from it.
+    freshnessSection: buildFreshnessSection(recentDraftTopics(slot.id)),
     previous,
     feedback,
   };
@@ -444,6 +462,22 @@ async function draftOne(slot: SlotRow): Promise<void> {
   if (!metaKey) throw new Error("save a Meta key in Settings first");
   const client = getMetaClient(metaKey);
   const ctx = await buildFanoutContext(slot);
+  // Fresh drafts reason up to an idea first (audience + proven formats +
+  // what's already covered); redrafts skip this — feedback fixes the topic.
+  const parsed = await ideate(
+    (prompt, temperature) => callText(client, prompt, temperature),
+    buildIdeaPrompt({
+      pillarLine: ctx.pillarLine,
+      typeLabel: ctx.typeLabel,
+      platformsLine: ctx.platformsLine,
+      pillarSection: ctx.pillarSection,
+      vaultContext: ctx.vaultContext,
+      newsSection: ctx.newsSection,
+      freshnessSection: ctx.freshnessSection ?? "",
+      audienceSection: ctx.audienceSection ?? "",
+    }),
+  );
+  if (parsed) ctx.ideaSection = buildIdeaSection(parsed);
   const calls = buildFanoutPrompts(slot.content_type, ctx);
   const assembled = assembleStructure(
     slot.content_type,

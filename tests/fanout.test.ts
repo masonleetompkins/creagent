@@ -27,6 +27,21 @@ const CTX = {
 };
 
 describe("buildFanoutPrompts", () => {
+  it("carries the assigned idea, audience, and freshness list", async () => {
+    const { buildFanoutPrompts } = await import("../lib/drafting");
+    const calls = buildFanoutPrompts("short_post", {
+      ...CTX,
+      ideaSection: "ASSIGNED IDEA:\nHooks are promises.",
+      audienceSection: "TARGET READER:\nBuilders.",
+      freshnessSection: "ALREADY COVERED:\n- hooks",
+    });
+    assert.ok(calls.every((c) => c.prompt.includes("ASSIGNED IDEA")));
+    assert.ok(calls.every((c) => c.prompt.includes("TARGET READER")));
+    assert.ok(calls.every((c) => c.prompt.includes("ALREADY COVERED")));
+    // The assignment leads — it must win over generic instincts.
+    assert.ok(calls[0].prompt.indexOf("ASSIGNED IDEA") < calls[0].prompt.indexOf("Pillar: Test"));
+  });
+
   it("fans short_post into 3 angle-differentiated single-post calls", async () => {
     const { buildFanoutPrompts } = await import("../lib/drafting");
     const calls = buildFanoutPrompts("short_post", CTX);
