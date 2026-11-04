@@ -396,6 +396,22 @@ export function overLimit(kind: string, text: string): number {
   return Math.max(0, Array.from(text.trim()).length - limit);
 }
 
+// Carousel outline shape check: the slot draft must be caption text plus
+// SLIDE markers, or the carousel build has nothing to parse. Returns
+// issue descriptions, empty when the outline is well-formed.
+export function carouselOutlineIssues(text: string): string[] {
+  const issues: string[] = [];
+  const t = text.trim();
+  if (!t) return ["empty draft"];
+  const markers = t.match(/(?:^|\n)\s*\*{0,2}slide\s*\d+\s*:?\*{0,2}/gi) ?? [];
+  if (!/(?:^|\n)\s*\*{0,2}slide\s*1\b/i.test(t)) issues.push("no SLIDE 1 marker");
+  if (markers.length < 4) issues.push(`only ${markers.length} SLIDE markers (need at least 4)`);
+  const first = t.search(/(?:^|\n)\s*\*{0,2}slide\s*1\b/i);
+  const head = (first >= 0 ? t.slice(0, first) : t).trim();
+  if (head.length < 20) issues.push("missing caption text before SLIDE 1");
+  return issues;
+}
+
 export async function runFanout(
   client: MetaClient,
   kind: string,
@@ -457,6 +473,24 @@ export async function runFanout(
         )
       ).trim();
       if (fixed && !firstOverlongPost(fixed, limit)) out.set(c.key, fixed);
+    }
+  }
+  // Carousel shape repair: the build parses Caption + SLIDE markers, so a
+  // marker-less outline earns one rewrite naming the missing shape.
+  // Accepted when fixed, kept original when not.
+  if (kind === "carousel") {
+    for (const c of calls.filter((x) => x.role === "body")) {
+      const body = (out.get(c.key) ?? "").trim();
+      if (!body) continue;
+      const issues = carouselOutlineIssues(body);
+      if (issues.length === 0) continue;
+      const fixed = (
+        await callText(
+          client,
+          `${c.prompt}\n\nYour draft ignored the required outline format (${issues.join("; ")}). Rewrite it as Caption first, then SLIDE 1 through SLIDE 7 markers with 2 lines or less per slide. Output only the outline.`,
+        )
+      ).trim();
+      if (fixed && carouselOutlineIssues(fixed).length === 0) out.set(c.key, fixed);
     }
   }
   // Taste pass: one critic score per surviving piece — options AND bodies;
@@ -772,6 +806,20 @@ export async function runRedraftSlot(slotId: string, feedback: string): Promise<
     ).trim();
     if (!retry) throw new Error("model returned an empty redraft (the refine call came back empty)");
     return finishRedraft(slot, prev.id, note, target, retry);
+  }
+  if (slot.content_type === "carousel") {
+    const issues = carouselOutlineIssues(refined);
+    if (issues.length > 0) {
+      const retry = (
+        await callText(
+          client,
+          `${prompt}\n\nYour revision ignored the required outline format (${issues.join("; ")}). Rewrite it as Caption first, then SLIDE 1 through SLIDE 7 markers with 2 lines or less per slide. Output only the outline.`,
+        )
+      ).trim();
+      if (retry && carouselOutlineIssues(retry).length === 0) {
+        return finishRedraft(slot, prev.id, note, target, retry);
+      }
+    }
   }
   return finishRedraft(slot, prev.id, note, target, refined);
 }

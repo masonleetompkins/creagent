@@ -95,3 +95,50 @@ describe("buildDraftContext", () => {
     assert.ok(long.includes("[a] T1") && long.includes("[b] T2"));
   });
 });
+
+describe("carouselOutlineIssues", () => {
+  const good = [
+    "Caption: hook line here with a question? #a #b",
+    "",
+    "SLIDE 1",
+    "Cover hook opens the loop",
+    "",
+    "SLIDE 2",
+    "Because of that, point two",
+    "",
+    "SLIDE 3",
+    "So then point three",
+    "",
+    "SLIDE 4",
+    "Now point four payoff",
+  ].join("\n");
+
+  it("accepts caption plus slide markers", async () => {
+    const { carouselOutlineIssues } = await import("../lib/drafting");
+    assert.deepEqual(carouselOutlineIssues(good), []);
+    const inline = "My caption text is definitely long enough\n\nSLIDE 1: hook\n\nSLIDE 2: a\n\nSLIDE 3: b\n\nSLIDE 4: c";
+    assert.deepEqual(carouselOutlineIssues(inline), []);
+  });
+
+  it("flags marker-less prose like the 4-line miss", async () => {
+    const { carouselOutlineIssues } = await import("../lib/drafting");
+    const trash = [
+      "Election Night proved it.",
+      "Your feed swore you already won.",
+      "You tapped the chocolate-chip posts, trashed the oatmeal ones.",
+      "That's confirmation bias: you ate what agreed with you.",
+    ].join("\n");
+    const issues = carouselOutlineIssues(trash);
+    assert.ok(issues.some((i) => i.includes("SLIDE 1")));
+    assert.ok(issues.some((i) => i.includes("0 SLIDE markers")));
+  });
+
+  it("flags missing captions, short counts, and empties", async () => {
+    const { carouselOutlineIssues } = await import("../lib/drafting");
+    assert.ok(carouselOutlineIssues("").includes("empty draft"));
+    const noCaption = ["SLIDE 1", "hook", "", "SLIDE 2", "a", "", "SLIDE 3", "b", "", "SLIDE 4", "c"].join("\n");
+    assert.ok(carouselOutlineIssues(noCaption).some((i) => i.includes("caption")));
+    const short = "A caption long enough to pass the check\n\nSLIDE 1\nhook\n\nSLIDE 2\ntail";
+    assert.ok(carouselOutlineIssues(short).some((i) => i.includes("2 SLIDE markers")));
+  });
+});
