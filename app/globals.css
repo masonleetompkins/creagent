@@ -2182,11 +2182,14 @@ a.asset-chip:hover {
 .ced-combined {
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: stretch;
 }
 .ced-combined-slides {
-  flex: 0 0 232px;
+  flex: 0 0 148px;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .ced-combined-slides h2 {
   margin-top: 2px;
@@ -2194,6 +2197,45 @@ a.asset-chip:hover {
 .ced-combined-canvas {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+.ced-canvas-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ced-combined-canvas canvas.preview {
+  max-height: calc(100dvh - 560px);
+}
+.ced-controls {
+  flex: 0 0 228px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ced-controls .row {
+  margin: 0;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.ced-controls input[type="text"],
+.ced-controls textarea,
+.ced-controls select {
+  width: 100%;
+}
+.ced-imagebar {
+  padding: 10px 16px;
+}
+.ced-imagebar .row {
+  margin: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 .edgrid.work {
   align-items: start;
@@ -2222,19 +2264,50 @@ a.asset-chip:hover {
   margin: 0;
   overflow-y: auto;
 }
-/* When the Image card is present the slides card shrinks — keep the canvas inside it. */
-.edgrid.work > div:last-child:has(> section + section) canvas.preview {
-  max-height: calc(100dvh - 640px);
-}
 .ced-slides {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 60vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 .ced-slides .slot {
   margin-bottom: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+}
+.ced-slides .ced-thumb {
+  width: 44px;
+  height: 56px;
+  flex: none;
+  margin-bottom: 0;
+  object-fit: cover;
+}
+.ced-slottext {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.ced-slides .slottime {
+  font-size: 11px;
+  font-weight: 800;
+  margin: 0;
+}
+.ced-slides .slotmain {
+  font-size: 12px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ced-slides .slotsub {
+  font-size: 11px;
+  margin: 0;
 }
 .pager {
   display: flex;
@@ -2376,6 +2449,21 @@ button.danger:hover:not(:disabled) {
   .edgrid.work > div:last-child > section + section {
     max-height: none;
     margin-top: 16px;
+  }
+  .ced-combined {
+    flex-direction: column;
+  }
+  .ced-combined-slides {
+    flex: none;
+  }
+  .ced-combined-canvas {
+    flex-direction: column;
+  }
+  .ced-controls {
+    flex: none;
+  }
+  .ced-combined-canvas canvas.preview {
+    max-height: 60vh;
   }
 }
 

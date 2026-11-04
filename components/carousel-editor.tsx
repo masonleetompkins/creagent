@@ -109,6 +109,7 @@ export default function CarouselEditor({
   const [slideRegions, setSlideRegions] = useState<Region[]>([]);
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imgModal, setImgModal] = useState(false);
   const [labelDraft, setLabelDraft] = useState({ description: "", tags: "", suggested: "" });
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -185,6 +186,11 @@ export default function CarouselEditor({
 
   const current = slides[sel] ?? null;
   const bgCustom = !BG_OPTIONS.includes(draft.background);
+  const latestReq = current
+    ? (requests
+        .filter((r) => r.slide_id === current.id)
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null)
+    : null;
   const labelPhoto = labelUrl ? (photos.find((p) => p.url === labelUrl) ?? null) : null;
   const previewPhoto = previewUrl
     ? (photos.find((p) => p.url === previewUrl) ?? null)
@@ -198,13 +204,16 @@ export default function CarouselEditor({
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!previewUrl && !labelUrl) return;
+    if (!previewUrl && !labelUrl && !imgModal) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") closePhotoModals();
+      if (e.key === "Escape") {
+        closePhotoModals();
+        setImgModal(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [previewUrl, labelUrl]);
+  }, [previewUrl, labelUrl, imgModal]);
 
   // Forbidden-text regions for the current slide's photo.
   useEffect(() => {
@@ -423,8 +432,8 @@ export default function CarouselEditor({
     }
   }
 
-  async function runImageJob(): Promise<void> {
-    if (!current || !imgPrompt.trim()) return;
+  async function runImageJob(): Promise<boolean> {
+    if (!current || !imgPrompt.trim()) return false;
     setBusy(true);
     setNote(null);
     setError(null);
@@ -441,8 +450,10 @@ export default function CarouselEditor({
       setNote("Image generated.");
       setImgTick((t) => t + 1);
       await load();
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1111,7 +1122,12 @@ export default function CarouselEditor({
           <h2>Slides ({slides.length})</h2>
           <div className="ced-slides">
             {slides.map((s, i) => (
-              <button key={s.id} className={`slot ${i === sel ? "sel" : ""}`} onClick={() => setSel(i)}>
+              <button
+                key={s.id}
+                className={`slot ${i === sel ? "sel" : ""}`}
+                onClick={() => setSel(i)}
+                title={`[${s.layout}] ${s.heading || "(no heading)"}`}
+              >
                 {s.image_path ? (
                   <img
                     className="ced-thumb"
@@ -1120,22 +1136,28 @@ export default function CarouselEditor({
                     loading="lazy"
                   />
                 ) : null}
-                <span className="slottime">{i + 1}</span>
-                <span className="slotmain">
-                  [{s.layout}] {(s.heading || "(no heading)").slice(0, 28)}
+                <span className="ced-slottext">
+                  <span className="slottime">{i + 1}</span>
+                  <span className="slotmain">
+                    [{s.layout}] {(s.heading || "(no heading)").slice(0, 28)}
+                  </span>
+                  <span className="slotsub">{s.image_path ? `img: ${s.image_source}` : "no image"}</span>
                 </span>
-                <span className="slotsub">{s.image_path ? `img: ${s.image_source}` : "no image"}</span>
               </button>
             ))}
           </div>
             </div>
             <div className="ced-combined-canvas">
-              <canvas ref={canvasRef} className="preview" />
+              <div className="ced-canvas-wrap">
+                <canvas ref={canvasRef} className="preview" />
+              </div>
               {current ? (
-              <>
+              <div className="ced-controls">
               <div className="row">
                 <button disabled={busy} onClick={() => void exportCurrent()}>Export PNG</button>
                 <button disabled={busy || slides.length === 0} onClick={() => void exportAll()}>Export all</button>
+              </div>
+              <div className="row">
                 <select aria-label="Layout" value={draft.layout} onChange={(e) => setDraft({ ...draft, layout: e.target.value })}>
                   {LAYOUTS.map((l) => (
                     <option key={l} value={l}>{l}</option>
@@ -1161,6 +1183,8 @@ export default function CarouselEditor({
                   value={/^#[0-9a-fA-F]{6}$/.test(draft.background) ? draft.background : "#ffffff"}
                   onChange={(e) => setDraft({ ...draft, background: e.target.value })}
                 />
+              </div>
+              <div className="row">
                 <button onClick={() => void move(-1)}>↑</button>
                 <button onClick={() => void move(1)}>↓</button>
                 {current.image_path ? (
@@ -1170,52 +1194,79 @@ export default function CarouselEditor({
                 ) : null}
                 <button onClick={() => void deleteSlide(current.id)}>Delete</button>
               </div>
-              <div className="row">
-                <input type="text" aria-label="Heading" placeholder={`Slide ${sel + 1} heading`} value={draft.heading} onChange={(e) => setDraft({ ...draft, heading: e.target.value })} />
-              </div>
-              <div className="row">
-                <textarea aria-label="Body" rows={4} placeholder="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
-              </div>
+              <input type="text" aria-label="Heading" placeholder={`Slide ${sel + 1} heading`} value={draft.heading} onChange={(e) => setDraft({ ...draft, heading: e.target.value })} />
+              <textarea aria-label="Body" rows={3} placeholder="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
               <div className="row">
                 <button className="primary" onClick={() => void saveSlide()}>Save slide</button>
               </div>
-              </>
+              </div>
               ) : null}
             </div>
             </div>
             </section>
           {current ? (
-            <section className="keycard">
-              {(() => {
-            const req = requests
-              .filter((r) => r.slide_id === current.id)
-              .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null;
-            if (!req) return null;
-            if (req.status !== "pending") {
-              return <p className="muted">Image request {req.status}.</p>;
-            }
-            return (
-              <div>
-                <p className="note">
-                  Agent requested a generated image: {req.prompt} (house anime style applied on generate)
-                </p>
-                <div className="row">
-                  <button className="primary" onClick={() => void decideRequest(req.id, "approve")}>
-                    Approve + generate
-                  </button>
-                  <button onClick={() => void decideRequest(req.id, "reject")}>Reject</button>
-                </div>
+            <section className="keycard ced-imagebar">
+              <div className="row">
+                <strong>Image</strong>
+                {latestReq && latestReq.status === "pending" ? (
+                  <>
+                    <span className="muted">Agent requests a generated image (house style on generate)</span>
+                    <button className="primary" onClick={() => void decideRequest(latestReq.id, "approve")}>
+                      Approve + generate
+                    </button>
+                    <button onClick={() => void decideRequest(latestReq.id, "reject")}>Reject</button>
+                  </>
+                ) : (
+                  <>
+                    <span className="muted">
+                      {current.image_path
+                        ? `Attached (${current.image_source})`
+                        : imgPrompt
+                          ? "Prompt ready — generate or customize"
+                          : "No image yet"}
+                    </span>
+                    <button disabled={busy || !imgPrompt.trim()} onClick={() => void runImageJob()}>
+                      Generate
+                    </button>
+                  </>
+                )}
+                <button onClick={() => setImgModal(true)}>Customize</button>
               </div>
-            );
-          })()}
-              <h2>Image</h2>
-          <div className="row">
-            <input type="text" aria-label="Image prompt" placeholder="Describe the scene for Muse Image" value={imgPrompt} onChange={(e) => setImgPrompt(e.target.value)} />
-            <button disabled={busy || !imgPrompt.trim()} onClick={() => void runImageJob()}>Generate</button>
-          </div>
-          <div className="row">
-            <input type="file" accept="image/*" aria-label="Upload image" onChange={(e) => { void uploadImage(e.target.files?.[0]); e.target.value = ""; }} />
-          </div>
+              {imgModal ? createPortal(
+                <div className="modal-backdrop" onClick={() => setImgModal(false)}>
+                  <div className="modal" role="dialog" aria-label="Customize image" onClick={(e) => e.stopPropagation()}>
+                    <div className="modal-head">
+                      <h2>Image prompt</h2>
+                      <button onClick={() => setImgModal(false)}>Close</button>
+                    </div>
+                    <p className="muted">House anime style is applied automatically — describe the scene only.</p>
+                    <div className="row">
+                      <textarea
+                        aria-label="Image prompt"
+                        rows={4}
+                        placeholder="Describe the scene for Muse Image"
+                        value={imgPrompt}
+                        onChange={(e) => setImgPrompt(e.target.value)}
+                      />
+                    </div>
+                    <div className="row">
+                      <button
+                        className="primary"
+                        disabled={busy || !imgPrompt.trim()}
+                        onClick={() => {
+                          void runImageJob().then((ok) => {
+                            if (ok) setImgModal(false);
+                          });
+                        }}
+                      >
+                        Generate
+                      </button>
+                      <input type="file" accept="image/*" aria-label="Upload image" onChange={(e) => { void uploadImage(e.target.files?.[0]); e.target.value = ""; }} />
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              ) : null}
             </section>
           ) : null}
         </div>
