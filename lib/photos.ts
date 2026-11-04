@@ -15,6 +15,10 @@ export type PhotoCandidate = {
 
 export const LOCAL_PREFIX = "local:";
 
+// Ingested photos are hidden until there's a good way to cull them — the
+// library, vision scan, and auto-pick all see uploads only.
+export const INCLUDE_INGESTED_PHOTOS = false;
+
 export function photosDir(): string {
   const dir =
     process.env.PHOTOS_DIR ?? join(homedir(), ".config", "creagent", "photos");
@@ -151,6 +155,7 @@ export function listPhotos(limit = 60): PhotoCandidate[] {
     out.push({ asset_id: row.asset_id, title: null, source: "upload", url: row.url });
     if (out.length >= limit) return out;
   }
+  if (!INCLUDE_INGESTED_PHOTOS) return out;
   const rows = getDb()
     .prepare(`SELECT id, source, title, metadata FROM assets ORDER BY created_at DESC LIMIT 200`)
     .all() as Array<{ id: string; source: string; title: string | null; metadata: string }>;

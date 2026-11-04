@@ -109,8 +109,8 @@ describe("photo uploads", () => {
   });
 
   it("deletes uploads from disk and hides ingested URLs forever", async () => {
-    const { savePhotoUpload, deletePhoto, listPhotos, readLocalPhoto } = await import("../lib/photos");
-    const { getDb, nowIso } = await import("../lib/db");
+    const { savePhotoUpload, deletePhoto, hiddenUrls, listPhotos, readLocalPhoto } =
+      await import("../lib/photos");
     const u8 = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
     const { url } = await savePhotoUpload({
       name: "gone.jpg",
@@ -121,16 +121,25 @@ describe("photo uploads", () => {
     deletePhoto(url);
     assert.equal(readLocalPhoto(url), null);
     assert.ok(!listPhotos().some((p) => p.url === url));
-    // Ingested URL: hidden survives re-derivation from the asset row.
+    deletePhoto("https://cdn.example/hide-me.jpg");
+    assert.ok(hiddenUrls().has("https://cdn.example/hide-me.jpg"));
+    assert.ok(!listPhotos(200).some((p) => p.url === "https://cdn.example/hide-me.jpg"));
+  });
+
+  it("shows uploads only while ingested photos are hidden", async () => {
+    const { INCLUDE_INGESTED_PHOTOS, listPhotos } = await import("../lib/photos");
+    const { getDb, nowIso } = await import("../lib/db");
+    assert.equal(INCLUDE_INGESTED_PHOTOS, false);
     const db = getDb();
-    const assetId = "asset-hide-test";
     db.prepare(
       `INSERT OR REPLACE INTO assets (id, source, title, metadata, created_at) VALUES (?, 'x', 't', ?, ?)`,
-    ).run(assetId, JSON.stringify({ raw: { image: "https://cdn.example/hide-me.jpg" } }), nowIso());
-    assert.ok(listPhotos(200).some((p) => p.url === "https://cdn.example/hide-me.jpg"));
-    deletePhoto("https://cdn.example/hide-me.jpg");
-    assert.ok(!listPhotos(200).some((p) => p.url === "https://cdn.example/hide-me.jpg"));
-    db.prepare(`DELETE FROM assets WHERE id = ?`).run(assetId);
+    ).run(
+      "asset-ingested-hidden",
+      JSON.stringify({ raw: { image: "https://cdn.example/ingested.jpg" } }),
+      nowIso(),
+    );
+    assert.ok(!listPhotos(200).some((p) => p.url === "https://cdn.example/ingested.jpg"));
+    db.prepare(`DELETE FROM assets WHERE id = ?`).run("asset-ingested-hidden");
   });
 
   it("rejects empty and oversized files", async () => {

@@ -5,6 +5,7 @@ import { downloadPhotoForSlide } from "./carousel-image";
 import { getProject, listSlides } from "./carousel";
 import { blobToVector, cosineSimilarity, embed } from "./embeddings";
 import { createGenRequest, pendingForSlide } from "./gen-requests";
+import { INCLUDE_INGESTED_PHOTOS, LOCAL_PREFIX } from "./photos";
 
 export function buildImagePrompt(slide: {
   heading: string;
@@ -35,12 +36,14 @@ export async function runAutopick(
 ): Promise<AutopickResult> {
   const project = getProject(projectId);
   if (!project) throw new Error("carousel project not found");
-  const photos = getDb()
-    .prepare(
-      `SELECT asset_id, url, description, embedding FROM photo_tags
+  const photos = (
+    getDb()
+      .prepare(
+        `SELECT asset_id, url, description, embedding FROM photo_tags
        WHERE embedding IS NOT NULL`,
-    )
-    .all() as TaggedPhoto[];
+      )
+      .all() as TaggedPhoto[]
+  ).filter((p) => INCLUDE_INGESTED_PHOTOS || p.url.startsWith(LOCAL_PREFIX));
   const out: AutopickResult = { picks: [], unmatched: [] };
   if (photos.length === 0) {
     out.unmatched = listSlides(projectId)

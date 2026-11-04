@@ -795,7 +795,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               </div>
             ))}
           </div>
-          {photos.length === 0 ? <p className="muted">No photos yet — upload some or ingest content with images.</p> : null}
+          {photos.length === 0 ? <p className="muted">No photos yet — upload some above to build your library.</p> : null}
           {labelPhoto ? (
             <div className="labelpanel">
               <div className="row">
