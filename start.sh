@@ -171,6 +171,24 @@ if [ "$MODE" = "dev" ]; then
 else
   OPEN_URL="$URL/?v=$CURRENT"
 fi
-if command -v open >/dev/null 2>&1; then open "$OPEN_URL" || true;
-elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$OPEN_URL" >/dev/null 2>&1 & disown;
-else echo "Open $OPEN_URL in your browser."; fi
+# Open Creagent as a chromeless app window (no tabs, bookmarks, or sidebar),
+# fullscreen for demos. CREAGENT_FULLSCREEN=0 keeps a normal window;
+# CREAGENT_TAB=1 falls back to a plain browser tab.
+open_app_window() {
+  local url="$1" fs_args=""
+  if [ "${CREAGENT_FULLSCREEN:-1}" != "0" ]; then fs_args="--start-fullscreen"; fi
+  if [ "${CREAGENT_TAB:-0}" = "0" ]; then
+    if command -v open >/dev/null 2>&1 && { [ -d "/Applications/Google Chrome.app" ] || [ -d "$HOME/Applications/Google Chrome.app" ]; }; then
+      open -na "Google Chrome" --args --app="$url" $fs_args || open "$url" || true
+      return
+    fi
+    if command -v google-chrome >/dev/null 2>&1; then
+      google-chrome --app="$url" $fs_args >/dev/null 2>&1 & disown
+      return
+    fi
+  fi
+  if command -v open >/dev/null 2>&1; then open "$url" || true;
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 & disown;
+  else echo "Open $url in your browser."; fi
+}
+open_app_window "$OPEN_URL"
