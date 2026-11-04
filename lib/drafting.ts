@@ -30,6 +30,7 @@ import {
   buildCriticPrompt,
   buildVoiceExemplarSection,
   CRITIC_THRESHOLD,
+  exemplarBudgetFor,
   extractRevision,
   parseCriticScore,
 } from "./taste";
@@ -328,6 +329,7 @@ async function buildFanoutContext(
       slot.pillar_id,
       slot.pillar_name,
       parseSlotPlatforms(slot.platforms),
+      exemplarBudgetFor(slot.content_type),
     ),
     audienceSection: buildAudienceSection(),
     // This slot's own versions are excluded — a redraft stays on its topic

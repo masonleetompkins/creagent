@@ -26,7 +26,8 @@ export const PLAYBOOK: Record<string, string> = {
   video_trend: "Write a short-form video script: HOOK (first 2 seconds), 3-5 beats with what to say and show, and a CTA. Keep it under 45 seconds spoken.",
   video_series: "Write an episode script for a recurring series: cold open that states the series premise in one line, the episode content in beats, and a consistent sign-off.",
   video_yap: "Write a talking-head script: strong opinion hook, 3 supporting points in conversational spoken language, and a closer. Under 60 seconds spoken.",
-  carousel: "Write slide-by-slide copy for a 7-slide carousel: cover hook, one idea per slide in 2 lines or less, and a final CTA slide.",
+  carousel:
+    "Write a 7-slide carousel as ONE continuous story, not seven statements. Caption first (hook + question + 2-3 hashtags), then SLIDE 1..7 markers, 2 lines or less per slide. Architecture: cover hook that opens a loop; ONE running scene or analogy that carries every slide; each slide opens by connecting to the previous slide (because / so / then / now / but) or calls back to the opening scene; a name-the-concept bridge mid-way ('This is what adults call X' / 'What you just did is called X'); 2-3 applications that map back onto the SAME frame; payoff plus a comment CTA. Never: disconnected slides, a restated definition per slide, or a new unrelated scene per slide. The reader must feel pulled forward — every slide earns the next.",
   article_blog: "Write a 600-900 word blog post with a headline, short intro, 3-4 headed sections, and a closing takeaway.",
   article_thread: "Write a long-form thread version of an article: headline post plus 8-12 numbered posts covering intro, key sections, and takeaway.",
   long_video: "Write a long-form video outline and script: title options, hook, chapter-by-chapter talking points with stories/examples, and an end screen CTA.",

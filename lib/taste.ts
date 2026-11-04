@@ -53,13 +53,32 @@ export function pillarVoiceExemplars(
   return [...preferred, ...rest].slice(0, limit);
 }
 
+// Long kinds need full winner arcs, not openings: a 600-char cut hides the
+// bridge, the ladder, and the payoff — the exact architecture the model
+// must imitate. Short kinds keep the tight budget.
+const LONG_KINDS = new Set([
+  "carousel",
+  "video_trend",
+  "video_series",
+  "video_yap",
+  "long_video",
+  "clip",
+  "article_blog",
+  "article_thread",
+]);
+
+export function exemplarBudgetFor(kind: string): number {
+  return LONG_KINDS.has(kind) ? 1500 : 600;
+}
+
 export function buildVoiceExemplarSection(
   pillarId: string | null,
   pillarName: string | null,
   platforms: string[],
+  maxChars = 600,
 ): string {
   if (!pillarId || !pillarName) return "";
-  const exemplars = pillarVoiceExemplars(pillarId, platforms);
+  const exemplars = pillarVoiceExemplars(pillarId, platforms, 2, maxChars);
   if (exemplars.length === 0) return "";
   const lines = [
     `VOICE EXEMPLARS ("${pillarName}" — your own verbatim winners. Match this cadence and diction exactly):`,

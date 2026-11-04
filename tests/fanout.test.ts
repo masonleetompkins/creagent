@@ -42,6 +42,18 @@ describe("buildFanoutPrompts", () => {
     assert.ok(calls[0].prompt.indexOf("ASSIGNED IDEA") < calls[0].prompt.indexOf("Pillar: Test"));
   });
 
+  it("instructs carousel flow: one story, bridges, no disconnected slides", async () => {
+    const { buildFanoutPrompts } = await import("../lib/drafting");
+    const calls = buildFanoutPrompts("carousel", CTX);
+    assert.equal(calls.length, 1);
+    const prompt = calls[0].prompt;
+    assert.ok(prompt.includes("ONE continuous story"));
+    assert.ok(prompt.includes("SLIDE 1..7"));
+    assert.ok(prompt.includes("because / so / then / now / but"));
+    assert.ok(prompt.includes("name-the-concept bridge"));
+    assert.ok(prompt.includes("disconnected slides"));
+  });
+
   it("fans short_post into 3 angle-differentiated single-post calls", async () => {
     const { buildFanoutPrompts } = await import("../lib/drafting");
     const calls = buildFanoutPrompts("short_post", CTX);

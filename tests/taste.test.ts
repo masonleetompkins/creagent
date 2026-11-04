@@ -116,6 +116,37 @@ describe("buildVoiceExemplarSection", () => {
     assert.equal(buildVoiceExemplarSection(randomUUID(), null, ["x"]), "");
     assert.equal(buildVoiceExemplarSection(randomUUID(), "P", ["x"]), "");
   });
+
+  it("keeps full winner arcs at the long budget, openings at the tight one", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { buildVoiceExemplarSection } = await import("../lib/taste");
+    const db = getDb();
+    const pillarId = randomUUID();
+    db.prepare(`INSERT INTO pillars (id, name, confirmed, created_at) VALUES (?, 'Arc', 1, ?)`).run(
+      pillarId,
+      nowIso(),
+    );
+    db.prepare(
+      `INSERT INTO assets (id, source, title, transcript, created_at, is_reply, pillar_id, multiplier)
+       VALUES (?, 'zernio_twitter', ?, ?, ?, 0, ?, 9.9)`,
+    ).run(randomUUID(), "hook", `${"setup ".repeat(150)}BRIDGE-PAYOFF`, nowIso(), pillarId);
+    const tight = buildVoiceExemplarSection(pillarId, "Arc", ["x"], 600);
+    const full = buildVoiceExemplarSection(pillarId, "Arc", ["x"], 1500);
+    assert.ok(!tight.includes("BRIDGE-PAYOFF"));
+    assert.ok(full.includes("BRIDGE-PAYOFF"));
+  });
+});
+
+describe("exemplarBudgetFor", () => {
+  it("gives long kinds full arcs, short kinds tight excerpts", async () => {
+    const { exemplarBudgetFor } = await import("../lib/taste");
+    for (const kind of ["carousel", "video_yap", "long_video", "article_blog", "article_thread"]) {
+      assert.equal(exemplarBudgetFor(kind), 1500);
+    }
+    for (const kind of ["short_post", "thread"]) {
+      assert.equal(exemplarBudgetFor(kind), 600);
+    }
+  });
 });
 
 describe("fanout taste wiring", () => {
