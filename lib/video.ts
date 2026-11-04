@@ -343,11 +343,12 @@ export function trimClip(
     const nextIn = Math.max(0, Math.round(edit.inMs));
     const dIn = nextIn - inMs;
     if (duration - dIn < 1) throw new Error("trim would collapse the clip");
+    // Magnetic head trim: the edit point stays, content slips (in += dIn),
+    // the duration change ripples downstream. Moving start would open a gap.
     inMs = nextIn;
-    start += dIn;
     duration -= dIn;
     if (ripple && dIn !== 0) {
-      shiftLaterClips(current.track_id, oldEnd, clipId, dIn);
+      shiftLaterClips(current.track_id, oldEnd, clipId, -dIn);
     }
   }
   if (edit.durationMs !== undefined) {
@@ -405,6 +406,55 @@ export function deleteClip(clipId: string, ripple = true): { project_id: string 
   });
   touchProject(current.project_id);
   return { project_id: current.project_id };
+}
+
+export type ClipSnapshot = Pick<
+  Clip,
+  "id" | "track_id" | "asset_id" | "name" | "start_ms" | "duration_ms" | "in_ms" | "speed" | "payload"
+>;
+
+// Undo support: restore a project's clips to a previously captured snapshot.
+// Clips missing from the snapshot are deleted; snapshot rows upsert by id so
+// server-owned columns (transform, created_at) survive on matching clips.
+export function restoreClips(projectId: string, clips: ClipSnapshot[]): { restored: number } {
+  const project = getProject(projectId);
+  if (!project) throw new Error("video project not found");
+  const trackIds = new Set(
+    rows<{ id: string }>(`SELECT id FROM video_tracks WHERE project_id = ?`, projectId).map((r) => r.id),
+  );
+  for (const c of clips) {
+    if (typeof c.id !== "string" || typeof c.track_id !== "string" || typeof c.name !== "string" || typeof c.payload !== "string") {
+      throw new Error("snapshot clip has invalid fields");
+    }
+    if (!trackIds.has(c.track_id)) throw new Error("snapshot references another project");
+    for (const n of [c.start_ms, c.duration_ms, c.in_ms, c.speed]) {
+      if (typeof n !== "number" || !Number.isFinite(n)) throw new Error("snapshot clip has invalid numbers");
+    }
+  }
+  const db = getDb();
+  withTransaction(() => {
+    const placeholders = clips.map(() => "?").join(", ");
+    db.prepare(
+      `DELETE FROM video_clips WHERE track_id IN (SELECT id FROM video_tracks WHERE project_id = ?)${
+        placeholders ? ` AND id NOT IN (${placeholders})` : ""
+      }`,
+    ).run(projectId, ...clips.map((c) => c.id));
+    const upsert = db.prepare(
+      `INSERT INTO video_clips (id, track_id, asset_id, name, start_ms, duration_ms, in_ms, speed, payload, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         track_id = excluded.track_id, asset_id = excluded.asset_id, name = excluded.name,
+         start_ms = excluded.start_ms, duration_ms = excluded.duration_ms,
+         in_ms = excluded.in_ms, speed = excluded.speed, payload = excluded.payload`,
+    );
+    for (const c of clips) {
+      upsert.run(
+        c.id, c.track_id, c.asset_id, c.name, c.start_ms, c.duration_ms, c.in_ms, c.speed, c.payload, nowIso(),
+      );
+    }
+  });
+  touchProject(projectId);
+  return { restored: clips.length };
 }
 
 export function splitClip(clipId: string, atMs: number): { left: Clip; right: Clip } {

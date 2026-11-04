@@ -52,7 +52,7 @@ describe("timeline ripple ops", () => {
     assert.equal(video.getClip(b.id)?.start_ms, 0);
   });
 
-  it("ripple in-point trim moves the head and later clips together", async () => {
+  it("ripple in-point trim keeps the edit point and ripples the duration change", async () => {
     const { video, db } = await libs();
     const projectId = `p-${Date.now()}-c`;
     db.getDb().prepare(
@@ -64,9 +64,14 @@ describe("timeline ripple ops", () => {
     video.trimClip(a.id, { inMs: 200 });
     const trimmed = video.getClip(a.id);
     assert.equal(trimmed?.in_ms, 200);
-    assert.equal(trimmed?.start_ms, 200);
+    assert.equal(trimmed?.start_ms, 0);
     assert.equal(trimmed?.duration_ms, 800);
-    assert.equal(video.getClip(b.id)?.start_ms, 1200);
+    assert.equal(video.getClip(b.id)?.start_ms, 800);
+    // Extending the head pushes downstream instead of overlapping it.
+    video.trimClip(a.id, { inMs: 0 });
+    assert.equal(video.getClip(a.id)?.start_ms, 0);
+    assert.equal(video.getClip(a.id)?.duration_ms, 1000);
+    assert.equal(video.getClip(b.id)?.start_ms, 1000);
   });
 
   it("splits inside a clip and refuses outside splits", async () => {
