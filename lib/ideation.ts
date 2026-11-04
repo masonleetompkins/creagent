@@ -68,6 +68,7 @@ export type IdeaContext = {
   newsSection: string;
   freshnessSection: string;
   audienceSection: string;
+  dumpSection?: string;
 };
 
 // The reasoning step: data in (proven formats, proven ideas, news, reader,
@@ -78,8 +79,9 @@ export function buildIdeaPrompt(ctx: IdeaContext): string {
   const proven = ctx.pillarSection ? `\n\n${ctx.pillarSection}` : "";
   const vault = `\n\nVAULT (your proven ideas, principles, quotes):\n${ctx.vaultContext}`;
   const covered = ctx.freshnessSection ? `\n\n${ctx.freshnessSection}` : "";
+  const dump = ctx.dumpSection ? `\n\n${ctx.dumpSection}` : "";
   return `You are the creator's ideas editor. Pick ONE fresh angle for the next piece.
-
+${dump}
 ${ctx.audienceSection}
 
 ${ctx.pillarLine}

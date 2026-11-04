@@ -178,14 +178,28 @@ export const AGENT_TOOLS: ToolDef[] = [
   {
     name: "run_draft",
     description: "Draft one slot (slotId) or up to <limit> red slots.",
-    parameters: objParam({ slotId: S("Optional slot UUID"), limit: N("Max slots when no slotId (default 10)") }),
-    run: async (a) =>
-      safe(async () => {
+    parameters: objParam({
+      slotId: S("Optional slot UUID"),
+      limit: N("Max slots when no slotId (default 10)"),
+      context: S("Optional fresh brain dump — today's thoughts, mined before the vault"),
+    }),
+    run: async (a) => {
+      const dump =
+        typeof a.context === "string" && a.context.trim()
+          ? a.context.trim().slice(0, 4000)
+          : undefined;
+      return safe(async () => {
         if (typeof a.slotId === "string" && a.slotId) {
-          return { jobId: enqueue("draft_slot", { slotId: uuid(a.slotId, "slotId") }) };
+          return { jobId: enqueue("draft_slot", { slotId: uuid(a.slotId, "slotId"), dump }) };
         }
-        return { jobId: enqueue("draft_all", { limit: a.limit === undefined ? 10 : num(a.limit, "limit") }) };
-      }),
+        return {
+          jobId: enqueue("draft_all", {
+            limit: a.limit === undefined ? 10 : num(a.limit, "limit"),
+            dump,
+          }),
+        };
+      });
+    },
   },
   {
     name: "redraft_slot",

@@ -157,6 +157,7 @@ export type FanoutContext = {
   freshnessSection?: string;
   previous?: string;
   feedback?: string;
+  dumpSection?: string;
 };
 
 function headerFor(ctx: FanoutContext, revising: boolean): string {
@@ -165,7 +166,8 @@ function headerFor(ctx: FanoutContext, revising: boolean): string {
   const audience = ctx.audienceSection ? `\n\n${ctx.audienceSection}` : "";
   const idea = ctx.ideaSection ? `\n\n${ctx.ideaSection}` : "";
   const fresh = ctx.freshnessSection ? `\n\n${ctx.freshnessSection}` : "";
-  let out = `You are ${role}.${idea}\n\n${ctx.voiceSection}${exemplars}${audience}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}${fresh}`;
+  const dump = ctx.dumpSection ? `\n\n${ctx.dumpSection}` : "";
+  let out = `You are ${role}.${dump}${idea}\n\n${ctx.voiceSection}${exemplars}${audience}\n\n${ctx.pillarLine}${ctx.pillarVoice}\nContent type: ${ctx.typeLabel}\nPlatforms: ${ctx.platformsLine}${ctx.rulesSection}${ctx.fitSection}${ctx.pillarSection}${ctx.newsSection}${fresh}`;
   if (revising && ctx.previous) out += `\n\nPREVIOUS DRAFT:\n${ctx.previous}`;
   if (revising && ctx.feedback) {
     out += `\n\nCREATOR FEEDBACK (address every point):\n${ctx.feedback}\n\nKeep what the feedback doesn't touch; change everything it does.`;
@@ -272,10 +274,15 @@ export function buildDraftContext(hits: VaultHit[], maxChars = 4000): string {
   return full.length > maxChars ? `${full.slice(0, maxChars)}…[truncated]` : full;
 }
 
+export function formatBrainDump(dump: string): string {
+  return `FRESH BRAIN DUMP (today's raw thoughts — highest priority, mine this before the vault):\n${dump.trim().slice(0, 4000)}`;
+}
+
 async function buildFanoutContext(
   slot: SlotRow,
   previous?: string,
   feedback?: string,
+  dump?: string,
 ): Promise<FanoutContext> {
   const typeLabel =
     (CONTENT_TYPES as Record<string, { label: string }>)[slot.content_type]?.label ??
@@ -337,6 +344,7 @@ async function buildFanoutContext(
     freshnessSection: buildFreshnessSection(recentDraftTopics(slot.id)),
     previous,
     feedback,
+    dumpSection: dump?.trim() ? formatBrainDump(dump) : undefined,
   };
 }
 
@@ -487,11 +495,11 @@ export function firstOverlongPost(text: string, cap: number): { index: number; o
   return null;
 }
 
-async function draftOne(slot: SlotRow): Promise<void> {
+async function draftOne(slot: SlotRow, dump?: string): Promise<void> {
   const metaKey = loadKeys().meta;
   if (!metaKey) throw new Error("save a Meta key in Settings first");
   const client = getMetaClient(metaKey);
-  const ctx = await buildFanoutContext(slot);
+  const ctx = await buildFanoutContext(slot, undefined, undefined, dump);
   // Fresh drafts reason up to an idea first (audience + proven formats +
   // what's already covered); redrafts skip this — feedback fixes the topic.
   const parsed = await ideate(
@@ -505,6 +513,7 @@ async function draftOne(slot: SlotRow): Promise<void> {
       newsSection: ctx.newsSection,
       freshnessSection: ctx.freshnessSection ?? "",
       audienceSection: ctx.audienceSection ?? "",
+      dumpSection: ctx.dumpSection,
     }),
   );
   if (parsed) ctx.ideaSection = buildIdeaSection(parsed);
@@ -651,10 +660,10 @@ function hasDrafts(slotId: string): boolean {
   return row.n > 0;
 }
 
-export async function runDraftSlot(slotId: string): Promise<void> {
+export async function runDraftSlot(slotId: string, dump?: string): Promise<void> {
   const slot = loadSlot(slotId);
   if (!slot) throw new Error("slot not found");
-  await draftOne(slot);
+  await draftOne(slot, dump);
 }
 
 function latestDraft(slotId: string): {
@@ -790,6 +799,7 @@ function finishRedraft(
 export async function runDraftAll(
   limit = 10,
   onProgress?: (done: number, total: number) => void,
+  dump?: string,
 ): Promise<DraftResult> {
   const horizon = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
   const slots = getDb()
@@ -809,7 +819,7 @@ export async function runDraftAll(
       out.skipped++;
     } else {
       try {
-        await draftOne(slot);
+        await draftOne(slot, dump);
         out.drafted++;
       } catch (error) {
         out.failures.push({

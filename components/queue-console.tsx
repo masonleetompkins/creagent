@@ -240,6 +240,13 @@ export default function QueueConsole(): React.ReactNode {
     title: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dump, setDump] = useState(() => {
+    try {
+      return window.localStorage.getItem("creagent.braindump") ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -1021,7 +1028,7 @@ export default function QueueConsole(): React.ReactNode {
           className={anyRed ? "" : "ghosted"}
           onClick={() => {
             if (anyRed) {
-              void runJob("/api/draft/run", { limit: 10 }, "Drafted");
+              void runJob("/api/draft/run", { limit: 10, dump: dump.trim() || undefined }, "Drafted");
               return;
             }
             showToast(
@@ -1088,6 +1095,22 @@ export default function QueueConsole(): React.ReactNode {
             {days[6].toLocaleDateString([], { month: "short", day: "numeric" })}
           </strong>
         )}
+      </div>
+      <div className="row">
+        <textarea
+          aria-label="Brain dump for the next draft run"
+          rows={2}
+          placeholder="Brain dump (optional) — today's thoughts, news, urges. Draft all red mines this before the vault."
+          value={dump}
+          onChange={(e) => {
+            setDump(e.target.value);
+            try {
+              window.localStorage.setItem("creagent.braindump", e.target.value);
+            } catch {
+              /* private mode */
+            }
+          }}
+        />
       </div>
       {busy ? (
         jobProgress ? (

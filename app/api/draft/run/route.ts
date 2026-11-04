@@ -11,13 +11,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     body = {};
   }
   try {
+    const dump =
+      typeof body.dump === "string" && body.dump.trim()
+        ? body.dump.trim().slice(0, 4000)
+        : undefined;
     if (typeof body.slotId === "string" && body.slotId) {
-      const jobId = enqueue("draft_slot", { slotId: body.slotId });
+      const jobId = enqueue("draft_slot", { slotId: body.slotId, dump });
       return NextResponse.json({ jobId });
     }
     const limit =
       typeof body.limit === "number" ? Math.max(1, Math.min(body.limit, 25)) : 10;
-    const jobId = enqueue("draft_all", { limit });
+    const jobId = enqueue("draft_all", { limit, dump });
     return NextResponse.json({ jobId });
   } catch (error) {
     return NextResponse.json(

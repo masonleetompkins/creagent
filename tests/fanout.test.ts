@@ -42,6 +42,23 @@ describe("buildFanoutPrompts", () => {
     assert.ok(calls[0].prompt.indexOf("ASSIGNED IDEA") < calls[0].prompt.indexOf("Pillar: Test"));
   });
 
+  it("injects the brain dump at the top of every call", async () => {
+    const { buildFanoutPrompts, formatBrainDump } = await import("../lib/drafting");
+    const calls = buildFanoutPrompts("short_post", {
+      ...CTX,
+      dumpSection: formatBrainDump("Ship the demo today."),
+    });
+    assert.ok(calls.every((c) => c.prompt.includes("FRESH BRAIN DUMP")));
+    assert.ok(calls.every((c) => c.prompt.includes("Ship the demo today.")));
+    assert.ok(
+      calls.every(
+        (c) => c.prompt.indexOf("BRAIN DUMP") < c.prompt.indexOf("VAULT CONTEXT"),
+      ),
+    );
+    const plain = buildFanoutPrompts("short_post", CTX);
+    assert.ok(plain.every((c) => !c.prompt.includes("BRAIN DUMP")));
+  });
+
   it("instructs carousel flow: one story, bridges, no disconnected slides", async () => {
     const { buildFanoutPrompts } = await import("../lib/drafting");
     const calls = buildFanoutPrompts("carousel", CTX);

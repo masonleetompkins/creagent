@@ -93,10 +93,30 @@ describe("buildIdeaPrompt", () => {
     });
     assert.ok(prompt.includes("TARGET READER"));
     assert.ok(prompt.includes("ALREADY COVERED"));
+    assert.ok(!prompt.includes("BRAIN DUMP"));
     assert.ok(prompt.includes("FORMAT MOVE"));
     assert.ok(prompt.includes("NEW idea in one of the proven formats"));
     assert.ok(prompt.includes("proven idea") && prompt.includes("fresh format"));
     assert.ok(prompt.includes("IDEA:"));
+  });
+
+  it("leads with the brain dump when present", async () => {
+    const { buildIdeaPrompt } = await import("../lib/ideation");
+    const { formatBrainDump } = await import("../lib/drafting");
+    const prompt = buildIdeaPrompt({
+      pillarLine: "Pillar: Tools",
+      typeLabel: "Short post",
+      platformsLine: "x",
+      pillarSection: "WINNERS: ...",
+      vaultContext: "principles...",
+      newsSection: "",
+      freshnessSection: "",
+      audienceSection: "TARGET READER: ...",
+      dumpSection: formatBrainDump("  Models are commodities now.  "),
+    });
+    assert.ok(prompt.includes("FRESH BRAIN DUMP"));
+    assert.ok(prompt.includes("Models are commodities now."));
+    assert.ok(prompt.indexOf("BRAIN DUMP") < prompt.indexOf("VAULT"));
   });
 });
 

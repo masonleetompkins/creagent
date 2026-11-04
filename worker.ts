@@ -115,15 +115,18 @@ async function dispatch(job: JobRow): Promise<unknown> {
     return runPlanner(typeof days === "number" ? days : 14);
   }
   if (job.name === "draft_all") {
-    const { limit } = data;
-    return runDraftAll(typeof limit === "number" ? limit : 10, (done, total) =>
-      updateProgress(job.id, { done, total }),
+    const { limit, dump } = data;
+    const text = typeof dump === "string" && dump.trim() ? dump : undefined;
+    return runDraftAll(
+      typeof limit === "number" ? limit : 10,
+      (done, total) => updateProgress(job.id, { done, total }),
+      text,
     );
   }
   if (job.name === "draft_slot") {
-    const { slotId } = data;
+    const { slotId, dump } = data;
     if (typeof slotId !== "string" || !slotId) throw new Error("slotId is required");
-    await runDraftSlot(slotId);
+    await runDraftSlot(slotId, typeof dump === "string" && dump.trim() ? dump : undefined);
     return { drafted: 1 };
   }
   if (job.name === "redraft_slot") {
