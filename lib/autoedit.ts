@@ -19,7 +19,7 @@ export type AutoEditResult = {
   takes: number;
 };
 
-function findOrCreateProject(slotId: string, title: string): string {
+export function findOrCreateVideoProject(slotId: string, title: string): string {
   const db = getDb();
   const existing = db
     .prepare(`SELECT id FROM video_projects WHERE slot_id = ? ORDER BY created_at ASC LIMIT 1`)
@@ -56,7 +56,10 @@ function assetOnTimeline(projectId: string, assetId: string): boolean {
   return !!hit;
 }
 
-export async function runSlotAutoEdit(slotId: string): Promise<AutoEditResult> {
+export async function runSlotAutoEdit(
+  slotId: string,
+  onStage?: (stage: string, label: string) => void,
+): Promise<AutoEditResult> {
   const db = getDb();
   const slot = db
     .prepare(`SELECT id, content_type, scheduled_at FROM queue_slots WHERE id = ?`)
@@ -68,12 +71,13 @@ export async function runSlotAutoEdit(slotId: string): Promise<AutoEditResult> {
   const footage = listAttachments(slotId).filter((a) => a.kind === "video");
   if (footage.length === 0) throw new Error("attach footage to the slot first");
   const date = new Date(slot.scheduled_at).toLocaleDateString();
-  const projectId = findOrCreateProject(slotId, `Video — ${slot.content_type} — ${date}`);
+  const projectId = findOrCreateVideoProject(slotId, `Video — ${slot.content_type} — ${date}`);
   const trackId = mainTrackId(projectId);
 
   let assets = 0;
   let clips = 0;
   let takes = 0;
+  let done = 0;
   for (const file of footage) {
     const disk = attachmentPath(file.id);
     if (!disk) continue;
@@ -83,11 +87,15 @@ export async function runSlotAutoEdit(slotId: string): Promise<AutoEditResult> {
     const asset = existing ?? registerLocalFile(disk);
     if (assetOnTimeline(projectId, asset.id)) continue;
     assets++;
+    done++;
+    onStage?.("transcribe", `Transcribing ${file.filename} (${done}/${footage.length})`);
     await runTranscription(asset.id);
+    onStage?.("takes", `Detecting takes in ${file.filename}`);
     const { transcript, words } = getTranscript(asset.id);
     const detected = transcript ? saveTakes(transcript.id, detectTakes(words)) : [];
     const kept = detected.filter((t) => t.verdict === "keep");
     takes += kept.length > 0 ? kept.length : 0;
+    onStage?.("timeline", "Laying keeps on the Main track");
     if (kept.length > 0) {
       kept.forEach((t) => {
         addClip({

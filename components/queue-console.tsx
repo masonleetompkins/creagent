@@ -754,6 +754,19 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
+  async function autoEditAndOpen(slot: Slot): Promise<void> {
+    try {
+      setBusy(true);
+      const data = (await readJson(
+        await fetch(`/api/slots/${slot.id}/auto-edit`, { method: "POST" }),
+      )) as { projectId: string; jobId: string };
+      window.location.href = `/videos/${data.projectId}?job=${data.jobId}`;
+    } catch (e) {
+      setBusy(false);
+      setError((e as Error).message);
+    }
+  }
+
   async function imageDraft(slot: Slot): Promise<void> {
     try {
       setBusy(true);
@@ -1317,9 +1330,8 @@ export default function QueueConsole(): React.ReactNode {
               <button
                 className="primary"
                 disabled={busy}
-                onClick={() =>
-                  void runJob(`/api/slots/${selected.id}/auto-edit`, {}, "Cut ready for review")
-                }
+                onClick={() => void autoEditAndOpen(selected)}
+                title="Cut the footage in the background and open the video editor to watch"
               >
                 Auto-edit footage
               </button>

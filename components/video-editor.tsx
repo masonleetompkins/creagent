@@ -109,8 +109,16 @@ function tickStep(pxPerSec: number): number {
   return 120;
 }
 
-export default function VideoEditor({ projectId }: { projectId: string }): React.ReactNode {
+export default function VideoEditor({
+  projectId,
+  buildJobId,
+}: {
+  projectId: string;
+  buildJobId?: string;
+}): React.ReactNode {
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [buildStage, setBuildStage] = useState<string | null>(null);
+  const buildWatched = useRef(false);
   const [media, setMedia] = useState<Asset[]>([]);
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -157,6 +165,57 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
     const res = await fetch("/api/media");
     if (res.ok) setMedia(((await res.json()) as { media: Asset[] }).media);
   }, []);
+
+  // Live auto-edit watch: after "Auto-edit footage" lands here, poll the
+  // job, refresh on every tick so clips land visibly, and report.
+  useEffect(() => {
+    if (!buildJobId || buildWatched.current) return;
+    buildWatched.current = true;
+    setBuildStage("Starting auto-edit");
+    let cancelled = false;
+    (async () => {
+      for (let i = 0; i < 900 && !cancelled; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled) return;
+        const poll = await fetch(`/api/jobs/${buildJobId}`);
+        if (!poll.ok) break;
+        const job = (await poll.json()) as {
+          state: string;
+          failedReason?: string;
+          progress?: { label?: unknown };
+          result?: { assets?: unknown; clips?: unknown; takes?: unknown };
+        };
+        const label = job.progress?.label;
+        if (typeof label === "string" && label) setBuildStage(label);
+        void refresh();
+        void refreshMedia();
+        if (job.state === "completed") {
+          window.history.replaceState(null, "", window.location.pathname);
+          setBuildStage(null);
+          const r = job.result ?? {};
+          setNote(
+            `Auto-edit finished: ${String(r.assets ?? 0)} footage files, ${String(r.clips ?? 0)} clips on Main, ${String(r.takes ?? 0)} takes kept. Review the cut.`,
+          );
+          await refresh();
+          await refreshMedia();
+          return;
+        }
+        if (job.state === "failed") {
+          window.history.replaceState(null, "", window.location.pathname);
+          setBuildStage(null);
+          setError(`auto-edit failed: ${job.failedReason ?? "unknown"}`);
+          return;
+        }
+      }
+      if (!cancelled) {
+        setBuildStage(null);
+        setNote("Still cutting — the timeline refreshes when it lands.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [buildJobId, refresh, refreshMedia]);
 
   useEffect(() => {
     void refresh();
@@ -1306,6 +1365,11 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
     <div className="ved">
       {error !== "" && <p className="note err">{error}</p>}
       {note !== "" && <p className="note ok">{note}</p>}
+      {buildStage !== null && (
+        <p className="note">
+          <span className="spin" aria-hidden="true" /> Auto-edit — {buildStage}…
+        </p>
+      )}
       {detail.project.slot_id ? (
         <p className="muted">
           <a href="/queue">← Queue</a> · Linked slot {detail.project.slot_id.slice(0, 8)}

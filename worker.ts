@@ -252,8 +252,8 @@ async function dispatch(job: JobRow): Promise<unknown> {
   if (job.name === "video_autoedit") {
     const { slotId } = data;
     if (typeof slotId !== "string" || !slotId) throw new Error("slotId is required");
-    updateProgress(job.id, { stage: "cutting" });
-    return runSlotAutoEdit(slotId);
+    updateProgress(job.id, { stage: "starting", label: "Starting auto-edit" });
+    return runSlotAutoEdit(slotId, (stage, label) => updateProgress(job.id, { stage, label }));
   }
   if (job.name === "export_video") {
     const { projectId, burnCaptions } = data;
