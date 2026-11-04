@@ -887,7 +887,9 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             </section>
         </div>
         <div>
-          <section className="keycard" style={{ marginTop: 0 }}>
+            <section className="keycard" style={{ marginTop: 0 }}>
+            <div className="ced-combined">
+            <div className="ced-combined-slides">
           <h2>Slides ({slides.length})</h2>
           <div className="ced-slides">
             {slides.map((s, i) => (
@@ -908,10 +910,8 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               </button>
             ))}
           </div>
-          </section>
-        </div>
-        <div>
-            <section className="keycard" style={{ marginTop: 0 }}>
+            </div>
+            <div className="ced-combined-canvas">
               <canvas ref={canvasRef} className="preview" />
               {current ? (
               <>
@@ -938,6 +938,8 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               </div>
               </>
               ) : null}
+            </div>
+            </div>
             </section>
           {current ? (
             <section className="keycard">

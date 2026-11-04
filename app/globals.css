@@ -2147,7 +2147,23 @@ a.asset-chip:hover {
   }
 }
 .edgrid.work {
-  grid-template-columns: 300px 232px 1fr;
+  grid-template-columns: 300px 1fr;
+}
+.ced-combined {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.ced-combined-slides {
+  flex: 0 0 232px;
+  min-width: 0;
+}
+.ced-combined-slides h2 {
+  margin-top: 2px;
+}
+.ced-combined-canvas {
+  flex: 1;
+  min-width: 0;
 }
 .edgrid.work > div:first-child {
   max-height: calc(100vh - 180px);
