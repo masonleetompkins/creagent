@@ -566,7 +566,7 @@ a {
   width: auto;
   max-width: 100%;
   height: auto;
-  max-height: calc(100vh - 140px);
+  max-height: calc(100dvh - 460px);
   aspect-ratio: 4 / 5;
   margin-inline: auto;
   border: 1px solid var(--line);
@@ -2195,9 +2195,14 @@ a.asset-chip:hover {
   flex: 1;
   min-width: 0;
 }
-.edgrid.work > div:first-child {
-  max-height: calc(100vh - 180px);
+.edgrid.work {
+  align-items: start;
+}
+.edgrid.work > div:first-child,
+.edgrid.work > div:last-child {
+  max-height: calc(100dvh - 420px);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .ced-slides {
   display: flex;
@@ -2338,6 +2343,11 @@ button.danger:hover:not(:disabled) {
   }
   .edgrid.work {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .edgrid.work > div:first-child,
+  .edgrid.work > div:last-child {
+    max-height: none;
+    overflow-y: visible;
   }
 }
 
