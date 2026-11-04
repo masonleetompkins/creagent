@@ -166,6 +166,10 @@ describe("draftCarouselFromSlot", () => {
     assert.equal(out.picks, 0);
     assert.equal(out.unmatched.length, 4);
     assert.equal(listSlides(out.projectId).length, 4);
+    const status = db.prepare(`SELECT status FROM queue_slots WHERE id = ?`).get(slotId) as {
+      status: string;
+    };
+    assert.equal(status.status, "orange");
   });
 
   it("refuses slots without an approval", async () => {

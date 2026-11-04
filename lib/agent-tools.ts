@@ -621,9 +621,11 @@ export const AGENT_TOOLS: ToolDef[] = [
     run: async (a) =>
       safe(async () => {
         const { getProjectDetail } = await import("./video");
-        const detail = getProjectDetail(uuid(a.projectId, "projectId"));
+        const { listExports } = await import("./export");
+        const projectId = uuid(a.projectId, "projectId");
+        const detail = getProjectDetail(projectId);
         if (!detail) throw new Error("project not found");
-        return detail;
+        return { ...detail, exports: listExports(projectId) };
       }),
   },
   {
@@ -931,5 +933,18 @@ export const AGENT_TOOLS: ToolDef[] = [
           burnCaptions: a.burnCaptions !== false,
         }),
       })),
+  },
+  {
+    name: "attach_export_to_slot",
+    description: "Copy a finished export onto the project's queue slot so it ships on publish.",
+    parameters: objParam({
+      projectId: S("Project UUID"),
+      exportId: S("Export UUID from list/get_timeline output"),
+    }, ["projectId", "exportId"]),
+    run: async (a) =>
+      safe(async () => {
+        const { attachExportToSlot } = await import("./export");
+        return attachExportToSlot(uuid(a.projectId, "projectId"), uuid(a.exportId, "exportId"));
+      }),
   },
 ];

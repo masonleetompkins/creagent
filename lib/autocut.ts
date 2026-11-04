@@ -105,29 +105,37 @@ export function detectTakes(
   for (const [, members] of [...byCluster.entries()].sort((a, b) => a[0] - b[0])) {
     if (members.length === 1) {
       const s = sentences[members[0]];
+      // Lone fragments (false starts) go to review instead of the timeline.
+      const fragment = s.tokens.length < 3;
       takes.push({
         id: randomUUID(),
-        label: "line",
+        label: fragment ? "fragment" : "line",
         start_ms: Math.max(0, s.start_ms - handleMs),
         end_ms: s.end_ms + handleMs,
         text: s.text,
         score: s.meanConf,
-        verdict: s.meanConf >= minConf ? "keep" : "unsure",
+        verdict: fragment || s.meanConf < minConf ? "unsure" : "keep",
       });
       continue;
     }
     const maxTokens = Math.max(...members.map((i) => sentences[i].tokens.length));
-    let best = members[0];
-    let bestScore = -1;
-    for (const i of members) {
+    // Talking-head habit: the LAST complete take is usually the keeper, so
+    // recency breaks near-ties while confidence/completeness still rule.
+    const scoreTake = (i: number, takeNo: number): number => {
       const s = sentences[i];
       const completeness = s.tokens.length / maxTokens;
-      const score = s.meanConf * 0.5 + completeness * 0.5 + i * 1e-6;
+      const recency = members.length > 1 ? takeNo / (members.length - 1) : 0;
+      return s.meanConf * 0.35 + completeness * 0.45 + recency * 0.2 + i * 1e-6;
+    };
+    let best = members[0];
+    let bestScore = -1;
+    members.forEach((i, takeNo) => {
+      const score = scoreTake(i, takeNo);
       if (score > bestScore) {
         bestScore = score;
         best = i;
       }
-    }
+    });
     members.forEach((i, takeNo) => {
       const s = sentences[i];
       const isBest = i === best;
@@ -137,7 +145,7 @@ export function detectTakes(
         start_ms: Math.max(0, s.start_ms - handleMs),
         end_ms: s.end_ms + handleMs,
         text: s.text,
-        score: Math.round((s.meanConf * 0.5 + (s.tokens.length / maxTokens) * 0.5) * 1000) / 1000,
+        score: Math.round(scoreTake(i, takeNo) * 1000) / 1000,
         verdict: isBest ? "keep" : "cut",
       });
     });

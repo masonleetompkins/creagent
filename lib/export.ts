@@ -2,7 +2,7 @@
 // buildSrt + buildFfmpegArgs are pure (unit-tested), runExport shells out.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getDb, nowIso } from "./db";
@@ -577,6 +577,34 @@ export async function runExport(
     )
     .run(id, projectId, outPath, plan.width, plan.height, plan.fps, srtPath ? 1 : 0, nowIso());
   return { path: outPath, exportId: id };
+}
+
+// Copy a finished export onto the project's queue slot so it ships on
+// publish. Throws when the project isn't slot-linked or the file is gone.
+export async function attachExportToSlot(
+  projectId: string,
+  exportId: string,
+): Promise<{ attachmentId: string; filename: string; size: number }> {
+  const db = getDb();
+  const project = db
+    .prepare(`SELECT slot_id FROM video_projects WHERE id = ?`)
+    .get(projectId) as { slot_id: string | null } | undefined;
+  if (!project) throw new Error("project not found");
+  if (!project.slot_id) throw new Error("project is not linked to a queue slot");
+  const row = db
+    .prepare(`SELECT id, path FROM video_exports WHERE id = ? AND project_id = ?`)
+    .get(exportId, projectId) as { id: string; path: string } | undefined;
+  if (!row || !existsSync(row.path)) throw new Error("export file is gone");
+  const buf = readFileSync(row.path);
+  const { saveUpload } = await import("./uploads");
+  const filename = `export-${row.id.slice(0, 8)}.mp4`;
+  const attachment = await saveUpload(project.slot_id, {
+    name: filename,
+    type: "video/mp4",
+    size: buf.length,
+    arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+  });
+  return { attachmentId: attachment.id, filename, size: buf.length };
 }
 
 export function listExports(projectId: string): {

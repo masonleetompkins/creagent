@@ -136,6 +136,8 @@ export async function draftCarouselFromSlot(slotId: string): Promise<SlotDraftRe
     addSlide(project.id, { layout: s.layout, heading: s.heading, body: s.body });
   }
   const picked = await runAutopick(project.id);
+  // Images need user review before this slot can ship.
+  db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slot.id);
   return {
     projectId: project.id,
     slides: slides.length,

@@ -28,6 +28,7 @@ type Track = {
 type Detail = {
   project: {
     id: string;
+    slot_id: string | null;
     title: string;
     width: number;
     height: number;
@@ -121,6 +122,7 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
   >("media");
   const [reviewMode, setReviewMode] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
   const [transcriptAsset, setTranscriptAsset] = useState("");
   const [words, setWords] = useState<Word[]>([]);
   const [takes, setTakes] = useState<Take[]>([]);
@@ -1076,6 +1078,25 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
     }
   }, [projectId, burnCaps, loadExports]);
 
+  const attachExport = useCallback(async (exportId: string) => {
+    setError("");
+    try {
+      const res = await fetch(`/api/video-projects/${projectId}/attach-export`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ exportId }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        setError(data.error ?? `attach failed: ${res.status}`);
+        return;
+      }
+      setNote("Attached to the queue slot — it ships on publish.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [projectId]);
+
   // ---- CorridorKey subject keying + Luma hint painter ----
   const [keyClip, setKeyClip] = useState<Clip | null>(null);
   const [keySidecar, setKeySidecar] = useState<{
@@ -1281,6 +1302,12 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
   return (
     <div className="ved">
       {error !== "" && <p className="note err">{error}</p>}
+      {note !== "" && <p className="note ok">{note}</p>}
+      {detail.project.slot_id ? (
+        <p className="muted">
+          <a href="/queue">← Queue</a> · Linked slot {detail.project.slot_id.slice(0, 8)}
+        </p>
+      ) : null}
       <div className="ved-top">
         <div className="ved-preview">
           <div
@@ -1432,6 +1459,12 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
                   <a href={`/api/exports/${x.id}/file`}>
                     {x.width}x{x.height} · {x.created_at.slice(0, 16).replace("T", " ")}
                   </a>
+                  {detail?.project.slot_id ? (
+                    <>
+                      {" · "}
+                      <button onClick={() => void attachExport(x.id)}>Attach to slot</button>
+                    </>
+                  ) : null}
                 </p>
               ))}
             </div>
