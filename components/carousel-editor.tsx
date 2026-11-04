@@ -61,9 +61,13 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return data;
 }
 
-async function pollJob(jobId: string): Promise<Record<string, unknown>> {
+async function pollJob(
+  jobId: string,
+  onTick?: (data: Record<string, unknown>) => void,
+): Promise<Record<string, unknown>> {
   for (;;) {
     const data = await readJson(await fetch(`/api/jobs/${jobId}`));
+    if (onTick) onTick(data);
     if (data.state === "completed" || data.state === "failed") return data;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -82,6 +86,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   const [sel, setSel] = useState(0);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [busy, setBusy] = useState(false);
+  const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [kit, setKit] = useState({ title: "", primary: "#0b5fff", secondary: "#111111", background: "#ffffff", heading: "system-black", body: "system" });
@@ -260,7 +265,12 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     }
   }
 
-  async function runAgentJob(url: string, body: unknown, label: string): Promise<void> {
+  async function runAgentJob(
+    url: string,
+    body: unknown,
+    label: string,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
     setBusy(true);
     setNote(null);
     setError(null);
@@ -272,7 +282,13 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
           body: JSON.stringify(body),
         }),
       );
-      const done = await pollJob(started.jobId as string);
+      const done = await pollJob(started.jobId as string, (d) => {
+        if (!onProgress) return;
+        const prog = (d.progress ?? {}) as { done?: unknown; total?: unknown };
+        if (typeof prog.done === "number" && typeof prog.total === "number" && prog.total > 0) {
+          onProgress(prog.done, prog.total);
+        }
+      });
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
       setNote(`${label}: ${JSON.stringify(done.result ?? {}).slice(0, 300)}`);
       await load();
@@ -280,6 +296,17 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runPhotoScan(): Promise<void> {
+    setScanProgress({ done: 0, total: 0 });
+    try {
+      await runAgentJob("/api/photos/scan", { limit: 50 }, "Photo scan", (done, total) =>
+        setScanProgress({ done, total }),
+      );
+    } finally {
+      setScanProgress(null);
     }
   }
 
@@ -438,7 +465,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     setBusy(true);
     try {
       const form = new FormData();
-      for (const file of Array.from(files).slice(0, 20)) form.append("file", file);
+      for (const file of Array.from(files).slice(0, 50)) form.append("file", file);
       const data = await readJson(await fetch("/api/photos/upload", { method: "POST", body: form }));
       const failures = (data.failures as { name: string; error: string }[]) ?? [];
       setNote(
@@ -754,11 +781,14 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             />
           </div>
           <div className="row">
-            <button disabled={busy} onClick={() => void runAgentJob("/api/photos/scan", {}, "Photo scan")}>
-              Analyze photos
+            <button disabled={busy} onClick={() => void runPhotoScan()}>
+              {scanProgress ? "Analyzing…" : "Analyze photos"}
             </button>
+            {scanProgress ? <span className="spin" aria-hidden="true" /> : null}
             <span className="muted">
-              {photos.filter((p) => p.tag?.description).length}/{photos.length} analyzed
+              {scanProgress && scanProgress.total > 0
+                ? `${scanProgress.done}/${scanProgress.total}`
+                : `${photos.filter((p) => p.tag?.description).length}/${photos.length} analyzed`}
             </span>
           </div>
           <div className="photogrid">

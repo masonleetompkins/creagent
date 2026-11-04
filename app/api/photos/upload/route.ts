@@ -16,8 +16,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (files.length === 0) {
     return NextResponse.json({ error: "no files attached" }, { status: 400 });
   }
-  if (files.length > 20) {
-    return NextResponse.json({ error: "at most 20 files per upload" }, { status: 400 });
+  if (files.length > 50) {
+    return NextResponse.json({ error: "at most 50 files per upload" }, { status: 400 });
   }
   const urls: string[] = [];
   const failures: Array<{ name: string; error: string }> = [];

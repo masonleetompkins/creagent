@@ -4,7 +4,7 @@ import { enqueue } from "@/lib/queue";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<NextResponse> {
-  let limit = 30;
+  let limit = 50;
   try {
     const body = (await request.json()) as { limit?: unknown };
     if (typeof body.limit === "number") limit = Math.max(1, Math.min(body.limit, 100));

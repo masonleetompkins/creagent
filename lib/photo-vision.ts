@@ -98,7 +98,10 @@ export type PhotoScanResult = {
   failures: Array<{ url: string; error: string }>;
 };
 
-export async function runPhotoScan(limit = 30): Promise<PhotoScanResult> {
+export async function runPhotoScan(
+  limit = 50,
+  onProgress?: (done: number, total: number) => void,
+): Promise<PhotoScanResult> {
   const db = getDb();
   const out: PhotoScanResult = { tagged: 0, skipped: 0, failures: [] };
   const upsert = db.prepare(
@@ -107,12 +110,19 @@ export async function runPhotoScan(limit = 30): Promise<PhotoScanResult> {
      ON CONFLICT(url) DO UPDATE SET description = excluded.description, tags = excluded.tags,
        suggested = excluded.suggested, embedding = excluded.embedding`,
   );
-  for (const photo of listPhotos(limit)) {
+  const candidates = listPhotos(limit);
+  let done = 0;
+  const tick = (): void => {
+    done++;
+    if (onProgress) onProgress(done, candidates.length);
+  };
+  for (const photo of candidates) {
     const existing = db
       .prepare(`SELECT id, description FROM photo_tags WHERE url = ?`)
       .get(photo.url) as { id: string; description: string } | undefined;
     if (existing && existing.description) {
       out.skipped++;
+      tick();
       continue;
     }
     try {
@@ -132,6 +142,8 @@ export async function runPhotoScan(limit = 30): Promise<PhotoScanResult> {
         url: photo.url.slice(0, 120),
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      tick();
     }
   }
   return out;

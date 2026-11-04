@@ -199,7 +199,9 @@ async function dispatch(job: JobRow): Promise<unknown> {
   }
   if (job.name === "photo_scan") {
     const { limit } = data;
-    return runPhotoScan(typeof limit === "number" ? limit : 30);
+    return runPhotoScan(typeof limit === "number" ? limit : 50, (done, total) =>
+      updateProgress(job.id, { done, total }),
+    );
   }
   if (job.name === "carousel_autopick") {
     const { projectId } = data;
