@@ -1373,105 +1373,6 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
             {rawPreview && <div className="ved-rawbadge">RAW · {rawAssetObj?.filename ?? ""}</div>}
           </div>
           <audio ref={audioRef} preload="auto" />
-          <div className="row">
-            <button onClick={() => setPlaying((p) => !p)}>
-              {playing ? "Pause" : "Play"}
-            </button>
-            <span className="muted">
-              {fmt(rawPreview ? rawPreview.atMs : playhead)} / {fmt(duration)}
-            </span>
-            <select value={zone} onChange={(e) => setZone(e.target.value)} aria-label="Safe zone">
-              {Object.entries(ZONES).map(([key, value]) => (
-                <option key={key} value={key}>
-                  {value.label}
-                </option>
-              ))}
-            </select>
-            {rawPreview && (
-              <button
-                onClick={() => {
-                  setRawPreview(null);
-                  setPlaying(false);
-                }}
-              >
-                Back to timeline
-              </button>
-            )}
-          </div>
-          <div className="row">
-            <button onClick={() => setPxPerSec((p) => Math.min(400, p * 1.25))}>Zoom +</button>
-            <button onClick={() => setPxPerSec((p) => Math.max(10, p / 1.25))}>Zoom −</button>
-            <button onClick={() => void splitAtPlayhead()}>Split (S)</button>
-            <button onClick={() => void deleteSelected()} disabled={!selected}>
-              Delete (ripple)
-            </button>
-            <button onClick={() => setReviewMode((m) => !m)} className={reviewMode ? "primary" : ""}>
-              Review: {reviewMode ? "on" : "off"}
-            </button>
-            <button onClick={() => void openKeyModal()} disabled={!selected}>
-              Key subject…
-            </button>
-          </div>
-          <div className="row">
-            <label>
-              Captions{" "}
-              <select
-                value={styleState.caption_font}
-                onChange={(e) => void saveStyle({ caption_font: e.target.value })}
-                aria-label="Caption font"
-              >
-                {BODY_FONTS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Headings{" "}
-              <select
-                value={styleState.heading_font}
-                onChange={(e) => void saveStyle({ heading_font: e.target.value })}
-                aria-label="Heading font"
-              >
-                {HEADING_FONTS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="row">
-            <label>
-              <input
-                type="checkbox"
-                checked={burnCaps}
-                onChange={(e) => setBurnCaps(e.target.checked)}
-              />{" "}
-              Burn captions
-            </label>
-            <button className="primary" disabled={exporting} onClick={() => void runExport()}>
-              {exporting ? "Exporting…" : "Export MP4"}
-            </button>
-          </div>
-          {exports.length > 0 && (
-            <div className="ved-exports">
-              {exports.map((x) => (
-                <p key={x.id}>
-                  <a href={`/api/exports/${x.id}/file`}>
-                    {x.width}x{x.height} · {x.created_at.slice(0, 16).replace("T", " ")}
-                  </a>
-                  {detail?.project.slot_id ? (
-                    <>
-                      {" · "}
-                      <button onClick={() => void attachExport(x.id)}>Attach to slot</button>
-                    </>
-                  ) : null}
-                </p>
-              ))}
-            </div>
-          )}
         </div>
         <div className="ved-side">
           <div className="ved-panels">
@@ -1519,7 +1420,17 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
                 />
                 <button onClick={() => void registerFile()}>Register in place</button>
               </div>
-              {media.length === 0 && <p className="muted">No media yet. Upload or register footage.</p>}
+              {media.length === 0 && (
+                <>
+                  <p className="muted">No media yet. Upload or register footage, then:</p>
+                  <ol className="ved-empty-steps">
+                    <li>Transcribe it — word-level timecodes, on this machine.</li>
+                    <li>Auto-cut takes + silence; review keeps in the RAW tab.</li>
+                    <li>Generate captions, add graphics, export the MP4.</li>
+                  </ol>
+                  <p className="muted">Or open the Agent and say “rough-cut my footage”.</p>
+                </>
+              )}
               {media.map((m) => (
                 <div key={m.id} className="ved-asset">
                   <div>
@@ -2142,6 +2053,107 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
           </div>
           </div>
         </div>
+      </div>
+      <div className="ved-bar">
+      <div className="row">
+        <button onClick={() => setPlaying((p) => !p)}>
+          {playing ? "Pause" : "Play"}
+        </button>
+        <span className="muted">
+          {fmt(rawPreview ? rawPreview.atMs : playhead)} / {fmt(duration)}
+        </span>
+        <select value={zone} onChange={(e) => setZone(e.target.value)} aria-label="Safe zone">
+          {Object.entries(ZONES).map(([key, value]) => (
+            <option key={key} value={key}>
+              {value.label}
+            </option>
+          ))}
+        </select>
+        {rawPreview && (
+          <button
+            onClick={() => {
+              setRawPreview(null);
+              setPlaying(false);
+            }}
+          >
+            Back to timeline
+          </button>
+        )}
+      </div>
+      <div className="row">
+        <button onClick={() => setPxPerSec((p) => Math.min(400, p * 1.25))}>Zoom +</button>
+        <button onClick={() => setPxPerSec((p) => Math.max(10, p / 1.25))}>Zoom −</button>
+        <button onClick={() => void splitAtPlayhead()}>Split (S)</button>
+        <button onClick={() => void deleteSelected()} disabled={!selected}>
+          Delete (ripple)
+        </button>
+        <button onClick={() => setReviewMode((m) => !m)} className={reviewMode ? "primary" : ""}>
+          Review: {reviewMode ? "on" : "off"}
+        </button>
+        <button onClick={() => void openKeyModal()} disabled={!selected}>
+          Key subject…
+        </button>
+      </div>
+      <div className="row">
+        <label>
+          Captions{" "}
+          <select
+            value={styleState.caption_font}
+            onChange={(e) => void saveStyle({ caption_font: e.target.value })}
+            aria-label="Caption font"
+          >
+            {BODY_FONTS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Headings{" "}
+          <select
+            value={styleState.heading_font}
+            onChange={(e) => void saveStyle({ heading_font: e.target.value })}
+            aria-label="Heading font"
+          >
+            {HEADING_FONTS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="row">
+        <label>
+          <input
+            type="checkbox"
+            checked={burnCaps}
+            onChange={(e) => setBurnCaps(e.target.checked)}
+          />{" "}
+          Burn captions
+        </label>
+        <button className="primary" disabled={exporting} onClick={() => void runExport()}>
+          {exporting ? "Exporting…" : "Export MP4"}
+        </button>
+      </div>
+      {exports.length > 0 && (
+        <div className="ved-exports">
+          {exports.map((x) => (
+            <p key={x.id}>
+              <a href={`/api/exports/${x.id}/file`}>
+                {x.width}x{x.height} · {x.created_at.slice(0, 16).replace("T", " ")}
+              </a>
+              {detail?.project.slot_id ? (
+                <>
+                  {" · "}
+                  <button onClick={() => void attachExport(x.id)}>Attach to slot</button>
+                </>
+              ) : null}
+            </p>
+          ))}
+        </div>
+      )}
       </div>
       <div className="ved-timeline">
         <div className="ved-scroll">
