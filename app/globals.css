@@ -451,9 +451,16 @@ a {
 }
 
 .preview {
-  width: 100%;
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: calc(100vh - 240px);
+  aspect-ratio: 4 / 5;
+  margin-inline: auto;
   border: 1px solid var(--line);
   border-radius: 16px;
+  background: var(--well);
 }
 
 textarea {
