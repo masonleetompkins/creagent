@@ -10,34 +10,38 @@ in direct calls to each provider.
 
 ## Install (one command)
 
-macOS or Linux. Requires only Node.js 20+ — the database (SQLite) and job
-queue are embedded, so there is nothing else to install or start:
+macOS or Linux. Prerequisites: **Node.js 20+** and **git**. The database
+(SQLite) and job queue are embedded, and ffmpeg/whisper are fetched
+automatically — nothing else to install or start:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/masonleetompkins/creagent/main/install.sh | bash
 ```
 
-This builds the app, then:
+This clones the repo to `~/.local/share/creagent` (or updates it on
+re-runs), installs dependencies, builds, then:
 
 - macOS: adds **Creagent** to `~/Applications` (no sudo, no
   Gatekeeper friction — the installer clears its own quarantine bit).
 - Linux: adds an app-menu entry via
   `~/.local/share/applications/creagent.desktop`.
 
-Then it starts the server and opens `http://127.0.0.1:3000`.
+Then it starts the server and opens the app in its own fullscreen window
+(Chrome app mode when Chrome is installed, otherwise a browser tab at
+`http://127.0.0.1:3000`).
 
-> Until this repo is pushed to GitHub, run `./install.sh` from the repo root
-> instead — same result.
+First install takes several minutes: `npm ci`, the Next.js build, and the
+ffmpeg/whisper downloads. After that, launching takes seconds. To update,
+re-run the same command.
 
 `./start.sh` launches, `./stop.sh` stops. Logs live at
 `~/.config/creagent/server.log` (app) and `worker.log` (jobs).
 
-Starting also runs SQL migrations from `db/migrations` and starts the job
-worker (`npm run worker`). Everything lives under
-`~/.config/creagent` (SQLite file, keys, models). The home page
-shows live Database / Queue / Keys status from `/api/health`. Copy
-`.env.example` to `.env.local` to override `PORT`, `SQLITE_PATH`, or
-`META_TEXT_MODEL`.
+Starting runs SQL migrations from `db/migrations` and starts the job
+worker. Everything lives under `~/.config/creagent` (SQLite file, keys,
+models, uploads). The home page shows live Database / Queue / Keys status
+from `/api/health`. Copy `.env.example` to `.env.local` to override `PORT`,
+`SQLITE_PATH`, or `META_TEXT_MODEL`.
 
 ## Develop
 
@@ -73,30 +77,39 @@ Keys are AES-256-GCM encrypted at
 a **Test** button: Meta runs a tiny Responses call, Monid reads the workspace
 balance, Zernio lists profiles, Brave runs a one-result search.
 
-## Ingest, analysis, pillars
+## Ingest, analysis, Brain
 
-- **Ingest** (`/ingest`): pull X posts, TikTok videos, Instagram posts, or
-  YouTube / IG-reel transcripts through Monid into the `assets` table. Runs as
-  a background job with cursor pagination (up to 5 pages per source).
+- **Ingest** (Settings): pull posts, videos, and transcripts through Monid
+  and Zernio into the `assets` table. Pick platforms as pills, choose a date
+  range per source, and ingest with progress, retries, and resume. Runs as a
+  background job with cursor pagination.
 - **Analysis**: reads unanalyzed assets with `muse-spark-1.3-contributor`,
   writes the voice profile, Q&A, principles, and quotes to the vault, and
-  upserts content pillars. Vault embeddings are local MiniLM (384-dim,
-  float32 BLOBs in SQLite with JS cosine search, model auto-downloads to
-  `~/.config/creagent/models`).
-- **Pillars** (`/pillars`): fully editable — rename, re-describe, add, delete.
+  upserts content pillars — with a live progress indicator.
+- **Brain**: voice profile, up-to-5 editable content pillars, vault tabs
+  (principles, Q&A, quotes, voice), and the platform playbook. Vault
+  embeddings are local MiniLM (384-dim, float32 BLOBs in SQLite with JS
+  cosine search, model auto-downloads to `~/.config/creagent/models`).
 
 Monid is called over its REST API (`https://api.monid.ai`, Bearer auth) using
 request shapes matching `@monid-ai/cli` 0.1.8 — no CLI install needed.
 
 ## Queue
 
-- **Cadence templates** (`/queue`, bottom): weekday + time + pillar + content
-  type + platforms. This is the posting schedule.
+The queue is a week/month calendar. Slots are red (needs work), orange
+(needs review), green (ready), gray (posted).
+
+- **Queue setup** (modal): cadence templates — weekday + time + pillar +
+  content type + platforms — or a daily cadence, or plain-language setup via
+  the agent. This is the posting schedule.
 - **Plan 14 days**: materializes red slots from templates and rolls overdue
   red/orange slots to their next matching occurrence.
 - **Draft all red / Draft now**: Meta writes each draft grounded in vault
   retrieval (top-5 cosine matches) and flips the slot orange for review.
-- **Approve** turns orange to green; **Mark posted** turns green gray.
+  Media slots draft a separate post-caption block alongside the script or
+  carousel outline.
+- **Approve** turns orange to green; **Post now / Schedule** publishes via
+  Zernio with per-platform receipts; **Mark posted** turns green gray.
   Deleting a slot removes it and its drafts. Jobs stuck `running` past 10
   minutes are reaped and retried (3 attempts).
 
@@ -119,8 +132,14 @@ request shapes matching `@monid-ai/cli` 0.1.8 — no CLI install needed.
   with reorder and count controls, ingested-photo picker (downloads locally),
   uploads, and Muse Image scene generation per slide. Previews and exports
   render on a 1080×1350 canvas to PNGs — no extra dependencies.
-- **Video fallback**: finished edits upload straight onto the slot (500MB
-  cap) until the full video editor lands.
+- **Video** (`/videos`, or the Video editor button on any video slot):
+  magnetic multi-track timeline with ripple trims, word-accurate local
+  transcription, editable captions with retiming, vertical safe zones,
+  review notes, auto-cut with best-take selection, RAW/CUT toggle, B-roll,
+  SFX/music libraries, and 9:16 story illustrations generated per statement
+  in the house style. Exports attach to the slot, and approval pins exactly
+  which finished file uploads.
+- Finished files also upload straight onto any slot (500MB cap).
 
 ## Agent imagery
 
@@ -155,13 +174,15 @@ wrong — the correct host is below, not `https://meta.ai`):
   `muse-spark-1.3` (private Standard tier, set `META_TEXT_MODEL` to use it),
   `muse-wonder-1.0` (frontier, agentic, 1M context)
 - Health: `GET /v1/status` (no key needed)
+- Image: `muse-image-1.0` on `/v1/images/generations`, verified live
+  end to end (portrait WebP generations).
 - Note: the Responses API has built-in `web_search` grounding — may cover
   real-time context without Brave.
 
-Unverified: `muse-image-1.0` and `/v1/images/generations` appear only in the AI
-summary, with zero independent mentions. The constant exists in
-`lib/meta.ts` but is marked experimental — test with a real key before the
-demo leans on it.
+No video generation route exists on the Model API (verified 2026-11-04):
+text, image, transcription, and segmentation only. Muse Video is
+preview-only inside the muse.ai agent, so video scenes stay image-based
+until Meta ships a video endpoint.
 
 ## CorridorKey 2.0 notes (video keying)
 
@@ -183,35 +204,35 @@ demo leans on it.
   screen and treat no-screen as a stretch test.
 
 The keyer stays a separate Python sidecar process (no code linking), which
-keeps this repo's MIT license clean.
+keeps this repo's MIT license clean. `scripts/setup-corridorkey.sh` handles
+the install when you're on a supported machine.
 
 ## Layout
 
 ```text
 app/                Next.js App Router (pages + API routes)
-app/api/keys/       Key storage + connection-test endpoints
-app/api/health/     Database / queue / keys status
-components/         Client components (settings form, status)
+components/         Client components (editors, queue, chat, settings)
+lib/                Server libs (drafting, publish, video, carousel, ingest…)
 db/migrations/      SQL migrations (run by ./start.sh, or npm run migrate)
-lib/keys.ts         Encrypted local key store
-lib/meta.ts         Meta Model API client
-lib/db.ts           Embedded SQLite client (node:sqlite)
-lib/queue.ts        Embedded SQLite job queue
-scripts/migrate.ts  Idempotent migration runner
+scripts/            Tool setup (ffmpeg/whisper, CorridorKey) + migrate runner
+sidecar/            CorridorKey keying server (separate Python process)
 worker.ts           Local job worker (npm run worker)
+tests/              node:test suite (npm test)
 install.sh          One-command macOS/Linux installer
+start.sh / stop.sh  Generated launcher (edit install.sh, not these)
 ```
 
 ## Roadmap
 
 1. Settings + local keys (done)
 2. Embedded SQLite + job queue (done — zero daemons)
-3. Ingest (Monid) → voice profile + vault → editable pillars (done)
+3. Ingest (Monid/Zernio) → voice profile + vault → editable pillars (done)
 4. Queue calendar + drafters + RED/ORANGE/GREEN approvals (done)
 5. Data dashboard (done)
 6. Text editor modal + upload fallback (done)
 7. Carousel editor (done — vision + Muse Image verified live end to end)
-8. Video editor (Hyperframes + CorridorKey sidecar) — next, and the biggest build
+8. Video editor (done — timeline, transcription, captions, scenes, export)
+9. Real-use hardening + demo polish (in progress)
 
 ## License
 
