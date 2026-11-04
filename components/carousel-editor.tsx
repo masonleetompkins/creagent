@@ -803,6 +803,11 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
           <div className="row">
             <input type="file" accept="image/*" aria-label="Upload image" onChange={(e) => { void uploadImage(e.target.files?.[0]); e.target.value = ""; }} />
           </div>
+            </section>
+          ) : null}
+          <section className="keycard">
+            <h2>Photo library</h2>
+            <p className="muted">Upload once, analyze, reuse across every carousel.</p>
           <div className="row">
             <input
               type="file"
@@ -825,8 +830,13 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             {photos.map((p) => (
               <div key={`${p.asset_id ?? "upl"}-${p.url}`} className={`photo${p.tag?.description ? " tagged" : ""}`}>
                 <button
+                  disabled={!current}
                   onClick={() => void usePhoto(p.asset_id, p.url)}
-                  title={p.tag?.description || `${p.source}: ${p.title ?? ""}`}
+                  title={
+                    current
+                      ? (p.tag?.description || `${p.source}: ${p.title ?? ""}`)
+                      : "Add a slide first, then click a photo to attach it"
+                  }
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={photoSrc(p.url)} alt={p.title ?? p.source} loading="lazy" />
@@ -931,7 +941,6 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             </div>
           ) : null}
             </section>
-          ) : null}
         </div>
       </div>
     </>
