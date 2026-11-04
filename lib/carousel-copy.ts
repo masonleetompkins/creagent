@@ -1,7 +1,8 @@
 // Carousel copy fill: model writes per-slide heading/body/layout as JSON.
 import { getDb } from "./db";
 import { addSlide, createProject, deleteSlide, getProject, isLayout, listSlides, updateSlide } from "./carousel";
-import { runAutopick } from "./carousel-plan";
+import { runAutoDesign } from "./carousel-design";
+import { runPlanImages } from "./carousel-plan";
 import { approvedBody } from "./draft-structure";
 import { buildDraftContext } from "./drafting";
 import { loadKeys } from "./keys";
@@ -110,13 +111,16 @@ export type CarouselCopyResult = {
 };
 
 // Image-draft pipeline: approved queue-slot copy -> parsed slides ->
-// auto-matched library photos. Slides the matcher can't place stay
-// photo-less for the user (or a generation request) to finish.
+// auto-matched library photos -> art direction (layouts + backgrounds).
+// Slides the matcher can't place get a generation request for approval,
+// so the editor opens with every decision made except image spend.
 export type SlotDraftResult = {
   projectId: string;
   slides: number;
   picks: number;
   unmatched: string[];
+  requested: number;
+  designFallback: boolean;
 };
 
 export async function draftCarouselFromSlot(slotId: string): Promise<SlotDraftResult> {
@@ -146,14 +150,17 @@ export async function draftCarouselFromSlot(slotId: string): Promise<SlotDraftRe
   for (const s of slides) {
     addSlide(project.id, { layout: s.layout, heading: s.heading, body: s.body });
   }
-  const picked = await runAutopick(project.id);
+  const planned = await runPlanImages(project.id);
+  const design = await runAutoDesign(project.id);
   // Images need user review before this slot can ship.
   db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slot.id);
   return {
     projectId: project.id,
     slides: slides.length,
-    picks: picked.picks.length,
-    unmatched: picked.unmatched,
+    picks: planned.attached,
+    unmatched: planned.unmatched,
+    requested: planned.requested,
+    designFallback: design.fallback,
   };
 }
 

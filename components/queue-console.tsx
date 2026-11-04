@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "next/navigation";
 import { CONTENT_TYPES, PLATFORM_POST_CAPS, PLATFORMS, THREAD_KINDS } from "@/lib/content";
 import DraftReview from "./draft-review";
 import {
@@ -344,6 +345,17 @@ export default function QueueConsole(): React.ReactNode {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Deep link from the carousel editor's "Approve & send back".
+  const searchParams = useSearchParams();
+  const deepOpened = useRef(false);
+  useEffect(() => {
+    if (deepOpened.current) return;
+    const id = searchParams.get("slot");
+    if (!id) return;
+    deepOpened.current = true;
+    void openSlot(id);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (templatesLoaded && templates.length === 0) setSetupOpen(true);
@@ -1300,9 +1312,9 @@ export default function QueueConsole(): React.ReactNode {
                 className="primary"
                 disabled={busy}
                 onClick={() => void imageDraft(selected)}
-                title="Build slides from the approved copy and match library photos"
+                title="Build slides from the approved copy, match library photos, art-direct layouts, and plan generated images — then open the editor"
               >
-                Image draft
+                Build full carousel
               </button>
             ) : null}
             <button onClick={() => void removeSlot(selected.id)}>Delete</button>

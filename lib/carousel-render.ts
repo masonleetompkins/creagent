@@ -11,6 +11,9 @@ export type RenderSlide = {
   heading: string;
   body: string;
   image: HTMLImageElement | null;
+  // Per-slide background override: null/"" follows the kit, "gradient"
+  // blends primary to secondary, otherwise a #rrggbb flat fill.
+  background?: string | null;
   // Forbidden-text regions (photo fractions 0-1); kept in sync with
   // lib/photo-regions.ts clearBand.
   regions?: RenderRegion[];
@@ -34,6 +37,46 @@ export type RenderKit = {
   headingFont: FontDef;
   bodyFont: FontDef;
 };
+
+function hexRgb(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function luminance([r, g, b]: [number, number, number]): number {
+  const f = (c: number): number => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+// Readable ink for a slide background: white on dark fills, the kit's
+// secondary on light ones. Gradients judge by their primary/secondary mix.
+export function inkForBackground(
+  background: string | null | undefined,
+  kit: Pick<RenderKit, "primary" | "secondary" | "background">,
+): string {
+  if (background === "gradient") {
+    const a = hexRgb(kit.primary);
+    const b = hexRgb(kit.secondary);
+    if (a && b) {
+      const mix: [number, number, number] = [
+        Math.round((a[0] + b[0]) / 2),
+        Math.round((a[1] + b[1]) / 2),
+        Math.round((a[2] + b[2]) / 2),
+      ];
+      return luminance(mix) > 0.35 ? kit.secondary : "#ffffff";
+    }
+    return "#ffffff";
+  }
+  const flat = background?.trim() ? background!.trim() : kit.background;
+  const rgb = hexRgb(flat);
+  if (!rgb) return kit.secondary;
+  return luminance(rgb) > 0.35 ? kit.secondary : "#ffffff";
+}
 
 function wrap(
   ctx: CanvasRenderingContext2D,
@@ -102,8 +145,17 @@ export async function renderSlide(
   const W = SLIDE_W;
   const M = 90; // margin
 
-  ctx.fillStyle = kit.background;
-  ctx.fillRect(0, 0, W, SLIDE_H);
+  if (slide.background === "gradient") {
+    const grad = ctx.createLinearGradient(0, 0, 0, SLIDE_H);
+    grad.addColorStop(0, kit.primary);
+    grad.addColorStop(1, kit.secondary);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, SLIDE_H);
+  } else {
+    ctx.fillStyle = slide.background?.trim() ? slide.background.trim() : kit.background;
+    ctx.fillRect(0, 0, W, SLIDE_H);
+  }
+  const ink = inkForBackground(slide.background, kit);
 
   const heading = (slide.heading || "").trim();
   const body = (slide.body || "").trim();
@@ -136,7 +188,7 @@ export async function renderSlide(
     ctx.fillStyle = kit.primary;
     ctx.fillRect(0, 0, W, 26);
     ctx.fillRect(0, SLIDE_H - 26, W, 26);
-    ctx.fillStyle = kit.secondary;
+    ctx.fillStyle = ink;
     const hSize = slide.layout === "cover" ? 104 : 92;
     ctx.font = `${kit.headingFont.weight} ${hSize}px ${kit.headingFont.stack}`;
     const hLines = wrap(ctx, heading || " ", W - M * 2, 5);
@@ -159,7 +211,7 @@ export async function renderSlide(
   }
 
   // content (default): heading, accent rule, body, optional image below.
-  ctx.fillStyle = kit.secondary;
+  ctx.fillStyle = ink;
   ctx.font = `${kit.headingFont.weight} 76px ${kit.headingFont.stack}`;
   const hLines = wrap(ctx, heading || " ", W - M * 2, 3);
   let cy = M + 60;
@@ -167,7 +219,7 @@ export async function renderSlide(
   ctx.fillStyle = kit.primary;
   ctx.fillRect(M, cy + 18, 140, 12);
   cy += 90;
-  ctx.fillStyle = kit.secondary;
+  ctx.fillStyle = ink;
   ctx.globalAlpha = 0.88;
   ctx.font = `400 44px ${kit.bodyFont.stack}`;
   const maxBodyLines = slide.image ? 7 : 14;

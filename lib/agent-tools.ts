@@ -509,21 +509,44 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "edit_slide",
-    description: "Edit a carousel slide's heading/body directly.",
+    description: "Edit a carousel slide's heading/body/layout/background directly.",
     parameters: objParam({
       slideId: S("Slide UUID"),
       heading: S("Optional heading"),
       body: S("Optional body"),
+      layout: S("Optional layout: cover|content|photo|cta"),
+      background: S("Optional background: kit|null|white|black|gradient|#rrggbb"),
     }, ["slideId"]),
     run: async (a) =>
       safe(async () => {
-        const { updateSlide } = await import("./carousel");
-        const edit: { heading?: string; body?: string } = {};
+        const { isLayout, normalizeBackground, updateSlide } = await import("./carousel");
+        const edit: { heading?: string; body?: string; layout?: string; background?: string | null } = {};
         if (typeof a.heading === "string") edit.heading = a.heading;
         if (typeof a.body === "string") edit.body = a.body;
+        if (typeof a.layout === "string") {
+          if (!isLayout(a.layout)) throw new Error("unknown layout");
+          edit.layout = a.layout;
+        }
+        if (typeof a.background === "string") {
+          const v = a.background.trim().toLowerCase();
+          const named: Record<string, string | null> = {
+            kit: null, null: null, "": null, white: "#ffffff", black: "#111111", gradient: "gradient",
+          };
+          edit.background = normalizeBackground(v in named ? named[v] : v);
+        }
         const slide = updateSlide(uuid(a.slideId, "slideId"), edit);
         if (!slide) throw new Error("slide not found");
         return slide;
+      }),
+  },
+  {
+    name: "carousel_auto_design",
+    description: "Art-direct every slide's layout and background (model picks, deterministic fallback never fails).",
+    parameters: objParam({ projectId: S("Carousel project UUID") }, ["projectId"]),
+    run: async (a) =>
+      safe(async () => {
+        const { runAutoDesign } = await import("./carousel-design");
+        return runAutoDesign(uuid(a.projectId, "projectId"));
       }),
   },
   {
@@ -589,7 +612,7 @@ export const AGENT_TOOLS: ToolDef[] = [
   },
   {
     name: "carousel_from_slot",
-    description: "Build a carousel image draft from a queue slot's approved copy: parses slides, auto-matches library photos.",
+    description: "Build a full carousel from a queue slot's approved copy: parses slides, auto-matches library photos, art-directs layouts/backgrounds, plans generated images for approval.",
     parameters: objParam({ slotId: S("Queue slot UUID") }, ["slotId"]),
     run: async (a) =>
       safe(async () => {

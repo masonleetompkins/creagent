@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteSlide, isLayout, updateSlide } from "@/lib/carousel";
+import { deleteSlide, isBackground, isLayout, updateSlide } from "@/lib/carousel";
 
 export const dynamic = "force-dynamic";
 
@@ -21,12 +21,20 @@ export async function PATCH(
   if (patch.layout !== undefined && (typeof patch.layout !== "string" || !isLayout(patch.layout))) {
     return NextResponse.json({ error: "unknown layout" }, { status: 400 });
   }
+  if (
+    patch.background !== undefined &&
+    patch.background !== null &&
+    (typeof patch.background !== "string" || !isBackground(patch.background))
+  ) {
+    return NextResponse.json({ error: "unknown background" }, { status: 400 });
+  }
   try {
     const slide = updateSlide(slideId, {
       layout: patch.layout as string | undefined,
       heading: typeof patch.heading === "string" ? patch.heading : undefined,
       body: typeof patch.body === "string" ? patch.body : undefined,
       image_prompt: typeof patch.image_prompt === "string" ? patch.image_prompt : undefined,
+      background: patch.background === null ? null : (patch.background as string | undefined),
     });
     if (!slide) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json({ slide });

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import QueueConsole from "@/components/queue-console";
 
 export default function QueuePage(): React.ReactNode {
@@ -12,7 +13,9 @@ export default function QueuePage(): React.ReactNode {
           </div>
         </div>
       </div>
-      <QueueConsole />
+      <Suspense>
+        <QueueConsole />
+      </Suspense>
     </>
   );
 }

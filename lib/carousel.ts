@@ -25,6 +25,7 @@ export type CarouselSlide = {
   image_path: string | null;
   image_source: string | null;
   image_prompt: string | null;
+  background: string | null;
   created_at: string;
 };
 
@@ -37,6 +38,19 @@ export function isHexColor(value: string): boolean {
 
 export function isLayout(value: string): boolean {
   return LAYOUTS.has(value);
+}
+
+// Per-slide background: null/"" follows the kit, "gradient" blends
+// primary to secondary, otherwise a #rrggbb flat override.
+export function isBackground(value: string | null | undefined): boolean {
+  if (value === null || value === undefined || value === "") return true;
+  return value === "gradient" || HEX.test(value);
+}
+
+export function normalizeBackground(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value === "gradient" || HEX.test(value)) return value;
+  throw new Error("unknown background");
 }
 
 export function listProjects(): Array<CarouselProject & { slide_count: number }> {
@@ -144,7 +158,7 @@ export function listSlides(projectId: string): CarouselSlide[] {
 
 export function addSlide(
   projectId: string,
-  input: { layout?: string; heading?: string; body?: string } = {},
+  input: { layout?: string; heading?: string; body?: string; background?: string | null } = {},
 ): CarouselSlide {
   const db = getDb();
   const max = db
@@ -160,15 +174,16 @@ export function addSlide(
     image_path: null,
     image_source: null,
     image_prompt: null,
+    background: normalizeBackground(input.background),
     created_at: nowIso(),
   };
   db.prepare(
     `INSERT INTO carousel_slides
-     (id, project_id, position, layout, heading, body, image_path, image_source, image_prompt, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, project_id, position, layout, heading, body, image_path, image_source, image_prompt, background, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id, row.project_id, row.position, row.layout, row.heading, row.body,
-    row.image_path, row.image_source, row.image_prompt, row.created_at,
+    row.image_path, row.image_source, row.image_prompt, row.background, row.created_at,
   );
   touchProject(projectId);
   return row;
@@ -176,11 +191,14 @@ export function addSlide(
 
 export function updateSlide(
   id: string,
-  patch: Partial<Pick<CarouselSlide, "layout" | "heading" | "body" | "image_path" | "image_source" | "image_prompt">>,
+  patch: Partial<Pick<CarouselSlide, "layout" | "heading" | "body" | "image_path" | "image_source" | "image_prompt" | "background">>,
 ): CarouselSlide | null {
   const db = getDb();
   if (patch.layout !== undefined && !isLayout(patch.layout)) {
     throw new Error("unknown layout");
+  }
+  if (patch.background !== undefined) {
+    patch.background = normalizeBackground(patch.background);
   }
   const sets: string[] = [];
   const vals: unknown[] = [];

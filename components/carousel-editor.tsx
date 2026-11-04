@@ -25,6 +25,7 @@ type Slide = {
   image_path: string | null;
   image_source: string | null;
   image_prompt: string | null;
+  background: string | null;
 };
 
 type Region = {
@@ -55,6 +56,7 @@ type GenRequest = {
 };
 
 const LAYOUTS = ["cover", "content", "photo", "cta"];
+const BG_OPTIONS = ["", "#ffffff", "#111111", "gradient"];
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   const data = (await res.json()) as Record<string, unknown>;
@@ -91,7 +93,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [kit, setKit] = useState({ title: "", primary: "#0b5fff", secondary: "#111111", background: "#ffffff", heading: "system-black", body: "system" });
-  const [draft, setDraft] = useState({ layout: "content", heading: "", body: "" });
+  const [draft, setDraft] = useState({ layout: "content", heading: "", body: "", background: "" });
   const [brief, setBrief] = useState("");
   const [count, setCount] = useState("");
   const [imgPrompt, setImgPrompt] = useState("");
@@ -146,6 +148,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   }, [load, projectId]);
 
   const current = slides[sel] ?? null;
+  const bgCustom = !BG_OPTIONS.includes(draft.background);
   const labelPhoto = labelUrl ? (photos.find((p) => p.url === labelUrl) ?? null) : null;
   const previewPhoto = previewUrl
     ? (photos.find((p) => p.url === previewUrl) ?? null)
@@ -153,7 +156,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
 
   useEffect(() => {
     if (current) {
-      setDraft({ layout: current.layout, heading: current.heading, body: current.body });
+      setDraft({ layout: current.layout, heading: current.heading, body: current.body, background: current.background ?? "" });
       setImgPrompt(current.image_prompt ?? "");
     }
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -216,7 +219,14 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         if (cancelled) return;
         await renderSlide(
           canvas,
-          { layout: draft.layout, heading: draft.heading, body: draft.body, image, regions: slideRegions },
+          {
+            layout: draft.layout,
+            heading: draft.heading,
+            body: draft.body,
+            image,
+            background: draft.background || null,
+            regions: slideRegions,
+          },
           {
             primary: kit.primary,
             secondary: kit.secondary,
@@ -263,7 +273,12 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       await fetch(`/api/carousels/slides/${current.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ layout: draft.layout, heading: draft.heading, body: draft.body }),
+        body: JSON.stringify({
+          layout: draft.layout,
+          heading: draft.heading,
+          body: draft.body,
+          background: draft.background || null,
+        }),
       }),
     );
     await load();
@@ -651,7 +666,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       const off = document.createElement("canvas");
       await renderSlide(
         off,
-        { layout: s.layout, heading: s.heading, body: s.body, image, regions },
+        { layout: s.layout, heading: s.heading, body: s.body, image, background: s.background, regions },
         {
           primary: kit.primary,
           secondary: kit.secondary,
@@ -691,8 +706,26 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     });
   }
 
-  async function attachAll(): Promise<void> {
-    if (!project?.slot_id || slides.length === 0) return;
+  async function runAutoDesign(): Promise<void> {
+    if (slides.length === 0) return;
+    setBusy(true);
+    setNote(null);
+    setError(null);
+    try {
+      const data = await readJson(await fetch(`/api/carousels/${projectId}/auto-design`, { method: "POST" }));
+      setNote(
+        `Designed ${String(data.designed ?? 0)} slides${data.fallback ? " (offline fallback — layouts and backgrounds still applied)" : ""}.`,
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function attachAll(): Promise<boolean> {
+    if (!project?.slot_id || slides.length === 0) return false;
     setBusy(true);
     try {
       await saveSlideQuiet();
@@ -719,10 +752,19 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         );
       }
       setNote(`Attached ${rendered.length} PNGs to the queue slot — they ship on publish.`);
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendBack(): Promise<void> {
+    if (!project?.slot_id || slides.length === 0) return;
+    if (await attachAll()) {
+      window.location.href = `/queue?slot=${project.slot_id}`;
     }
   }
 
@@ -758,6 +800,14 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             <button disabled={busy || slides.length === 0} onClick={() => void attachAll()}>
               Attach PNGs to slot
             </button>
+            <button
+              className="primary"
+              disabled={busy || slides.length === 0}
+              onClick={() => void sendBack()}
+              title="Attach finished PNGs and return to the calendar slot for caption approval"
+            >
+              Approve &amp; send back
+            </button>
           </div>
         ) : null}
       </section>
@@ -772,6 +822,9 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         </button>
         <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/plan-images`, {}, "Planned")}>
           Plan images
+        </button>
+        <button disabled={busy || slides.length === 0} onClick={() => void runAutoDesign()} title="Let the model art-direct every slide's layout and background">
+          Auto-design
         </button>
         <span className="spacer" />
         <button onClick={() => void addSlide()}>+ Slide</button>
@@ -1016,6 +1069,26 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
                     <option key={l} value={l}>{l}</option>
                   ))}
                 </select>
+                <select
+                  aria-label="Background"
+                  value={bgCustom ? "custom" : draft.background}
+                  onChange={(e) => {
+                    if (e.target.value !== "custom") setDraft({ ...draft, background: e.target.value });
+                  }}
+                >
+                  <option value="">Bg: kit</option>
+                  <option value="#ffffff">Bg: white</option>
+                  <option value="#111111">Bg: black</option>
+                  <option value="gradient">Bg: gradient</option>
+                  {bgCustom ? <option value="custom">Bg: custom</option> : null}
+                </select>
+                <input
+                  type="color"
+                  aria-label="Custom background"
+                  title="Custom background color"
+                  value={/^#[0-9a-fA-F]{6}$/.test(draft.background) ? draft.background : "#ffffff"}
+                  onChange={(e) => setDraft({ ...draft, background: e.target.value })}
+                />
                 <button onClick={() => void move(-1)}>↑</button>
                 <button onClick={() => void move(1)}>↓</button>
                 <button onClick={() => void deleteSlide(current.id)}>Delete</button>
