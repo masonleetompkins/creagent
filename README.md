@@ -10,9 +10,41 @@ in direct calls to each provider.
 
 ## Install (one command)
 
-macOS or Linux. Prerequisites: **Node.js 20+** and **git**. The database
-(SQLite) and job queue are embedded, and ffmpeg/whisper are fetched
-automatically — nothing else to install or start:
+macOS or Linux. The database (SQLite) and job queue are embedded, and
+ffmpeg/whisper are fetched automatically — nothing else to install or
+start beyond the prerequisites.
+
+### Prerequisites
+
+Install these **before** running the installer. You need **Node.js 20 or
+newer** and **git**. Chrome is recommended — it's what opens Creagent in
+its own fullscreen app window — but the app falls back to a browser tab
+without it.
+
+**macOS** (with [Homebrew](https://brew.sh)):
+
+```bash
+brew install node git
+node --version   # want v20 or newer
+git --version
+```
+
+No Homebrew? Either install it first (see `https://brew.sh`), or install
+[Node.js LTS](https://nodejs.org/en/download) from the official macOS
+installer and run `xcode-select --install` for git.
+
+**Linux** (Debian/Ubuntu):
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs git curl
+node --version   # want v20 or newer
+git --version
+```
+
+Fedora/RHEL instead: `sudo dnf install -y nodejs npm git curl`.
+
+### Run the installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/masonleetompkins/creagent/main/install.sh | bash
