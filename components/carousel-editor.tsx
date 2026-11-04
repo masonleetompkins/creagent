@@ -740,88 +740,6 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
 
       <div className="edgrid work">
         <div>
-          <h2>Slides ({slides.length})</h2>
-          <div className="ced-slides">
-            {slides.map((s, i) => (
-              <button key={s.id} className={`slot ${i === sel ? "sel" : ""}`} onClick={() => setSel(i)}>
-                {s.image_path ? (
-                  <img
-                    className="ced-thumb"
-                    src={`/api/carousels/slides/${s.id}/image`}
-                    alt=""
-                    loading="lazy"
-                  />
-                ) : null}
-                <span className="slottime">{i + 1}</span>
-                <span className="slotmain">
-                  [{s.layout}] {(s.heading || "(no heading)").slice(0, 28)}
-                </span>
-                <span className="slotsub">{s.image_path ? `img: ${s.image_source}` : "no image"}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-            <section className="keycard" style={{ marginTop: 0 }}>
-              <canvas ref={canvasRef} className="preview" />
-              {current ? (
-              <>
-              <div className="row">
-                <button disabled={busy} onClick={() => void exportCurrent()}>Export PNG</button>
-                <button disabled={busy || slides.length === 0} onClick={() => void exportAll()}>Export all</button>
-                <select aria-label="Layout" value={draft.layout} onChange={(e) => setDraft({ ...draft, layout: e.target.value })}>
-                  {LAYOUTS.map((l) => (
-                    <option key={l} value={l}>{l}</option>
-                  ))}
-                </select>
-                <button onClick={() => void move(-1)}>↑</button>
-                <button onClick={() => void move(1)}>↓</button>
-                <button onClick={() => void deleteSlide(current.id)}>Delete</button>
-              </div>
-              <div className="row">
-                <input type="text" aria-label="Heading" placeholder={`Slide ${sel + 1} heading`} value={draft.heading} onChange={(e) => setDraft({ ...draft, heading: e.target.value })} />
-              </div>
-              <div className="row">
-                <textarea aria-label="Body" rows={4} placeholder="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
-              </div>
-              <div className="row">
-                <button className="primary" onClick={() => void saveSlide()}>Save slide</button>
-              </div>
-              </>
-              ) : null}
-            </section>
-          {current ? (
-            <section className="keycard">
-              {(() => {
-            const req = requests
-              .filter((r) => r.slide_id === current.id)
-              .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null;
-            if (!req) return null;
-            if (req.status !== "pending") {
-              return <p className="muted">Image request {req.status}.</p>;
-            }
-            return (
-              <div>
-                <p className="note">Agent requested a generated image: {req.prompt}</p>
-                <div className="row">
-                  <button className="primary" onClick={() => void decideRequest(req.id, "approve")}>
-                    Approve + generate
-                  </button>
-                  <button onClick={() => void decideRequest(req.id, "reject")}>Reject</button>
-                </div>
-              </div>
-            );
-          })()}
-              <h2>Image</h2>
-          <div className="row">
-            <input type="text" aria-label="Image prompt" placeholder="Describe the scene for Muse Image" value={imgPrompt} onChange={(e) => setImgPrompt(e.target.value)} />
-            <button disabled={busy || !imgPrompt.trim()} onClick={() => void runImageJob()}>Generate</button>
-          </div>
-          <div className="row">
-            <input type="file" accept="image/*" aria-label="Upload image" onChange={(e) => { void uploadImage(e.target.files?.[0]); e.target.value = ""; }} />
-          </div>
-            </section>
-          ) : null}
           <section className="keycard">
             <h2>Photo library</h2>
             <p className="muted">Upload once, analyze, reuse across every carousel.</p>
@@ -967,6 +885,90 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             </div>
           ) : null}
             </section>
+        </div>
+        <div>
+          <h2>Slides ({slides.length})</h2>
+          <div className="ced-slides">
+            {slides.map((s, i) => (
+              <button key={s.id} className={`slot ${i === sel ? "sel" : ""}`} onClick={() => setSel(i)}>
+                {s.image_path ? (
+                  <img
+                    className="ced-thumb"
+                    src={`/api/carousels/slides/${s.id}/image`}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : null}
+                <span className="slottime">{i + 1}</span>
+                <span className="slotmain">
+                  [{s.layout}] {(s.heading || "(no heading)").slice(0, 28)}
+                </span>
+                <span className="slotsub">{s.image_path ? `img: ${s.image_source}` : "no image"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+            <section className="keycard" style={{ marginTop: 0 }}>
+              <canvas ref={canvasRef} className="preview" />
+              {current ? (
+              <>
+              <div className="row">
+                <button disabled={busy} onClick={() => void exportCurrent()}>Export PNG</button>
+                <button disabled={busy || slides.length === 0} onClick={() => void exportAll()}>Export all</button>
+                <select aria-label="Layout" value={draft.layout} onChange={(e) => setDraft({ ...draft, layout: e.target.value })}>
+                  {LAYOUTS.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+                <button onClick={() => void move(-1)}>↑</button>
+                <button onClick={() => void move(1)}>↓</button>
+                <button onClick={() => void deleteSlide(current.id)}>Delete</button>
+              </div>
+              <div className="row">
+                <input type="text" aria-label="Heading" placeholder={`Slide ${sel + 1} heading`} value={draft.heading} onChange={(e) => setDraft({ ...draft, heading: e.target.value })} />
+              </div>
+              <div className="row">
+                <textarea aria-label="Body" rows={4} placeholder="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
+              </div>
+              <div className="row">
+                <button className="primary" onClick={() => void saveSlide()}>Save slide</button>
+              </div>
+              </>
+              ) : null}
+            </section>
+          {current ? (
+            <section className="keycard">
+              {(() => {
+            const req = requests
+              .filter((r) => r.slide_id === current.id)
+              .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null;
+            if (!req) return null;
+            if (req.status !== "pending") {
+              return <p className="muted">Image request {req.status}.</p>;
+            }
+            return (
+              <div>
+                <p className="note">Agent requested a generated image: {req.prompt}</p>
+                <div className="row">
+                  <button className="primary" onClick={() => void decideRequest(req.id, "approve")}>
+                    Approve + generate
+                  </button>
+                  <button onClick={() => void decideRequest(req.id, "reject")}>Reject</button>
+                </div>
+              </div>
+            );
+          })()}
+              <h2>Image</h2>
+          <div className="row">
+            <input type="text" aria-label="Image prompt" placeholder="Describe the scene for Muse Image" value={imgPrompt} onChange={(e) => setImgPrompt(e.target.value)} />
+            <button disabled={busy || !imgPrompt.trim()} onClick={() => void runImageJob()}>Generate</button>
+          </div>
+          <div className="row">
+            <input type="file" accept="image/*" aria-label="Upload image" onChange={(e) => { void uploadImage(e.target.files?.[0]); e.target.value = ""; }} />
+          </div>
+            </section>
+          ) : null}
         </div>
       </div>
     </>
