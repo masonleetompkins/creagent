@@ -566,6 +566,16 @@ export const AGENT_TOOLS: ToolDef[] = [
       }),
   },
   {
+    name: "delete_photo",
+    description: "Delete a library photo forever (uploads leave the disk; ingested URLs are hidden and never resurface).",
+    parameters: objParam({ url: S("Photo URL key (http… or local:…)") }, ["url"]),
+    run: async (a) =>
+      safe(async () => {
+        const { deletePhoto } = await import("./photos");
+        return deletePhoto(String(a.url));
+      }),
+  },
+  {
     name: "delete_photo_region",
     description: "Remove a no-text zone by id.",
     parameters: objParam({ regionId: S("Region UUID") }, ["regionId"]),

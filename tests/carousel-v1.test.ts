@@ -108,6 +108,31 @@ describe("photo uploads", () => {
     assert.ok(listPhotos().some((p) => p.url === url && p.source === "upload"));
   });
 
+  it("deletes uploads from disk and hides ingested URLs forever", async () => {
+    const { savePhotoUpload, deletePhoto, listPhotos, readLocalPhoto } = await import("../lib/photos");
+    const { getDb, nowIso } = await import("../lib/db");
+    const u8 = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    const { url } = await savePhotoUpload({
+      name: "gone.jpg",
+      size: u8.length,
+      arrayBuffer: async () => u8.buffer as ArrayBuffer,
+    });
+    assert.ok(readLocalPhoto(url));
+    deletePhoto(url);
+    assert.equal(readLocalPhoto(url), null);
+    assert.ok(!listPhotos().some((p) => p.url === url));
+    // Ingested URL: hidden survives re-derivation from the asset row.
+    const db = getDb();
+    const assetId = "asset-hide-test";
+    db.prepare(
+      `INSERT OR REPLACE INTO assets (id, source, title, metadata, created_at) VALUES (?, 'x', 't', ?, ?)`,
+    ).run(assetId, JSON.stringify({ raw: { image: "https://cdn.example/hide-me.jpg" } }), nowIso());
+    assert.ok(listPhotos(200).some((p) => p.url === "https://cdn.example/hide-me.jpg"));
+    deletePhoto("https://cdn.example/hide-me.jpg");
+    assert.ok(!listPhotos(200).some((p) => p.url === "https://cdn.example/hide-me.jpg"));
+    db.prepare(`DELETE FROM assets WHERE id = ?`).run(assetId);
+  });
+
   it("rejects empty and oversized files", async () => {
     const { savePhotoUpload } = await import("../lib/photos");
     await assert.rejects(

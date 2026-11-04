@@ -527,6 +527,23 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     }
   }
 
+  async function deletePhotoForever(url: string): Promise<void> {
+    if (!window.confirm("Delete this photo from the library forever? It will never come back.")) {
+      return;
+    }
+    try {
+      await readJson(await fetch(`/api/photos?url=${encodeURIComponent(url)}`, { method: "DELETE" }));
+      if (labelUrl === url) {
+        setLabelUrl(null);
+        setDrawing(null);
+      }
+      setNote("Photo deleted forever.");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function deleteLabelRegion(id: string): Promise<void> {
     try {
       await readJson(await fetch(`/api/photos/regions?id=${encodeURIComponent(id)}`, { method: "DELETE" }));
@@ -849,6 +866,14 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
                 >
                   🏷{p.regions.length > 0 ? ` ${p.regions.length}` : ""}
                 </button>
+                <button
+                  className="delbtn"
+                  aria-label="Delete photo forever"
+                  title="Delete forever — it will never come back"
+                  onClick={() => void deletePhotoForever(p.url)}
+                >
+                  ✕
+                </button>
               </div>
             ))}
           </div>
@@ -859,6 +884,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
                 <strong>Label</strong>
                 <span className="muted">{labelPhoto.source}{labelPhoto.tag?.description ? "" : " — not analyzed yet"}</span>
                 <span className="spacer" />
+                <button className="danger" onClick={() => void deletePhotoForever(labelPhoto.url)}>Delete forever</button>
                 <button onClick={() => { setLabelUrl(null); setDrawing(null); }}>Close</button>
               </div>
               <div

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listPhotos } from "@/lib/photos";
+import { deletePhoto, listPhotos } from "@/lib/photos";
 import { updatePhotoTag } from "@/lib/photo-vision";
 import { listRegions } from "@/lib/photo-regions";
 import { getDb } from "@/lib/db";
@@ -63,5 +63,20 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     const message = (error as Error).message;
     const status = message.includes("not found") ? 404 : 500;
     return NextResponse.json({ error: message }, { status });
+  }
+}
+
+// Delete a photo forever: uploads leave the disk, ingested URLs join the
+// hide list so they never resurface.
+export async function DELETE(request: Request): Promise<NextResponse> {
+  const url = new URL(request.url).searchParams.get("url") ?? "";
+  if (!url) return NextResponse.json({ error: "url query is required" }, { status: 400 });
+  try {
+    return NextResponse.json(deletePhoto(url));
+  } catch (error) {
+    return NextResponse.json(
+      { error: `database unavailable: ${(error as Error).message}` },
+      { status: 503 },
+    );
   }
 }

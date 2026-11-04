@@ -1,7 +1,7 @@
 // Photo library: ingested asset URLs plus user uploads. Uploaded files
 // live on disk under ~/.config/creagent/photos and are keyed `local:<file>`.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import { getDb, nowIso } from "./db";
@@ -105,9 +105,39 @@ function collectUrls(value: unknown, depth: number, out: string[]): void {
   }
 }
 
+export function hiddenUrls(): Set<string> {
+  const rows = getDb().prepare(`SELECT url FROM photo_hidden`).all() as Array<{ url: string }>;
+  return new Set(rows.map((r) => r.url));
+}
+
+// Delete a library photo forever: uploads are removed from disk, and the
+// URL joins the hide list so ingested photos never resurface (and the
+// vision scan never re-adds them).
+export function deletePhoto(url: string): { deleted: boolean } {
+  const db = getDb();
+  const existed =
+    (db.prepare(`SELECT 1 FROM photo_tags WHERE url = ?`).get(url) as unknown) !== undefined;
+  const path = localPhotoPath(url);
+  if (path && existsSync(path)) {
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone */
+    }
+  }
+  db.prepare(`DELETE FROM photo_tags WHERE url = ?`).run(url);
+  db.prepare(`DELETE FROM photo_regions WHERE url = ?`).run(url);
+  db.prepare(`INSERT OR IGNORE INTO photo_hidden (url, created_at) VALUES (?, ?)`).run(
+    url,
+    nowIso(),
+  );
+  return { deleted: existed || path !== null };
+}
+
 export function listPhotos(limit = 60): PhotoCandidate[] {
   const out: PhotoCandidate[] = [];
   const seen = new Set<string>();
+  const hidden = hiddenUrls();
   // Uploads first (newest first), then ingested URLs.
   const uploaded = getDb()
     .prepare(
@@ -116,7 +146,7 @@ export function listPhotos(limit = 60): PhotoCandidate[] {
     )
     .all() as Array<{ asset_id: string | null; url: string; created_at: string }>;
   for (const row of uploaded) {
-    if (seen.has(row.url)) continue;
+    if (seen.has(row.url) || hidden.has(row.url)) continue;
     seen.add(row.url);
     out.push({ asset_id: row.asset_id, title: null, source: "upload", url: row.url });
     if (out.length >= limit) return out;
@@ -134,7 +164,7 @@ export function listPhotos(limit = 60): PhotoCandidate[] {
     const urls: string[] = [];
     collectUrls((meta as Record<string, unknown>).raw ?? meta, 4, urls);
     for (const url of urls.slice(0, 3)) {
-      if (seen.has(url)) continue;
+      if (seen.has(url) || hidden.has(url)) continue;
       seen.add(url);
       out.push({ asset_id: row.id, title: row.title, source: row.source, url });
       if (out.length >= limit) return out;

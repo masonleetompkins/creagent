@@ -653,6 +653,24 @@ label {
   cursor: pointer;
 }
 
+.photo .delbtn {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.55);
+  color: #ffb3b3;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+.photo:hover .delbtn,
+.photo:focus-within .delbtn {
+  opacity: 1;
+}
+
 .labelpanel {
   margin-top: 12px;
   padding: 12px;
