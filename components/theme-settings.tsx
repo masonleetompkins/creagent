@@ -82,17 +82,21 @@ export default function ThemeSettings(): React.ReactNode {
   const changeMode = useCallback(
     (next: Mode) => {
       setMode(next);
-      applyTheme(hue, next, flat);
+      setFlat(null);
+      applyTheme(hue, next, null);
     },
-    [hue, flat],
+    [hue],
   );
 
   const changeFlat = useCallback(
     (next: Flat) => {
+      // Black is true dark, white is true light — the swatch owns the mode.
+      const nextMode: Mode = next === "white" ? "light" : "dark";
       setFlat(next);
-      applyTheme(hue, mode, next);
+      setMode(nextMode);
+      applyTheme(hue, nextMode, next);
     },
-    [hue, mode],
+    [hue],
   );
 
   return (
