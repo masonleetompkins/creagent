@@ -1031,7 +1031,7 @@ button:disabled {
   align-items: flex-start;
 }
 .ved-preview {
-  flex: 0 0 320px;
+  flex: 0 0 300px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1039,14 +1039,14 @@ button:disabled {
 .ved-screen {
   position: relative;
   width: 100%;
-  max-height: 52vh;
+  max-height: 42vh;
   margin: 0 auto;
   background: #000;
   border: 1px solid var(--line);
   border-radius: 16px;
   overflow: hidden;
   aspect-ratio: 9 / 16;
-  max-width: calc(52vh * 9 / 16);
+  max-width: calc(42vh * 9 / 16);
 }
 .ved-screen video {
   width: 100%;
