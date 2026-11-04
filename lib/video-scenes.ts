@@ -120,7 +120,7 @@ export function parseSceneJson(text: string): ScenePrompt[] {
 }
 
 export function heuristicScenePrompt(statement: string): string {
-  return `Illustration continuing the narration at this moment: ${statement.slice(0, 220)}`;
+  return `Vertical 9:16 full-frame illustration, composed for a phone screen with the subject clear of the top and bottom thirds, continuing the narration at this moment: ${statement.slice(0, 220)}`;
 }
 
 export async function planScenePrompts(
@@ -146,7 +146,7 @@ ${script ? `\nFULL SCRIPT:\n${script.slice(0, 5000)}\n` : ""}
 STATEMENTS (in order):
 ${roster}
 
-Write one image prompt per statement: a vivid paragraph describing the scene that should fill the screen while those words play. House style is applied automatically — describe content only, never lettering. Respond with ONLY a JSON array, no prose:
+Write one image prompt per statement: a vivid paragraph describing the scene that should fill the screen while those words play. Compose every scene as a vertical 9:16 full-frame illustration for a phone screen, keeping the subject clear of the top and bottom thirds. House style is applied automatically — describe content only, never lettering. Respond with ONLY a JSON array, no prose:
 [{"statement": 1, "prompt": "..."}]`,
         reasoning: { effort: "medium" },
       },

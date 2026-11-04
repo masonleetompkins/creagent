@@ -151,6 +151,11 @@ function WaveCanvas(props: {
   );
 }
 
+// Hyperframes UI is hidden for the demo: story images cover the graphics
+// flow. The render/preview backend stays intact so existing overlays keep
+// working and the UI can return by flipping this flag.
+const SHOW_HF = false;
+
 export default function VideoEditor({
   projectId,
   buildJobId,
@@ -330,7 +335,7 @@ export default function VideoEditor({
       }
       if (
         !window.confirm(
-          `Generate ${statements} anime scene images in your house style and lay them on the Scenes track? This rebuilds any existing scenes.`,
+          `Generate ${statements} full-frame 9:16 story images in your house style and lay them on the Scenes track? This rebuilds any existing scenes.`,
         )
       ) {
         return;
@@ -1565,20 +1570,21 @@ export default function VideoEditor({
                 {g.text}
               </div>
             ))}
-            {activeHf.map((h) =>
-              posters[h.id] ? (
-                <img
-                  key={h.id}
-                  className="ved-hfposter"
-                  src={`/api/hyperframes/poster?hash=${posters[h.id]}`}
-                  alt="Hyperframes overlay preview"
-                />
-              ) : (
-                <div key={h.id} className="ved-hfbadge">
-                  HF overlay — render a preview in the Graphics tab
-                </div>
-              ),
-            )}
+            {SHOW_HF &&
+              activeHf.map((h) =>
+                posters[h.id] ? (
+                  <img
+                    key={h.id}
+                    className="ved-hfposter"
+                    src={`/api/hyperframes/poster?hash=${posters[h.id]}`}
+                    alt="Hyperframes overlay preview"
+                  />
+                ) : (
+                  <div key={h.id} className="ved-hfbadge">
+                    HF overlay — render a preview in the Graphics tab
+                  </div>
+                ),
+              )}
             {!previewClip && !rawPreview && <div className="ved-nosignal">No clip under playhead</div>}
             {rawPreview && <div className="ved-rawbadge">RAW · {rawAssetObj?.filename ?? ""}</div>}
           </div>
@@ -1833,14 +1839,15 @@ export default function VideoEditor({
           )}
           {tab === "graphics" && (
             <div className="ved-gfx">
-              <h3 style={{ marginTop: 0 }}>Auto scenes</h3>
+              <h3 style={{ marginTop: 0 }}>Story images</h3>
               <p className="muted">
-                One anime cutaway per spoken statement, planned from the script and laid on the
-                Scenes track. Uses your carousel house style.
+                One full-frame 9:16 illustration per spoken statement, planned from the
+                script and transcript as a single matching story and laid on the Scenes
+                track. Same generator and house style as carousels.
               </p>
               <div className="row">
                 <button className="primary" disabled={sceneBusy} onClick={() => void autoScenes()}>
-                  Auto-plan scenes
+                  Generate story images
                 </button>
               </div>
               <h3>Text card</h3>
@@ -1885,6 +1892,8 @@ export default function VideoEditor({
                   Add at playhead
                 </button>
               </div>
+              {SHOW_HF && (
+                <>
               <h3>Hyperframes overlay</h3>
               <p className="muted">
                 Paste a standalone composition (transparent background, sized to the project).
@@ -1945,6 +1954,8 @@ export default function VideoEditor({
                     </div>
                   </div>
                 ))}
+                </>
+              )}
               <h3>Text cards</h3>
               <p className="muted">Text cards render on the preview and burn into the export.</p>
               {detail.tracks

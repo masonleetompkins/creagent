@@ -118,6 +118,7 @@ describe("planScenePrompts offline", () => {
   it("falls back to heuristics without a model call", async () => {
     const { heuristicScenePrompt, planScenePrompts } = await import("../lib/video-scenes");
     assert.match(heuristicScenePrompt("Hello there."), /Hello there/);
+    assert.match(heuristicScenePrompt("Hello there."), /9:16/);
     const out = await planScenePrompts("whatever", [
       { index: 0, text: "Hello there.", assetId: "a", startAssetMs: 0, endAssetMs: 1, startMs: 0, durationMs: 1 },
     ], "");

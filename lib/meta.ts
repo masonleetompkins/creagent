@@ -32,6 +32,13 @@ export function textCostUsd(model: string, promptTokens: number, completionToken
 // as of 2026-10-26. Test with a real key before relying on it.
 export const META_IMAGE_MODEL = "muse-image-1.0";
 
+// Verified 2026-11-04: the Model API has NO video generation route (text,
+// image, transcribe, and segmentation only). Muse Video is preview-only
+// inside the muse.ai agent with no public model id or price, so video
+// scenes stay image-based until Meta ships a video endpoint — then set
+// this and teach generateScenes to render clips instead of stills.
+export const META_VIDEO_MODEL: string | null = null;
+
 export function getMetaClient(apiKey: string): OpenAI {
   // Pin the SDK to the platform fetch so proxy env (sandbox) and runtime
   // fetch patches are honored. Elsewhere this is identical to default.
