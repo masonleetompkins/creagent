@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CONTENT_TYPES, PLATFORM_POST_CAPS, PLATFORMS } from "@/lib/content";
+import { CONTENT_TYPES, PLATFORM_POST_CAPS, PLATFORMS, THREAD_KINDS } from "@/lib/content";
 import DraftReview from "./draft-review";
 import {
   approvedBody,
@@ -156,7 +156,7 @@ function slotCap(platformsJson: string): number | null {
 }
 
 function isThreadKind(contentType: string): boolean {
-  return contentType === "thread" || contentType === "article_thread";
+  return THREAD_KINDS.has(contentType);
 }
 
 function fmtTime(iso: string): string {
@@ -1366,7 +1366,7 @@ export default function QueueConsole(): React.ReactNode {
                   : "Review — then Approve above, or Edit / Feedback to revise.";
             const nextStep =
               parsePlatforms(selected.platforms).includes("x") &&
-              (d.kind === "short_post" || d.kind === "thread")
+              (d.kind === "short_post" || isThreadKind(d.kind))
                 ? `${nextStepBase} Reply to early comments — the algorithm's top signal.`
                 : nextStepBase;
             return (

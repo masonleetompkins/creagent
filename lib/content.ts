@@ -14,6 +14,10 @@ export const CONTENT_TYPES = {
 
 export type ContentType = keyof typeof CONTENT_TYPES;
 
+// Kinds that fan out as hook options + thread body (shared by drafting,
+// craft, banking, publishing, and the UI).
+export const THREAD_KINDS: ReadonlySet<string> = new Set(["thread", "article_thread"]);
+
 export function isContentType(value: string): value is ContentType {
   return value in CONTENT_TYPES;
 }
@@ -22,16 +26,23 @@ export function isContentType(value: string): value is ContentType {
 // Shared with the Brain page so the user sees the same instructions.
 export const PLAYBOOK: Record<string, string> = {
   short_post: "Write exactly one standalone post about ONE idea only — if two ideas compete, cut the weaker half. Hard limit 280 characters. Never a thread hook: no numbered parts, no 'thread below', no 'everything interesting' roundup openers. Output only the post, no preamble, no variants.",
-  thread: "Write thread posts 2 through N (6-9 posts total including the hook, which goes above — do NOT write the hook). Number each post, keep each under 280 characters, end with a takeaway or question. Output only the posts.",
-  video_trend: "Write a short-form video script: HOOK (first 2 seconds), 3-5 beats with what to say and show, and a CTA. Keep it under 45 seconds spoken.",
-  video_series: "Write an episode script for a recurring series: cold open that states the series premise in one line, the episode content in beats, and a consistent sign-off.",
-  video_yap: "Write a talking-head script: strong opinion hook, 3 supporting points in conversational spoken language, and a closer. Under 60 seconds spoken.",
+  thread:
+    "Write thread posts 2 through N (6-9 posts total including the hook above — do NOT write the hook). One point per post, each post opening connected to the previous (because / so / then / but / now) — never a list of standalone takes. Number each post like 1/ 2/ 3/, keep each under 280 characters, end with a takeaway or a reply-bait question. Output only the posts, blank line between them.",
+  video_trend:
+    "Write a short-form video script as spoken lines the creator reads to camera, under 45 seconds. Architecture: HOOK in the first 2 seconds (bold claim or open loop — no greeting, no setup); 3-5 beats where each beat pays off a piece of the loop AND opens the next, with [SHOW: what is on screen] per beat; final payoff that lands the hook's promise; one CTA. Cut every line that doesn't earn the next 3 seconds — no throat-clearing, no recaps.",
+  video_series:
+    "Write an episode script for a recurring series as spoken lines. Cold open states the series premise in ONE line (returning viewers nod, new viewers are oriented), then the episode hook. 3-5 beats, each opening connected to the last and each earning the next 3 seconds, with [SHOW: what is on screen] per beat. Payoff, then the consistent sign-off verbatim. Same skeleton every episode, all-new content inside it.",
+  video_yap:
+    "Write a talking-head script as spoken lines, under 60 seconds, in conversational spoken language (contractions, fragments, interruptions — nothing that reads like an essay). Strong opinion hook in 2 seconds; 3 supporting points ordered weakest-to-strongest, each connected to the last with a spoken bridge ('and here's the part nobody mentions'); closer that restates the opinion sharper than the hook. One idea only — cut the weaker half if two compete.",
   carousel:
     "Write a 7-slide carousel as ONE continuous story, not seven statements. Caption first (hook + question + 2-3 hashtags), then SLIDE 1..7 markers, 2 lines or less per slide. Architecture: cover hook that opens a loop; ONE running scene or analogy that carries every slide; each slide opens by connecting to the previous slide (because / so / then / now / but) or calls back to the opening scene; a name-the-concept bridge mid-way ('This is what adults call X' / 'What you just did is called X'); 2-3 applications that map back onto the SAME frame; payoff plus a comment CTA. Never: disconnected slides, a restated definition per slide, or a new unrelated scene per slide. The reader must feel pulled forward — every slide earns the next.",
-  article_blog: "Write a 600-900 word blog post with a headline, short intro, 3-4 headed sections, and a closing takeaway.",
-  article_thread: "Write a long-form thread version of an article: headline post plus 8-12 numbered posts covering intro, key sections, and takeaway.",
-  long_video: "Write a long-form video outline and script: title options, hook, chapter-by-chapter talking points with stories/examples, and an end screen CTA.",
-  clip: "Write a clip package from a long video: the clip's hook line, the 30-60 second segment to cut, on-screen caption text, and a post caption.",
+  article_blog:
+    "Write a 600-900 word blog post. Cold open: first paragraph drops the reader into a scene, number, or claim — no throat-clearing, no 'in today's world'. Thesis by paragraph two. 3-4 headed sections, each opening with its point (no burying), each handing off to the next with a forward reference; stories and concrete examples beat abstractions. Closing takeaway the reader can act on this week, plus one CTA. Sound like the voice exemplars, not a help article.",
+  article_thread:
+    "Write thread posts 2 through N (10-14 posts total including the hook above — do NOT write the hook). Cover intro, key sections in order, and takeaway: one point per post, each post opening connected to the previous (because / so / then / but / now). Number each post like 1/ 2/ 3/, keep each under 280 characters, end with the takeaway plus a reply-bait question. Output only the posts, blank line between them.",
+  long_video:
+    "Write a long-form video package: 3 title options, a 15-second hook (promise + open loop + credibility in one breath), then chapter-by-chapter talking points. Each chapter opens with its own micro-hook, carries one story or example, and ends on an open loop into the next chapter — no recaps, no 'smash subscribe' before the payoff. End screen CTA after the final payoff only.",
+  clip: "Write a clip package from a long video: the clip's hook line (first 2 seconds, must work with sound off), the 30-60 second segment to cut with IN/OUT timecodes and why this moment pops out of context, word-for-word on-screen caption text with EMPHASIS words marked, and a post caption ending in a reply-bait question.",
 };
 
 // Platform guides: distilled from the creator's Social Media Knowledge

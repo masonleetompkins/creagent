@@ -138,6 +138,25 @@ describe("assembleStructure", () => {
     assert.equal(ok?.body, "slides here");
     assert.equal(assembleStructure("carousel", new Map()), null);
   });
+
+  it("treats article_thread exactly like thread", async () => {
+    const { assembleStructure, buildFanoutPrompts } = await import("../lib/drafting");
+    const calls = buildFanoutPrompts("article_thread", CTX);
+    assert.deepEqual(calls.map((c) => c.key), ["hook-0", "hook-1", "hook-2", "thread-body"]);
+    assert.ok(calls[3].prompt.includes("10-14 posts"));
+    const ok = assembleStructure(
+      "article_thread",
+      new Map([
+        ["hook-0", "H"],
+        ["thread-body", "1/ first"],
+      ]),
+    );
+    assert.equal(ok?.structure.layout, "hooks-plus-body");
+    assert.equal(
+      assembleStructure("article_thread", new Map([["hook-0", "H"]])) === null,
+      true,
+    );
+  });
 });
 
 describe("craftBlock", () => {
@@ -145,6 +164,7 @@ describe("craftBlock", () => {
     const { craftBlock } = await import("../lib/social-craft");
     assert.match(craftBlock(["x"], "short_post"), /Replies rule/);
     assert.match(craftBlock(["x"], "thread"), /Replies rule/);
+    assert.match(craftBlock(["x"], "article_thread"), /Replies rule/);
     assert.match(craftBlock(["threads"], "short_post"), /poignant idea/);
     assert.equal(craftBlock(["linkedin"], "short_post"), "");
     assert.equal(craftBlock(["x"], "carousel"), "");
@@ -253,6 +273,67 @@ describe("runFanout news retry", () => {
     ]);
     assert.equal(out.get("a"), "vague 1");
     assert.equal(n, 2); // gen + taste-pass critic (scoreless verdict keeps the original)
+  });
+});
+
+describe("firstOverlongPost", () => {
+  it("finds the first post over the cap, null when all fit", async () => {
+    const { firstOverlongPost } = await import("../lib/drafting");
+    assert.equal(firstOverlongPost("short\n\nfits", 280), null);
+    assert.deepEqual(firstOverlongPost(`ok\n\n${"x".repeat(300)}`, 280), { index: 1, over: 20 });
+    assert.deepEqual(firstOverlongPost("👇".repeat(281), 280), { index: 0, over: 1 });
+  });
+});
+
+describe("runFanout thread-body repair", () => {
+  it("rewrites the body when a post runs over, keeps it when still over", async () => {
+    const { runFanout } = await import("../lib/drafting");
+    const seen: string[] = [];
+    const stub = {
+      responses: {
+        create: async ({ input }: { input: string }) => {
+          seen.push(input);
+          if (input.includes("DRAFT TO SCORE")) return { output_text: "SCORE: 5/5" };
+          if (input.includes("Post 2 was")) return { output_text: "fine\n\nfixed" };
+          return { output_text: `fine\n\n${"x".repeat(300)}` };
+        },
+      },
+    };
+    // @ts-expect-error stub client
+    const out = await runFanout(stub, "thread", [
+      { key: "thread-body", label: "Thread", role: "body" as const, prompt: "P" },
+    ]);
+    assert.equal(out.get("thread-body"), "fine\n\nfixed");
+    assert.ok(seen.some((s) => s.includes("Post 2 was 20 characters over")));
+
+    const stubborn = {
+      responses: {
+        create: async ({ input }: { input: string }) => {
+          if (input.includes("DRAFT TO SCORE")) return { output_text: "SCORE: 5/5" };
+          return { output_text: `fine\n\n${"y".repeat(300)}` };
+        },
+      },
+    };
+    // @ts-expect-error stub client
+    const out2 = await runFanout(stubborn, "thread", [
+      { key: "thread-body", label: "Thread", role: "body" as const, prompt: "P" },
+    ]);
+    assert.ok((out2.get("thread-body") ?? "").includes("yyy"));
+  });
+});
+
+describe("playbook architectures", () => {
+  it("gives every kind connective flow, not disconnected parts", async () => {
+    const { PLAYBOOK } = await import("../lib/content");
+    for (const kind of ["thread", "article_thread"]) {
+      assert.ok(PLAYBOOK[kind].includes("connected to the previous"));
+      assert.ok(PLAYBOOK[kind].includes("1/ 2/"));
+    }
+    assert.ok(PLAYBOOK["video_trend"].includes("open loop"));
+    assert.ok(PLAYBOOK["video_yap"].includes("weakest-to-strongest"));
+    assert.ok(PLAYBOOK["article_blog"].includes("Cold open") && PLAYBOOK["article_blog"].includes("Thesis"));
+    assert.ok(PLAYBOOK["long_video"].includes("micro-hook"));
+    assert.ok(PLAYBOOK["clip"].includes("IN/OUT"));
   });
 });
 

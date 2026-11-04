@@ -237,13 +237,14 @@ describe("runFanout taste pass", () => {
     assert.equal(out2.get("a"), "short original");
   });
 
-  it("skips the critic for body roles", async () => {
+  it("critiques bodies too, without the option cap-drop", async () => {
     const { runFanout } = await import("../lib/drafting");
     let n = 0;
     const stub = {
       responses: {
-        create: async () => {
+        create: async ({ input }: { input: string }) => {
           n += 1;
+          if (input.includes("DRAFT TO SCORE")) return { output_text: "SCORE: 5/5" };
           return { output_text: "body text" };
         },
       },
@@ -253,7 +254,21 @@ describe("runFanout taste pass", () => {
       { key: "thread-body", label: "Thread", role: "body" as const, prompt: "P" },
     ]);
     assert.equal(out.get("thread-body"), "body text");
-    assert.equal(n, 1);
+    assert.equal(n, 2); // gen + critic
+
+    const rewriteStub = {
+      responses: {
+        create: async ({ input }: { input: string }) => {
+          if (input.includes("DRAFT TO SCORE")) return { output_text: "SCORE: 2/5\n\nsharper body" };
+          return { output_text: "flat body" };
+        },
+      },
+    };
+    // @ts-expect-error stub client
+    const out2 = await runFanout(rewriteStub, "article_blog", [
+      { key: "draft", label: "Draft", role: "body" as const, prompt: "P" },
+    ]);
+    assert.equal(out2.get("draft"), "sharper body");
   });
 
   it("retries plain when the endpoint rejects temperature", async () => {

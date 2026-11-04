@@ -3,6 +3,7 @@
 // code: same content type required, pillar match + platform overlap
 // preferred, 72h minimum between auto-placements.
 import { randomUUID } from "node:crypto";
+import { THREAD_KINDS } from "./content";
 import { getDb, nowIso } from "./db";
 import { saveDraft, type DraftStructure } from "./drafting";
 
@@ -77,7 +78,7 @@ export function bankOption(draftId: string, index: number): string {
   const label = typeof opt?.label === "string" ? opt.label : `Option ${index + 1}`;
   // Hooks bank with their thread body so the placed slot stays complete.
   let banked = body;
-  if (draft.content_type === "thread") {
+  if (THREAD_KINDS.has(draft.content_type)) {
     try {
       const threadBody = (JSON.parse(draft.structure as string) as { body?: unknown }).body;
       if (typeof threadBody === "string" && threadBody.trim()) {

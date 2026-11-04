@@ -2,7 +2,7 @@
 // then flip to orange for review.
 import { randomUUID } from "node:crypto";
 import { getVoice } from "./brain";
-import { CONTENT_TYPES, PLAYBOOK, type ContentType } from "./content";
+import { CONTENT_TYPES, PLAYBOOK, THREAD_KINDS, type ContentType } from "./content";
 import { getDb, nowIso } from "./db";
 import { parseStructure } from "./draft-structure";
 import { rulesFor, saveFeedback } from "./feedback";
@@ -190,7 +190,7 @@ export function buildFanoutPrompts(kind: string, ctx: FanoutContext): FanoutCall
       prompt: `${header}\n\n${guideFor(kind)}\nAngle for this variant: ${a.instruction}\nSCOPE: this slot drafts ONE standalone post. The platform rules above may describe threads — ignore all thread advice for this slot; apply only single-post hook rules.${craftSection}${vault}${taste}`,
     }));
   }
-  if (kind === "thread") {
+  if (THREAD_KINDS.has(kind)) {
     const hooks: FanoutCall[] = HOOK_ANGLES.map((a, i) => ({
       key: `hook-${i}`,
       label: a.label,
@@ -238,7 +238,7 @@ export function assembleStructure(
       body: options.map((o, i) => `Option ${i + 1} (${o.label}):\n${o.body}`).join("\n\n---\n\n"),
     };
   }
-  if (kind === "thread") {
+  if (THREAD_KINDS.has(kind)) {
     const options: DraftOption[] = [];
     HOOK_ANGLES.forEach((a, i) => {
       const t = text(`hook-${i}`);
@@ -380,7 +380,7 @@ async function callText(
 // Hard character limits, enforced in code — a "stay under N" line in the
 // prompt is a suggestion the model ignores (probed live: thread-length
 // "short posts"). Counts code points so emoji don't cheat.
-const CHAR_LIMITS: Record<string, number> = { short_post: 280, thread: 280 };
+const CHAR_LIMITS: Record<string, number> = { short_post: 280, thread: 280, article_thread: 280 };
 
 export function overLimit(kind: string, text: string): number {
   const limit = CHAR_LIMITS[kind];
@@ -433,30 +433,58 @@ export async function runFanout(
       else out.delete(c.key);
     }
   }
-  // Taste pass: one critic score per surviving option; 3/5 or below earns
+  // Thread-body repair: each post carries the 280 cap, so an overlong
+  // post earns the whole body one rewrite naming the offender. Accepted
+  // when fixed, kept original when not — bodies can't drop, or the draft
+  // dies (the publish preflight remains the backstop).
+  if (THREAD_KINDS.has(kind) && limit) {
+    for (const c of calls.filter((x) => x.role === "body")) {
+      const body = (out.get(c.key) ?? "").trim();
+      const bad = body ? firstOverlongPost(body, limit) : null;
+      if (!bad) continue;
+      const fixed = (
+        await callText(
+          client,
+          `${c.prompt}\n\nPost ${bad.index + 1} was ${bad.over} characters over the ${limit} limit. Rewrite the FULL thread with every post under ${limit} characters — same posts, same order, tighter. Output only the posts.`,
+        )
+      ).trim();
+      if (fixed && !firstOverlongPost(fixed, limit)) out.set(c.key, fixed);
+    }
+  }
+  // Taste pass: one critic score per surviving piece — options AND bodies;
+  // the longest text is the most important to review. 3/5 or below earns
   // a rewrite. Unparseable verdicts, errors, and over-limit rewrites keep
   // the original — the critic can only improve, never destroy.
   await Promise.all(
-    calls
-      .filter((x) => x.role === "option")
-      .map(async (c) => {
-        const body = (out.get(c.key) ?? "").trim();
-        if (!body) return;
-        let verdict = "";
-        try {
-          verdict = await callText(client, buildCriticPrompt(body), CRITIC_TEMPERATURE);
-        } catch {
-          return;
-        }
-        const score = parseCriticScore(verdict);
-        if (score === null || score > CRITIC_THRESHOLD) return;
-        const revision = extractRevision(verdict);
-        if (!revision) return;
-        if (limit && overLimit(kind, revision) > 0) return;
-        out.set(c.key, revision);
-      }),
+    calls.map(async (c) => {
+      const body = (out.get(c.key) ?? "").trim();
+      if (!body) return;
+      let verdict = "";
+      try {
+        verdict = await callText(client, buildCriticPrompt(body), CRITIC_TEMPERATURE);
+      } catch {
+        return;
+      }
+      const score = parseCriticScore(verdict);
+      if (score === null || score > CRITIC_THRESHOLD) return;
+      const revision = extractRevision(verdict);
+      if (!revision) return;
+      // Caps apply to options only — bodies are multi-post by design.
+      if (c.role === "option" && limit && overLimit(kind, revision) > 0) return;
+      out.set(c.key, revision);
+    }),
   );
   return out;
+}
+
+// First blank-line-separated post over the cap (thread bodies ship split).
+export function firstOverlongPost(text: string, cap: number): { index: number; over: number } | null {
+  const posts = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  for (let i = 0; i < posts.length; i++) {
+    const over = Math.max(0, Array.from(posts[i]).length - cap);
+    if (over > 0) return { index: i, over };
+  }
+  return null;
 }
 
 async function draftOne(slot: SlotRow): Promise<void> {

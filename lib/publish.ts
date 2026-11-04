@@ -5,7 +5,7 @@
 // per-platform receipts land in slot_posts; the slot flips gray only when
 // every platform published. Docs: docs.zernio.com/posts/create-post
 import { randomUUID } from "node:crypto";
-import { PLATFORM_POST_CAPS } from "./content";
+import { PLATFORM_POST_CAPS, THREAD_KINDS } from "./content";
 import { getDb, nowIso } from "./db";
 import { resolveApproval } from "./draft-approval";
 import { clampSelection, parseStructure, splitLegacyOptions } from "./draft-structure";
@@ -31,7 +31,6 @@ export const ZERNIO_SLUGS: Record<string, string> = {
 };
 
 const THREAD_SLUGS = new Set(["twitter", "threads"]);
-const THREAD_KINDS = new Set(["thread", "article_thread"]);
 const TEXT_KINDS = new Set(["short_post", "thread", "article_thread"]);
 
 // Length caps: singles from the shared platform map (their API rejects
