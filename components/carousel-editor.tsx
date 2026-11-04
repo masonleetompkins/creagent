@@ -545,7 +545,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   }
 
   async function exportCurrent(): Promise<void> {
-    if (canvasRef.current && current) download(canvasRef.current, `slide-${sel + 1}.png`);
+    if (canvasRef.current && current) download(canvasRef.current, `slide-${String(sel + 1).padStart(2, "0")}.png`);
   }
 
   async function renderAllSlides(): Promise<HTMLCanvasElement[]> {
@@ -581,7 +581,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     try {
       const rendered = await renderAllSlides();
       for (let i = 0; i < rendered.length; i++) {
-        download(rendered[i], `slide-${i + 1}.png`);
+        download(rendered[i], `slide-${String(i + 1).padStart(2, "0")}.png`);
         await new Promise((r) => setTimeout(r, 400));
       }
       setNote(`Exported ${rendered.length} PNGs.`);
@@ -609,7 +609,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       for (let i = 0; i < rendered.length; i++) {
         const blob = await canvasBlob(rendered[i]);
         const form = new FormData();
-        form.append("file", blob, `slide-${i + 1}.png`);
+        form.append("file", blob, `slide-${String(i + 1).padStart(2, "0")}.png`);
         await readJson(
           await fetch(`/api/slots/${project.slot_id}/attachments`, { method: "POST", body: form }),
         );

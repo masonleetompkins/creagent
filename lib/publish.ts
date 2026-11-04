@@ -324,7 +324,7 @@ function publishTextFor(slot: SlotRow): PublishText | { error: string } {
     if (files.length === 0) {
       return {
         error: IMAGE_KINDS.has(slot.content_type)
-          ? "no slide images attached — open the carousel editor and Attach export first"
+          ? "no slide images attached — open the carousel editor and Attach PNGs to slot first"
           : "no finished video found — Export in the video editor first, or attach a finished file",
       };
     }
