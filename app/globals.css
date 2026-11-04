@@ -707,6 +707,19 @@ label {
   user-select: none;
 }
 
+.modal .labelbox {
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px auto 0;
+}
+
+.modal .labelbox img {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 58vh;
+}
+
 .labelbox img {
   display: block;
   width: 100%;

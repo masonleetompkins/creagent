@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { loadImage, renderSlide } from "@/lib/carousel-render";
 import { BODY_FONTS, HEADING_FONTS, fontById } from "@/lib/fonts";
 
@@ -97,6 +98,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   const [imgTick, setImgTick] = useState(0);
   const [slideRegions, setSlideRegions] = useState<Region[]>([]);
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState({ description: "", tags: "", suggested: "" });
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -145,6 +147,9 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
 
   const current = slides[sel] ?? null;
   const labelPhoto = labelUrl ? (photos.find((p) => p.url === labelUrl) ?? null) : null;
+  const previewPhoto = previewUrl
+    ? (photos.find((p) => p.url === previewUrl) ?? null)
+    : null;
 
   useEffect(() => {
     if (current) {
@@ -152,6 +157,15 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       setImgPrompt(current.image_prompt ?? "");
     }
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!previewUrl && !labelUrl) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") closePhotoModals();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewUrl, labelUrl]);
 
   // Forbidden-text regions for the current slide's photo.
   useEffect(() => {
@@ -480,7 +494,20 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     }
   }
 
+  function openPreview(photo: Photo): void {
+    setPreviewUrl(photo.url);
+    setLabelUrl(null);
+    setDrawing(null);
+  }
+
+  function closePhotoModals(): void {
+    setPreviewUrl(null);
+    setLabelUrl(null);
+    setDrawing(null);
+  }
+
   function openLabel(photo: Photo): void {
+    setPreviewUrl(null);
     setLabelUrl(photo.url);
     let tags = "";
     try {
@@ -529,7 +556,8 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   }
 
   async function finishDrawing(): Promise<void> {
-    if (!drawing || !labelUrl) {
+    const targetUrl = previewUrl ?? labelUrl;
+    if (!drawing || !targetUrl) {
       setDrawing(null);
       return;
     }
@@ -544,7 +572,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         await fetch("/api/photos/regions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: labelUrl, x, y, w, h }),
+          body: JSON.stringify({ url: targetUrl, x, y, w, h }),
         }),
       );
       setNote("No-text zone added — photo layouts keep copy clear of it.");
@@ -795,13 +823,8 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             {photos.map((p) => (
               <div key={`${p.asset_id ?? "upl"}-${p.url}`} className={`photo${p.tag?.description ? " tagged" : ""}`}>
                 <button
-                  disabled={!current}
-                  onClick={() => void usePhoto(p.asset_id, p.url)}
-                  title={
-                    current
-                      ? (p.tag?.description || `${p.source}: ${p.title ?? ""}`)
-                      : "Add a slide first, then click a photo to attach it"
-                  }
+                  onClick={() => openPreview(p)}
+                  title="Open large preview — mark no-text zones, attach to slide"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={photoSrc(p.url)} alt={p.title ?? p.source} loading="lazy" />
@@ -826,94 +849,134 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             ))}
           </div>
           {photos.length === 0 ? <p className="muted">No photos yet — upload some above to build your library.</p> : null}
-          {labelPhoto ? (
-            <div className="labelpanel">
-              <div className="row">
-                <strong>Label</strong>
-                <span className="muted">{labelPhoto.source}{labelPhoto.tag?.description ? "" : " — not analyzed yet"}</span>
-                <span className="spacer" />
-                <button className="danger" onClick={() => void deletePhotoForever(labelPhoto.url)}>Delete forever</button>
-                <button onClick={() => { setLabelUrl(null); setDrawing(null); }}>Close</button>
-              </div>
-              <div
-                ref={labelBoxRef}
-                className="labelbox"
-                onPointerDown={(e) => {
-                  const f = labelFractions(e);
-                  if (f) {
-                    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-                    setDrawing({ x0: f.x, y0: f.y, x1: f.x, y1: f.y });
-                  }
-                }}
-                onPointerMove={(e) => {
-                  if (!drawing) return;
-                  const f = labelFractions(e);
-                  if (f) setDrawing({ ...drawing, x1: f.x, y1: f.y });
-                }}
-                onPointerUp={() => void finishDrawing()}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={photoSrc(labelPhoto.url)} alt="" />
-                {labelPhoto.regions.map((r) => (
-                  <span
-                    key={r.id}
-                    className="region"
-                    style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
-                    title={r.label || "No-text zone"}
-                  />
-                ))}
-                {drawing ? (
-                  <span
-                    className="region drawing"
-                    style={{
-                      left: `${Math.min(drawing.x0, drawing.x1) * 100}%`,
-                      top: `${Math.min(drawing.y0, drawing.y1) * 100}%`,
-                      width: `${Math.abs(drawing.x1 - drawing.x0) * 100}%`,
-                      height: `${Math.abs(drawing.y1 - drawing.y0) * 100}%`,
-                    }}
-                  />
-                ) : null}
-              </div>
-              <p className="muted">Drag on the photo to mark a no-text zone — faces, signage, busy texture.</p>
-              {labelPhoto.regions.length > 0 ? (
-                <div className="row">
-                  {labelPhoto.regions.map((r, i) => (
-                    <button key={r.id} onClick={() => void deleteLabelRegion(r.id)} title="Delete zone">
-                      Zone {i + 1} ✕
-                    </button>
-                  ))}
+          {previewPhoto ? createPortal(
+            <div className="modal-backdrop" onClick={() => closePhotoModals()}>
+              <div className="modal wide" role="dialog" aria-label="Photo preview" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-head">
+                  <h2>Preview</h2>
+                  <button onClick={() => closePhotoModals()}>Close</button>
                 </div>
-              ) : null}
-              <div className="row">
-                <textarea
-                  aria-label="Description"
-                  rows={2}
-                  placeholder="What is in this photo?"
-                  value={labelDraft.description}
-                  onChange={(e) => setLabelDraft({ ...labelDraft, description: e.target.value })}
-                />
+                <p className="muted">
+                  {previewPhoto.source}
+                  {previewPhoto.tag?.description ? "" : " — not analyzed yet"}
+                  {" · "}Drag on the photo to mark a no-text zone — the model keeps copy clear of it.
+                </p>
+                <div
+                  ref={labelBoxRef}
+                  className="labelbox"
+                  onPointerDown={(e) => {
+                    const f = labelFractions(e);
+                    if (f) {
+                      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                      setDrawing({ x0: f.x, y0: f.y, x1: f.x, y1: f.y });
+                    }
+                  }}
+                  onPointerMove={(e) => {
+                    if (!drawing) return;
+                    const f = labelFractions(e);
+                    if (f) setDrawing({ ...drawing, x1: f.x, y1: f.y });
+                  }}
+                  onPointerUp={() => void finishDrawing()}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoSrc(previewPhoto.url)} alt="" />
+                  {previewPhoto.regions.map((r) => (
+                    <span
+                      key={r.id}
+                      className="region"
+                      style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+                      title={r.label || "No-text zone"}
+                    />
+                  ))}
+                  {drawing ? (
+                    <span
+                      className="region drawing"
+                      style={{
+                        left: `${Math.min(drawing.x0, drawing.x1) * 100}%`,
+                        top: `${Math.min(drawing.y0, drawing.y1) * 100}%`,
+                        width: `${Math.abs(drawing.x1 - drawing.x0) * 100}%`,
+                        height: `${Math.abs(drawing.y1 - drawing.y0) * 100}%`,
+                      }}
+                    />
+                  ) : null}
+                </div>
+                {previewPhoto.regions.length > 0 ? (
+                  <div className="row">
+                    {previewPhoto.regions.map((r, i) => (
+                      <button key={r.id} onClick={() => void deleteLabelRegion(r.id)} title="Delete zone">
+                        Zone {i + 1} ✕
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="row">
+                  <button
+                    className="primary"
+                    disabled={!current}
+                    title={current ? "Attach to the current slide" : "Add a slide first"}
+                    onClick={() => {
+                      if (!previewPhoto) return;
+                      const url = previewPhoto.url;
+                      const assetId = previewPhoto.asset_id;
+                      closePhotoModals();
+                      void usePhoto(assetId, url);
+                    }}
+                  >
+                    Attach to slide
+                  </button>
+                  <button className="danger" onClick={() => void deletePhotoForever(previewPhoto.url)}>
+                    Delete forever
+                  </button>
+                </div>
               </div>
-              <div className="row">
-                <input
-                  type="text"
-                  aria-label="Tags"
-                  placeholder="tags, comma separated"
-                  value={labelDraft.tags}
-                  onChange={(e) => setLabelDraft({ ...labelDraft, tags: e.target.value })}
-                />
-              </div>
-              <div className="row">
-                <input
-                  type="text"
-                  aria-label="Suggested use"
-                  placeholder="Suggested use"
-                  value={labelDraft.suggested}
-                  onChange={(e) => setLabelDraft({ ...labelDraft, suggested: e.target.value })}
-                />
-                <button className="primary" onClick={() => void saveLabel()}>Save label</button>
-              </div>
-            </div>
+            </div>,
+            document.body,
           ) : null}
+          {labelPhoto ? createPortal(
+            <div className="modal-backdrop" onClick={() => closePhotoModals()}>
+              <div className="modal" role="dialog" aria-label="Photo analysis" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-head">
+                  <h2>Analysis</h2>
+                  <button onClick={() => closePhotoModals()}>Close</button>
+                </div>
+                <p className="muted">
+                  {labelPhoto.source}
+                  {labelPhoto.tag?.description ? "" : " — not analyzed yet"}
+                  {labelPhoto.regions.length > 0 ? ` · ${labelPhoto.regions.length} no-text zone${labelPhoto.regions.length === 1 ? "" : "s"}` : ""}
+                </p>
+                <div className="row">
+                  <textarea
+                    aria-label="Description"
+                    rows={3}
+                    placeholder="What is in this photo?"
+                    value={labelDraft.description}
+                    onChange={(e) => setLabelDraft({ ...labelDraft, description: e.target.value })}
+                  />
+                </div>
+                <div className="row">
+                  <input
+                    type="text"
+                    aria-label="Tags"
+                    placeholder="tags, comma separated"
+                    value={labelDraft.tags}
+                    onChange={(e) => setLabelDraft({ ...labelDraft, tags: e.target.value })}
+                  />
+                </div>
+                <div className="row">
+                  <input
+                    type="text"
+                    aria-label="Suggested use"
+                    placeholder="Suggested use"
+                    value={labelDraft.suggested}
+                    onChange={(e) => setLabelDraft({ ...labelDraft, suggested: e.target.value })}
+                  />
+                  <button className="primary" onClick={() => void saveLabel()}>Save label</button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          ) : null}
+
             </section>
         </div>
         <div>
