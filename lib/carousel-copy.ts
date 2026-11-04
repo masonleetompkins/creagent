@@ -1,6 +1,8 @@
 // Carousel copy fill: model writes per-slide heading/body/layout as JSON.
 import { getDb } from "./db";
-import { addSlide, deleteSlide, getProject, isLayout, listSlides, updateSlide } from "./carousel";
+import { addSlide, createProject, deleteSlide, getProject, isLayout, listSlides, updateSlide } from "./carousel";
+import { runAutopick } from "./carousel-plan";
+import { approvedBody } from "./draft-structure";
 import { buildDraftContext } from "./drafting";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
@@ -39,10 +41,108 @@ export function extractSlidesJson(text: string): SlideDraft[] {
   });
 }
 
+// Approved-copy -> slides. Each blank-line block becomes one slide; the
+// first line (or first sentence) is the heading, the rest the body.
+// Over-long blocks split into continuation slides so every slide keeps
+// a readable amount of text. Deterministic — the user reviews it.
+export type CopySlide = { heading: string; body: string; layout: string };
+
+const MAX_COPY_SLIDES = 10;
+const MAX_BODY_CHARS = 220;
+
+export function splitApprovedCopy(text: string): CopySlide[] {
+  const blocks = text
+    .split(/\n\s*\n|(?:^|\n)\s*---\s*(?:\n|$)/)
+    .map((b) => b.replace(/^(?:\s*\d+[.)]\s*)/, "").trim())
+    .filter(Boolean);
+  const slides: CopySlide[] = [];
+  const push = (heading: string, body: string): void => {
+    let rest = body.trim();
+    let first = true;
+    while (rest.length > MAX_BODY_CHARS && slides.length < MAX_COPY_SLIDES - 1) {
+      let cut = rest.lastIndexOf(" ", MAX_BODY_CHARS);
+      if (cut < MAX_BODY_CHARS / 2) cut = MAX_BODY_CHARS;
+      slides.push({
+        heading: first ? heading : `${heading} (cont.)`,
+        body: rest.slice(0, cut).trim(),
+        layout: "content",
+      });
+      rest = rest.slice(cut).trim();
+      first = false;
+    }
+    slides.push({ heading: first ? heading : `${heading} (cont.)`, body: rest, layout: "content" });
+  };
+  for (const block of blocks) {
+    if (slides.length >= MAX_COPY_SLIDES) break;
+    const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+    if (lines.length === 1) {
+      const sentence = lines[0].match(/^(.+?[.!?])\s+(.+)$/);
+      if (sentence && sentence[1].length <= 80) push(sentence[1], sentence[2]);
+      else if (lines[0].length <= 80) push(lines[0], "");
+      else push("", lines[0]);
+    } else if (lines[0].length <= 80) {
+      push(lines[0], lines.slice(1).join(" "));
+    } else {
+      push("", block);
+    }
+  }
+  if (slides.length === 0) return [];
+  slides[0].layout = "cover";
+  if (slides.length > 1) slides[slides.length - 1].layout = "cta";
+  return slides.slice(0, MAX_COPY_SLIDES);
+}
+
 export type CarouselCopyResult = {
   slides: number;
   replaced: boolean;
 };
+
+// Image-draft pipeline: approved queue-slot copy -> parsed slides ->
+// auto-matched library photos. Slides the matcher can't place stay
+// photo-less for the user (or a generation request) to finish.
+export type SlotDraftResult = {
+  projectId: string;
+  slides: number;
+  picks: number;
+  unmatched: string[];
+};
+
+export async function draftCarouselFromSlot(slotId: string): Promise<SlotDraftResult> {
+  const db = getDb();
+  const slot = db
+    .prepare(
+      `SELECT id, scheduled_at, content_type, approved_draft_id, approved_option
+       FROM queue_slots WHERE id = ?`,
+    )
+    .get(slotId) as
+    | { id: string; scheduled_at: string; content_type: string; approved_draft_id: string | null; approved_option: number | null }
+    | undefined;
+  if (!slot) throw new Error("slot not found");
+  if (!slot.approved_draft_id) throw new Error("approve the slot copy first");
+  const draft = db
+    .prepare(`SELECT body, structure FROM drafts WHERE id = ?`)
+    .get(slot.approved_draft_id) as { body: string; structure: string | null } | undefined;
+  if (!draft) throw new Error("approved draft is gone");
+  const copy = approvedBody(draft, slot.approved_option).trim();
+  if (!copy) throw new Error("approved copy is empty");
+  const slides = splitApprovedCopy(copy);
+  if (slides.length === 0) throw new Error("could not split the copy into slides");
+  const project = createProject({
+    title: `${slot.content_type} · ${slot.scheduled_at.slice(0, 10)}`,
+    slot_id: slot.id,
+  });
+  for (const s of slides) {
+    addSlide(project.id, { layout: s.layout, heading: s.heading, body: s.body });
+  }
+  const picked = await runAutopick(project.id);
+  return {
+    projectId: project.id,
+    slides: slides.length,
+    picks: picked.picks.length,
+    unmatched: picked.unmatched,
+  };
+}
 
 export async function runCarouselCopy(
   projectId: string,

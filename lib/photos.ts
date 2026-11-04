@@ -1,12 +1,67 @@
-// Ingested-photo picker: scan asset metadata for usable image URLs.
-import { getDb } from "./db";
+// Photo library: ingested asset URLs plus user uploads. Uploaded files
+// live on disk under ~/.config/creagent/photos and are keyed `local:<file>`.
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { extname, join } from "node:path";
+import { getDb, nowIso } from "./db";
 
 export type PhotoCandidate = {
-  asset_id: string;
+  asset_id: string | null;
   title: string | null;
   source: string;
   url: string;
 };
+
+export const LOCAL_PREFIX = "local:";
+
+export function photosDir(): string {
+  const dir =
+    process.env.PHOTOS_DIR ?? join(homedir(), ".config", "creagent", "photos");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
+export function localPhotoPath(url: string): string | null {
+  if (!url.startsWith(LOCAL_PREFIX)) return null;
+  const name = url.slice(LOCAL_PREFIX.length).replace(/[^a-zA-Z0-9.\-]/g, "");
+  if (!name) return null;
+  return join(photosDir(), name);
+}
+
+export function readLocalPhoto(url: string): { data: Buffer; mime: string } | null {
+  const path = localPhotoPath(url);
+  if (!path || !existsSync(path)) return null;
+  const ext = extname(path).toLowerCase();
+  const mime =
+    ext === ".png" ? "image/png"
+    : ext === ".webp" ? "image/webp"
+    : ext === ".gif" ? "image/gif"
+    : "image/jpeg";
+  return { data: readFileSync(path), mime };
+}
+
+export const MAX_PHOTO_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+export async function savePhotoUpload(
+  file: { name: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> },
+  assetId: string | null = null,
+): Promise<{ url: string; filename: string }> {
+  if (file.size === 0) throw new Error("empty file");
+  if (file.size > MAX_PHOTO_UPLOAD_BYTES) throw new Error("file is over the 25MB cap");
+  const buf = Buffer.from(await file.arrayBuffer());
+  const ext = extname(file.name || "").replace(/[^a-zA-Z0-9.]/g, "").slice(0, 10) || ".jpg";
+  const filename = `${randomUUID()}${ext}`;
+  writeFileSync(join(photosDir(), filename), buf);
+  const url = `${LOCAL_PREFIX}${filename}`;
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO photo_tags (id, asset_id, url, description, tags, suggested, created_at)
+       VALUES (?, ?, ?, '', '[]', '', ?)`,
+    )
+    .run(randomUUID(), assetId, url, nowIso());
+  return { url, filename };
+}
 
 const URL_KEYS = new Set([
   "mediaurl",
@@ -51,11 +106,24 @@ function collectUrls(value: unknown, depth: number, out: string[]): void {
 }
 
 export function listPhotos(limit = 60): PhotoCandidate[] {
+  const out: PhotoCandidate[] = [];
+  const seen = new Set<string>();
+  // Uploads first (newest first), then ingested URLs.
+  const uploaded = getDb()
+    .prepare(
+      `SELECT asset_id, url, created_at FROM photo_tags
+       WHERE url LIKE 'local:%' ORDER BY created_at DESC LIMIT 200`,
+    )
+    .all() as Array<{ asset_id: string | null; url: string; created_at: string }>;
+  for (const row of uploaded) {
+    if (seen.has(row.url)) continue;
+    seen.add(row.url);
+    out.push({ asset_id: row.asset_id, title: null, source: "upload", url: row.url });
+    if (out.length >= limit) return out;
+  }
   const rows = getDb()
     .prepare(`SELECT id, source, title, metadata FROM assets ORDER BY created_at DESC LIMIT 200`)
     .all() as Array<{ id: string; source: string; title: string | null; metadata: string }>;
-  const out: PhotoCandidate[] = [];
-  const seen = new Set<string>();
   for (const row of rows) {
     let meta: unknown = {};
     try {

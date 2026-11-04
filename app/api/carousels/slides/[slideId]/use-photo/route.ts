@@ -18,11 +18,20 @@ export async function POST(
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
   const { assetId, url } = body as { assetId?: unknown; url?: unknown };
-  if (typeof assetId !== "string" || typeof url !== "string" || !url.startsWith("http")) {
-    return NextResponse.json({ error: "assetId and http url are required" }, { status: 400 });
+  const okUrl =
+    typeof url === "string" && (url.startsWith("http") || url.startsWith("local:"));
+  if (!okUrl || (assetId !== undefined && assetId !== null && typeof assetId !== "string")) {
+    return NextResponse.json(
+      { error: "url (http or local:) is required; assetId must be a string when present" },
+      { status: 400 },
+    );
   }
   try {
-    const result = await downloadPhotoForSlide(slideId, assetId, url);
+    const result = await downloadPhotoForSlide(
+      slideId,
+      (assetId as string | null | undefined) ?? null,
+      url as string,
+    );
     return NextResponse.json(result);
   } catch (error) {
     const message = (error as Error).message;

@@ -493,12 +493,22 @@ label {
 }
 
 .photo {
+  position: relative;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
-  cursor: pointer;
   background: var(--glass);
+}
+
+.photo > button:first-child {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  cursor: pointer;
 }
 
 .photo img {
@@ -510,6 +520,56 @@ label {
 
 .photo.tagged {
   outline: 2px solid var(--good);
+}
+
+.photo .tagbtn {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+
+.labelpanel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass);
+}
+
+.labelbox {
+  position: relative;
+  max-width: 420px;
+  margin-top: 8px;
+  border-radius: 12px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.labelbox img {
+  display: block;
+  width: 100%;
+  pointer-events: none;
+}
+
+.labelbox .region {
+  position: absolute;
+  border: 2px solid #ff5a5a;
+  background: rgb(255 90 90 / 0.18);
+  border-radius: 4px;
+}
+
+.labelbox .region.drawing {
+  border-style: dashed;
+  background: rgb(255 90 90 / 0.28);
 }
 
 h1 {
@@ -598,7 +658,8 @@ textarea:focus-visible {
   box-shadow: var(--shadow-1);
 }
 
-.toolbar .spacer {
+.toolbar .spacer,
+.row .spacer {
   flex: 1;
 }
 

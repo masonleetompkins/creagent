@@ -26,12 +26,23 @@ type Slide = {
   image_prompt: string | null;
 };
 
+type Region = {
+  id: string;
+  url: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+};
+
 type Photo = {
-  asset_id: string;
+  asset_id: string | null;
   title: string | null;
   source: string;
   url: string;
-  tag: { description: string; tags: string } | null;
+  tag: { description: string; tags: string; suggested: string } | null;
+  regions: Region[];
 };
 
 type GenRequest = {
@@ -58,6 +69,12 @@ async function pollJob(jobId: string): Promise<Record<string, unknown>> {
   }
 }
 
+function photoSrc(url: string): string {
+  return url.startsWith("local:")
+    ? `/api/photos/file?url=${encodeURIComponent(url)}`
+    : url;
+}
+
 export default function CarouselEditor({ projectId }: { projectId: string }): React.ReactNode {
   const [project, setProject] = useState<Project | null>(null);
   const [slides, setSlides] = useState<Slide[]>([]);
@@ -73,7 +90,12 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   const [count, setCount] = useState("");
   const [imgPrompt, setImgPrompt] = useState("");
   const [imgTick, setImgTick] = useState(0);
+  const [slideRegions, setSlideRegions] = useState<Region[]>([]);
+  const [labelUrl, setLabelUrl] = useState<string | null>(null);
+  const [labelDraft, setLabelDraft] = useState({ description: "", tags: "", suggested: "" });
+  const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const labelBoxRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -107,7 +129,8 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   useEffect(() => {
     const onAgent = (e: Event): void => {
       const d = (e as CustomEvent<{ kind?: string; entityId?: string }>).detail;
-      if (d?.kind === "carousel" && d.entityId === projectId) void load();
+      // The dock broadcasts without detail; a targeted event must match.
+      if (!d || (d.kind === "carousel" && d.entityId === projectId)) void load();
     };
     window.addEventListener("creagent:agent-updated", onAgent);
     return () => {
@@ -116,6 +139,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   }, [load, projectId]);
 
   const current = slides[sel] ?? null;
+  const labelPhoto = labelUrl ? (photos.find((p) => p.url === labelUrl) ?? null) : null;
 
   useEffect(() => {
     if (current) {
@@ -123,6 +147,26 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       setImgPrompt(current.image_prompt ?? "");
     }
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Forbidden-text regions for the current slide's photo.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!current?.image_path) {
+        if (!cancelled) setSlideRegions([]);
+        return;
+      }
+      try {
+        const data = await readJson(await fetch(`/api/carousels/slides/${current.id}/regions`));
+        if (!cancelled) setSlideRegions(((data.regions as Region[]) ?? []));
+      } catch {
+        if (!cancelled) setSlideRegions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [current?.id, current?.image_path, imgTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live preview render.
   useEffect(() => {
@@ -153,7 +197,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
         if (cancelled) return;
         await renderSlide(
           canvas,
-          { layout: draft.layout, heading: draft.heading, body: draft.body, image },
+          { layout: draft.layout, heading: draft.heading, body: draft.body, image, regions: slideRegions },
           {
             primary: kit.primary,
             secondary: kit.secondary,
@@ -169,7 +213,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     return () => {
       cancelled = true;
     };
-  }, [current?.id, current?.image_path, draft, kit, imgTick]);
+  }, [current?.id, current?.image_path, draft, kit, imgTick, slideRegions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveKit(): Promise<void> {
     try {
@@ -356,7 +400,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     }
   }
 
-  async function usePhoto(assetId: string, url: string): Promise<void> {
+  async function usePhoto(assetId: string | null, url: string): Promise<void> {
     if (!current) return;
     try {
       await readJson(
@@ -369,6 +413,109 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       setImgTick((t) => t + 1);
       await load();
       setNote("Photo attached.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function uploadLibrary(files: FileList | null): Promise<void> {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      for (const file of Array.from(files).slice(0, 20)) form.append("file", file);
+      const data = await readJson(await fetch("/api/photos/upload", { method: "POST", body: form }));
+      const failures = (data.failures as { name: string; error: string }[]) ?? [];
+      setNote(
+        `Added ${(data.urls as string[]).length} photos to the library.` +
+          (failures.length > 0 ? ` Skipped: ${failures.map((f) => `${f.name} (${f.error})`).join("; ")}` : ""),
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openLabel(photo: Photo): void {
+    setLabelUrl(photo.url);
+    let tags = "";
+    try {
+      const parsed: unknown = JSON.parse(photo.tag?.tags ?? "[]");
+      if (Array.isArray(parsed)) tags = parsed.filter((t): t is string => typeof t === "string").join(", ");
+    } catch { /* keep raw below */ }
+    setLabelDraft({
+      description: photo.tag?.description ?? "",
+      tags: tags || photo.tag?.tags.replace(/["[\]]/g, "") || "",
+      suggested: photo.tag?.suggested ?? "",
+    });
+    setDrawing(null);
+  }
+
+  async function saveLabel(): Promise<void> {
+    if (!labelUrl) return;
+    try {
+      await readJson(
+        await fetch("/api/photos", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: labelUrl,
+            description: labelDraft.description,
+            tags: labelDraft.tags.split(",").map((t) => t.trim()).filter(Boolean),
+            suggested: labelDraft.suggested,
+          }),
+        }),
+      );
+      setNote("Label saved — matching updated.");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  function labelFractions(e: React.PointerEvent): { x: number; y: number } | null {
+    const box = labelBoxRef.current;
+    if (!box) return null;
+    const r = box.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+    };
+  }
+
+  async function finishDrawing(): Promise<void> {
+    if (!drawing || !labelUrl) {
+      setDrawing(null);
+      return;
+    }
+    const x = Math.min(drawing.x0, drawing.x1);
+    const y = Math.min(drawing.y0, drawing.y1);
+    const w = Math.abs(drawing.x1 - drawing.x0);
+    const h = Math.abs(drawing.y1 - drawing.y0);
+    setDrawing(null);
+    if (w < 0.02 || h < 0.02) return;
+    try {
+      await readJson(
+        await fetch("/api/photos/regions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: labelUrl, x, y, w, h }),
+        }),
+      );
+      setNote("No-text zone added — photo layouts keep copy clear of it.");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function deleteLabelRegion(id: string): Promise<void> {
+    try {
+      await readJson(await fetch(`/api/photos/regions?id=${encodeURIComponent(id)}`, { method: "DELETE" }));
+      await load();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -401,28 +548,73 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     if (canvasRef.current && current) download(canvasRef.current, `slide-${sel + 1}.png`);
   }
 
+  async function renderAllSlides(): Promise<HTMLCanvasElement[]> {
+    const out: HTMLCanvasElement[] = [];
+    for (const s of slides) {
+      const image = s.image_path ? await loadImage(`/api/carousels/slides/${s.id}/image`).catch(() => null) : null;
+      let regions: Region[] = [];
+      if (s.image_path) {
+        try {
+          const data = await readJson(await fetch(`/api/carousels/slides/${s.id}/regions`));
+          regions = (data.regions as Region[]) ?? [];
+        } catch { /* render without regions */ }
+      }
+      const off = document.createElement("canvas");
+      await renderSlide(
+        off,
+        { layout: s.layout, heading: s.heading, body: s.body, image, regions },
+        {
+          primary: kit.primary,
+          secondary: kit.secondary,
+          background: kit.background,
+          headingFont: fontById(HEADING_FONTS, kit.heading),
+          bodyFont: fontById(BODY_FONTS, kit.body),
+        },
+      );
+      out.push(off);
+    }
+    return out;
+  }
+
   async function exportAll(): Promise<void> {
     setBusy(true);
     try {
-      const off = document.createElement("canvas");
-      for (let i = 0; i < slides.length; i++) {
-        const s = slides[i];
-        const image = s.image_path ? await loadImage(`/api/carousels/slides/${s.id}/image`).catch(() => null) : null;
-        await renderSlide(
-          off,
-          { layout: s.layout, heading: s.heading, body: s.body, image },
-          {
-            primary: kit.primary,
-            secondary: kit.secondary,
-            background: kit.background,
-            headingFont: fontById(HEADING_FONTS, kit.heading),
-            bodyFont: fontById(BODY_FONTS, kit.body),
-          },
-        );
-        download(off, `slide-${i + 1}.png`);
+      const rendered = await renderAllSlides();
+      for (let i = 0; i < rendered.length; i++) {
+        download(rendered[i], `slide-${i + 1}.png`);
         await new Promise((r) => setTimeout(r, 400));
       }
-      setNote(`Exported ${slides.length} PNGs.`);
+      setNote(`Exported ${rendered.length} PNGs.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("PNG encode failed"))),
+        "image/png",
+      );
+    });
+  }
+
+  async function attachAll(): Promise<void> {
+    if (!project?.slot_id || slides.length === 0) return;
+    setBusy(true);
+    try {
+      const rendered = await renderAllSlides();
+      for (let i = 0; i < rendered.length; i++) {
+        const blob = await canvasBlob(rendered[i]);
+        const form = new FormData();
+        form.append("file", blob, `slide-${i + 1}.png`);
+        await readJson(
+          await fetch(`/api/slots/${project.slot_id}/attachments`, { method: "POST", body: form }),
+        );
+      }
+      setNote(`Attached ${rendered.length} PNGs to the queue slot — they ship on publish.`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -455,6 +647,15 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
           </select>
           <button className="primary" onClick={() => void saveKit()}>Save kit</button>
         </div>
+        {project.slot_id ? (
+          <div className="row">
+            <a href="/queue">← Queue</a>
+            <span className="muted">Linked slot {project.slot_id.slice(0, 8)}</span>
+            <button disabled={busy || slides.length === 0} onClick={() => void attachAll()}>
+              Attach PNGs to slot
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <div className="toolbar">
@@ -571,27 +772,132 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             <input type="file" accept="image/*" aria-label="Upload image" onChange={(e) => { void uploadImage(e.target.files?.[0]); e.target.value = ""; }} />
           </div>
           <div className="row">
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              aria-label="Upload library photos"
+              disabled={busy}
+              onChange={(e) => { void uploadLibrary(e.target.files); e.target.value = ""; }}
+            />
+          </div>
+          <div className="row">
             <button disabled={busy} onClick={() => void runAgentJob("/api/photos/scan", {}, "Photo scan")}>
               Analyze photos
             </button>
             <span className="muted">
-              {photos.filter((p) => p.tag).length}/{photos.length} analyzed
+              {photos.filter((p) => p.tag?.description).length}/{photos.length} analyzed
             </span>
           </div>
           <div className="photogrid">
             {photos.map((p) => (
-              <button
-                key={`${p.asset_id}-${p.url}`}
-                className={`photo${p.tag ? " tagged" : ""}`}
-                onClick={() => void usePhoto(p.asset_id, p.url)}
-                title={p.tag ? p.tag.description : `${p.source}: ${p.title ?? ""}`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt={p.title ?? p.source} loading="lazy" />
-              </button>
+              <div key={`${p.asset_id ?? "upl"}-${p.url}`} className={`photo${p.tag?.description ? " tagged" : ""}`}>
+                <button
+                  onClick={() => void usePhoto(p.asset_id, p.url)}
+                  title={p.tag?.description || `${p.source}: ${p.title ?? ""}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoSrc(p.url)} alt={p.title ?? p.source} loading="lazy" />
+                </button>
+                <button
+                  className="tagbtn"
+                  aria-label="Edit label and no-text zones"
+                  title={p.tag?.description || "Label this photo"}
+                  onClick={() => openLabel(p)}
+                >
+                  🏷{p.regions.length > 0 ? ` ${p.regions.length}` : ""}
+                </button>
+              </div>
             ))}
           </div>
-          {photos.length === 0 ? <p className="muted">No ingested photos yet — ingest content with images first.</p> : null}
+          {photos.length === 0 ? <p className="muted">No photos yet — upload some or ingest content with images.</p> : null}
+          {labelPhoto ? (
+            <div className="labelpanel">
+              <div className="row">
+                <strong>Label</strong>
+                <span className="muted">{labelPhoto.source}{labelPhoto.tag?.description ? "" : " — not analyzed yet"}</span>
+                <span className="spacer" />
+                <button onClick={() => { setLabelUrl(null); setDrawing(null); }}>Close</button>
+              </div>
+              <div
+                ref={labelBoxRef}
+                className="labelbox"
+                onPointerDown={(e) => {
+                  const f = labelFractions(e);
+                  if (f) {
+                    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                    setDrawing({ x0: f.x, y0: f.y, x1: f.x, y1: f.y });
+                  }
+                }}
+                onPointerMove={(e) => {
+                  if (!drawing) return;
+                  const f = labelFractions(e);
+                  if (f) setDrawing({ ...drawing, x1: f.x, y1: f.y });
+                }}
+                onPointerUp={() => void finishDrawing()}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={photoSrc(labelPhoto.url)} alt="" />
+                {labelPhoto.regions.map((r) => (
+                  <span
+                    key={r.id}
+                    className="region"
+                    style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+                    title={r.label || "No-text zone"}
+                  />
+                ))}
+                {drawing ? (
+                  <span
+                    className="region drawing"
+                    style={{
+                      left: `${Math.min(drawing.x0, drawing.x1) * 100}%`,
+                      top: `${Math.min(drawing.y0, drawing.y1) * 100}%`,
+                      width: `${Math.abs(drawing.x1 - drawing.x0) * 100}%`,
+                      height: `${Math.abs(drawing.y1 - drawing.y0) * 100}%`,
+                    }}
+                  />
+                ) : null}
+              </div>
+              <p className="muted">Drag on the photo to mark a no-text zone — faces, signage, busy texture.</p>
+              {labelPhoto.regions.length > 0 ? (
+                <div className="row">
+                  {labelPhoto.regions.map((r, i) => (
+                    <button key={r.id} onClick={() => void deleteLabelRegion(r.id)} title="Delete zone">
+                      Zone {i + 1} ✕
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="row">
+                <textarea
+                  aria-label="Description"
+                  rows={2}
+                  placeholder="What is in this photo?"
+                  value={labelDraft.description}
+                  onChange={(e) => setLabelDraft({ ...labelDraft, description: e.target.value })}
+                />
+              </div>
+              <div className="row">
+                <input
+                  type="text"
+                  aria-label="Tags"
+                  placeholder="tags, comma separated"
+                  value={labelDraft.tags}
+                  onChange={(e) => setLabelDraft({ ...labelDraft, tags: e.target.value })}
+                />
+              </div>
+              <div className="row">
+                <input
+                  type="text"
+                  aria-label="Suggested use"
+                  placeholder="Suggested use"
+                  value={labelDraft.suggested}
+                  onChange={(e) => setLabelDraft({ ...labelDraft, suggested: e.target.value })}
+                />
+                <button className="primary" onClick={() => void saveLabel()}>Save label</button>
+              </div>
+            </div>
+          ) : null}
             </section>
           ) : null}
         </div>

@@ -513,6 +513,67 @@ export const AGENT_TOOLS: ToolDef[] = [
       }),
   },
   {
+    name: "update_photo_tag",
+    description: "Correct a library photo's label (description/tags/suggested use); re-embeds so auto-pick matches the correction.",
+    parameters: objParam({
+      url: S("Photo URL key (http… or local:…)"),
+      description: S("Optional corrected description"),
+      tags: { type: "array", items: { type: "string" }, description: "Optional corrected tags" },
+      suggested: S("Optional corrected suggested use"),
+    }, ["url"]),
+    run: async (a) =>
+      safe(async () => {
+        const { updatePhotoTag } = await import("./photo-vision");
+        return updatePhotoTag(String(a.url), {
+          description: typeof a.description === "string" ? a.description : undefined,
+          tags: Array.isArray(a.tags) ? a.tags.filter((t): t is string => typeof t === "string") : undefined,
+          suggested: typeof a.suggested === "string" ? a.suggested : undefined,
+        });
+      }),
+  },
+  {
+    name: "add_photo_region",
+    description: "Mark a no-text zone on a library photo (fractions 0-1); photo layouts keep copy clear of it.",
+    parameters: objParam({
+      url: S("Photo URL key (http… or local:…)"),
+      x: N("Left edge, 0-1"),
+      y: N("Top edge, 0-1"),
+      w: N("Width, 0-1"),
+      h: N("Height, 0-1"),
+      label: S("Optional label, e.g. face"),
+    }, ["url", "x", "y", "w", "h"]),
+    run: async (a) =>
+      safe(async () => {
+        const { addRegion } = await import("./photo-regions");
+        return addRegion(String(a.url), {
+          x: num(a.x, "x"), y: num(a.y, "y"), w: num(a.w, "w"), h: num(a.h, "h"),
+          label: typeof a.label === "string" ? a.label : undefined,
+        });
+      }),
+  },
+  {
+    name: "delete_photo_region",
+    description: "Remove a no-text zone by id.",
+    parameters: objParam({ regionId: S("Region UUID") }, ["regionId"]),
+    run: async (a) =>
+      safe(async () => {
+        const { deleteRegion } = await import("./photo-regions");
+        const ok = deleteRegion(uuid(a.regionId, "regionId"));
+        if (!ok) throw new Error("region not found");
+        return { ok };
+      }),
+  },
+  {
+    name: "carousel_from_slot",
+    description: "Build a carousel image draft from a queue slot's approved copy: parses slides, auto-matches library photos.",
+    parameters: objParam({ slotId: S("Queue slot UUID") }, ["slotId"]),
+    run: async (a) =>
+      safe(async () => {
+        const { draftCarouselFromSlot } = await import("./carousel-copy");
+        return draftCarouselFromSlot(uuid(a.slotId, "slotId"));
+      }),
+  },
+  {
     name: "list_video_projects",
     description: "List video projects with track counts.",
     parameters: objParam({}),

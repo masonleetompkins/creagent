@@ -10,6 +10,20 @@ import { fetchWithRetry } from "./fetch-retry";
 import { setRequestStatus } from "./gen-requests";
 import { loadKeys } from "./keys";
 import { META_IMAGE_MODEL, getMetaClient } from "./meta";
+import { LOCAL_PREFIX, listPhotos, readLocalPhoto } from "./photos";
+
+// The library photo behind a slide's image, if it came from one (rather
+// than a generation or a direct upload). Used to fetch no-text regions.
+export function slidePhotoUrl(slide: { image_source: string | null }): string | null {
+  const source = slide.image_source ?? "";
+  if (source.startsWith("photo:")) return source.slice("photo:".length);
+  if (source.startsWith("asset:")) {
+    const assetId = source.slice("asset:".length);
+    return listPhotos(200).find((p) => p.asset_id === assetId)?.url ?? null;
+  }
+  if (source.startsWith(LOCAL_PREFIX)) return source;
+  return null;
+}
 
 export const MAX_CAROUSEL_IMAGE_BYTES = 25 * 1024 * 1024;
 
@@ -96,17 +110,31 @@ export async function runCarouselImage(
 
 export async function downloadPhotoForSlide(
   slideId: string,
-  assetId: string,
+  assetId: string | null,
   url: string,
 ): Promise<{ path: string }> {
   const slide = getSlide(slideId);
   if (!slide) throw new Error("slide not found");
-  const asset = getDb().prepare(`SELECT id FROM assets WHERE id = ?`).get(assetId);
-  if (!asset) throw new Error("asset not found");
-  const { data, contentType } = await fetchBytes(url, MAX_CAROUSEL_IMAGE_BYTES);
+  if (assetId) {
+    const asset = getDb().prepare(`SELECT id FROM assets WHERE id = ?`).get(assetId);
+    if (!asset) throw new Error("asset not found");
+  }
+  let data: Buffer;
+  let contentType: string | null;
+  if (url.startsWith(LOCAL_PREFIX)) {
+    const hit = readLocalPhoto(url);
+    if (!hit) throw new Error("uploaded photo is gone from disk");
+    data = hit.data;
+    contentType = hit.mime;
+  } else {
+    ({ data, contentType } = await fetchBytes(url, MAX_CAROUSEL_IMAGE_BYTES));
+  }
   const filename = `${slideId}${extFor(contentType, url)}`;
   await writeFile(join(carouselImagesDir(), filename), data);
-  updateSlide(slideId, { image_path: filename, image_source: `asset:${assetId}` });
+  updateSlide(slideId, {
+    image_path: filename,
+    image_source: assetId ? `asset:${assetId}` : `photo:${url}`,
+  });
   return { path: filename };
 }
 

@@ -13,6 +13,14 @@ export const dynamic = "force-dynamic";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const FONTS = new Set([
+  "avenir-black",
+  "avenir-heavy",
+  "avenir-bold",
+  "avenir-demi",
+  "avenir-regular",
+  "avenir-medium",
+  "avenir-light",
+  "avenir-ultralight",
   "system-black",
   "system",
   "arial-black",

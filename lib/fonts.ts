@@ -10,6 +10,10 @@ export type FontDef = {
 };
 
 export const HEADING_FONTS: FontDef[] = [
+  { id: "avenir-black", label: "Avenir Next Black", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "900" },
+  { id: "avenir-heavy", label: "Avenir Next Heavy", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "800" },
+  { id: "avenir-bold", label: "Avenir Next Bold", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "700" },
+  { id: "avenir-demi", label: "Avenir Next Demi", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "600" },
   { id: "system-black", label: "System Black", face: "System Black", stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", weight: "900" },
   { id: "arial-black", label: "Arial Black", face: "Arial Black", stack: "'Arial Black', 'Arial Bold', sans-serif", weight: "900" },
   { id: "archivo-black", label: "Archivo Black", face: "Archivo Black", stack: "'Archivo Black', sans-serif", weight: "400", css: "Archivo+Black" },
@@ -21,6 +25,10 @@ export const HEADING_FONTS: FontDef[] = [
 ];
 
 export const BODY_FONTS: FontDef[] = [
+  { id: "avenir-regular", label: "Avenir Next Regular", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "500" },
+  { id: "avenir-medium", label: "Avenir Next Medium", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "500" },
+  { id: "avenir-light", label: "Avenir Next Light", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "300" },
+  { id: "avenir-ultralight", label: "Avenir Next Ultralight", face: "Avenir Next", stack: "'Avenir Next', 'Avenir', 'Century Gothic', sans-serif", weight: "200" },
   { id: "system", label: "System", face: "System", stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", weight: "400" },
   { id: "helvetica", label: "Helvetica / Arial", face: "Helvetica", stack: "'Helvetica Neue', Arial, sans-serif", weight: "400" },
   { id: "georgia", label: "Georgia", face: "Georgia", stack: "Georgia, serif", weight: "400" },

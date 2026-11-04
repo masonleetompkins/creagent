@@ -69,7 +69,7 @@ export async function runAutopick(
         best = { url: photo.url, asset_id: photo.asset_id, score };
       }
     }
-    if (!best || best.score < threshold || !best.asset_id) {
+    if (!best || best.score < threshold) {
       out.unmatched.push(slide.id);
       continue;
     }

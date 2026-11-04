@@ -6,7 +6,7 @@ import { embed, vectorToBlob } from "./embeddings";
 import { fetchWithRetry } from "./fetch-retry";
 import { loadKeys } from "./keys";
 import { getMetaClient, metaTextModel } from "./meta";
-import { listPhotos } from "./photos";
+import { LOCAL_PREFIX, listPhotos, readLocalPhoto } from "./photos";
 
 export const MAX_VISION_BYTES = 4 * 1024 * 1024;
 
@@ -101,23 +101,28 @@ export type PhotoScanResult = {
 export async function runPhotoScan(limit = 30): Promise<PhotoScanResult> {
   const db = getDb();
   const out: PhotoScanResult = { tagged: 0, skipped: 0, failures: [] };
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO photo_tags (id, asset_id, url, description, tags, suggested, embedding, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  const upsert = db.prepare(
+    `INSERT INTO photo_tags (id, asset_id, url, description, tags, suggested, embedding, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(url) DO UPDATE SET description = excluded.description, tags = excluded.tags,
+       suggested = excluded.suggested, embedding = excluded.embedding`,
   );
   for (const photo of listPhotos(limit)) {
     const existing = db
-      .prepare(`SELECT id FROM photo_tags WHERE url = ?`)
-      .get(photo.url) as { id: string } | undefined;
-    if (existing) {
+      .prepare(`SELECT id, description FROM photo_tags WHERE url = ?`)
+      .get(photo.url) as { id: string; description: string } | undefined;
+    if (existing && existing.description) {
       out.skipped++;
       continue;
     }
     try {
-      const { data, mime } = await downloadCapped(photo.url);
+      const { data, mime } = photo.url.startsWith(LOCAL_PREFIX)
+        ? readLocalPhotoOrThrow(photo.url)
+        : await downloadCapped(photo.url);
+      if (data.length > MAX_VISION_BYTES) throw new Error("image too large for vision");
       const desc = await describePhoto(data, mime);
       const vec = await embed(`${desc.description}\n${desc.tags.join(", ")}\n${desc.suggested}`);
-      insert.run(
+      upsert.run(
         randomUUID(), photo.asset_id, photo.url, desc.description,
         JSON.stringify(desc.tags), desc.suggested, vectorToBlob(vec), nowIso(),
       );
@@ -130,4 +135,31 @@ export async function runPhotoScan(limit = 30): Promise<PhotoScanResult> {
     }
   }
   return out;
+}
+
+function readLocalPhotoOrThrow(url: string): { data: Buffer; mime: string } {
+  const hit = readLocalPhoto(url);
+  if (!hit) throw new Error("uploaded photo is gone from disk");
+  return hit;
+}
+
+// User-corrected labels: update text, re-embed so autopick matches the
+// correction, return the row. Throws when the photo was never scanned.
+export async function updatePhotoTag(
+  url: string,
+  edit: { description?: string; tags?: string[]; suggested?: string },
+): Promise<{ url: string; description: string; tags: string[]; suggested: string }> {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT description, tags, suggested FROM photo_tags WHERE url = ?`)
+    .get(url) as { description: string; tags: string; suggested: string } | undefined;
+  if (!row) throw new Error("photo not found — analyze it first");
+  const description = (edit.description ?? row.description).trim().slice(0, 1000);
+  const tags = edit.tags ?? JSON.parse(row.tags);
+  const suggested = (edit.suggested ?? row.suggested).slice(0, 500);
+  const vec = await embed(`${description}\n${tags.join(", ")}\n${suggested}`);
+  db.prepare(
+    `UPDATE photo_tags SET description = ?, tags = ?, suggested = ?, embedding = ? WHERE url = ?`,
+  ).run(description, JSON.stringify(tags.slice(0, 12)), suggested, vectorToBlob(vec), url);
+  return { url, description, tags: tags.slice(0, 12), suggested };
 }

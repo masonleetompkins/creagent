@@ -726,8 +726,27 @@ export default function QueueConsole(): React.ReactNode {
     }
   }
 
+  async function imageDraft(slot: Slot): Promise<void> {
+    try {
+      setBusy(true);
+      const data = await readJson(await fetch(`/api/slots/${slot.id}/carousel-draft`, { method: "POST" }));
+      window.location.href = `/carousels/${(data as { projectId: string }).projectId}`;
+    } catch (e) {
+      setBusy(false);
+      setError((e as Error).message);
+    }
+  }
+
   async function openCarousel(slot: Slot): Promise<void> {
     try {
+      const list = await readJson(await fetch("/api/carousels"));
+      const existing = ((list.projects ?? []) as { id: string; slot_id: string | null }[]).find(
+        (p) => p.slot_id === slot.id,
+      );
+      if (existing) {
+        window.location.href = `/carousels/${existing.id}`;
+        return;
+      }
       const data = await readJson(
         await fetch("/api/carousels", {
           method: "POST",
@@ -1235,6 +1254,16 @@ export default function QueueConsole(): React.ReactNode {
             ) : null}
             {selected.content_type === "carousel" ? (
               <button onClick={() => void openCarousel(selected)}>Carousel</button>
+            ) : null}
+            {selected.content_type === "carousel" && selected.approved_draft_id ? (
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() => void imageDraft(selected)}
+                title="Build slides from the approved copy and match library photos"
+              >
+                Image draft
+              </button>
             ) : null}
             <button onClick={() => void removeSlot(selected.id)}>Delete</button>
             <button onClick={() => setSelected(null)}>Close</button>

@@ -4,12 +4,28 @@ import { ensureFont, type FontDef } from "./fonts";
 export const SLIDE_W = 1080;
 export const SLIDE_H = 1350;
 
+export type RenderRegion = { x: number; y: number; w: number; h: number };
+
 export type RenderSlide = {
   layout: string;
   heading: string;
   body: string;
   image: HTMLImageElement | null;
+  // Forbidden-text regions (photo fractions 0-1); kept in sync with
+  // lib/photo-regions.ts clearBand.
+  regions?: RenderRegion[];
 };
+
+// Highest bottom-up band of fractional height bandH whose vertical span
+// overlaps no region. Mirrors server-side clearBand.
+export function bandTopClearOf(regions: RenderRegion[], bandH: number): number {
+  const h = Math.min(Math.max(bandH, 0.1), 0.9);
+  for (let top = 1 - h; top >= -1e-9; top -= 0.05) {
+    const t = Math.max(0, Math.round(top * 1000) / 1000);
+    if (!regions.some((r) => t < r.y + r.h && t + h > r.y)) return t;
+  }
+  return 1 - h;
+}
 
 export type RenderKit = {
   primary: string;
@@ -94,18 +110,21 @@ export async function renderSlide(
 
   if (slide.layout === "photo" && slide.image) {
     coverImage(ctx, slide.image, 0, 0, W, SLIDE_H);
-    const scrim = ctx.createLinearGradient(0, SLIDE_H * 0.35, 0, SLIDE_H);
-    scrim.addColorStop(0, "rgba(0,0,0,0)");
-    scrim.addColorStop(1, "rgba(0,0,0,0.72)");
-    ctx.fillStyle = scrim;
-    ctx.fillRect(0, 0, W, SLIDE_H);
-    ctx.fillStyle = "#ffffff";
     ctx.font = `${kit.headingFont.weight} 88px ${kit.headingFont.stack}`;
     const hLines = wrap(ctx, heading || " ", W - M * 2, 4);
     ctx.font = `400 42px ${kit.bodyFont.stack}`;
     const bLines = wrap(ctx, body, W - M * 2, 6);
     const blockH = hLines.length * 104 + bLines.length * 54 + 24;
-    let cy = SLIDE_H - M - blockH;
+    const bandTop = bandTopClearOf(slide.regions ?? [], (blockH + M * 2) / SLIDE_H);
+    const bandTopPx = bandTop * SLIDE_H;
+    const bandBottomPx = Math.min(SLIDE_H, bandTopPx + blockH + M * 2);
+    const scrim = ctx.createLinearGradient(0, Math.max(0, bandTopPx - 220), 0, bandBottomPx);
+    scrim.addColorStop(0, "rgba(0,0,0,0)");
+    scrim.addColorStop(1, "rgba(0,0,0,0.72)");
+    ctx.fillStyle = scrim;
+    ctx.fillRect(0, Math.max(0, bandTopPx - 220), W, bandBottomPx - Math.max(0, bandTopPx - 220));
+    ctx.fillStyle = "#ffffff";
+    let cy = bandTopPx + M;
     ctx.font = `${kit.headingFont.weight} 88px ${kit.headingFont.stack}`;
     cy = drawLines(ctx, hLines, M, cy, 104, "left");
     ctx.font = `400 42px ${kit.bodyFont.stack}`;
