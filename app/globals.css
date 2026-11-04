@@ -2201,9 +2201,30 @@ a.asset-chip:hover {
 .edgrid.work > div:first-child,
 .edgrid.work > div:last-child {
   min-height: 0;
-  max-height: calc(100dvh - 420px);
+  height: calc(100dvh - 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+.edgrid.work > div:first-child > section,
+.edgrid.work > div:last-child > section:first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+.edgrid.work > div:last-child > section + section {
+  flex: none;
+  min-height: 0;
+  max-height: 45%;
+  margin: 0;
+  overflow-y: auto;
+}
+/* When the Image card is present the slides card shrinks — keep the canvas inside it. */
+.edgrid.work > div:last-child:has(> section + section) canvas.preview {
+  max-height: calc(100dvh - 640px);
 }
 .ced-slides {
   display: flex;
@@ -2348,7 +2369,13 @@ button.danger:hover:not(:disabled) {
   .edgrid.work > div:first-child,
   .edgrid.work > div:last-child {
     max-height: none;
+    height: auto;
+    display: block;
     overflow-y: visible;
+  }
+  .edgrid.work > div:last-child > section + section {
+    max-height: none;
+    margin-top: 16px;
   }
 }
 
