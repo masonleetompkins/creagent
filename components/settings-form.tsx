@@ -62,6 +62,11 @@ export default function SettingsForm(): React.ReactNode {
   }, []);
 
   async function save(id: string): Promise<void> {
+    const value = inputs[id] ?? "";
+    const clearing = !value.trim();
+    if (clearing && !window.confirm(`Clear the stored ${id} key? AI features using it will stop working.`)) {
+      return;
+    }
     setBusy((b) => ({ ...b, [id]: true }));
     setNotes((n) => ({ ...n, [id]: null }));
     try {
@@ -69,7 +74,7 @@ export default function SettingsForm(): React.ReactNode {
         await fetch("/api/keys", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider: id, key: inputs[id] ?? "" }),
+          body: JSON.stringify({ provider: id, key: value, clear: clearing || undefined }),
         }),
       );
       setProviders((ps) =>

@@ -154,13 +154,16 @@ export function planExport(projectId: string): ExportPlan {
             continue;
           }
           if (typeof p.text === "string" && p.text.trim()) {
+            const color = typeof p.color === "string" ? p.color : "white";
+            const fontsize = typeof p.fontsize === "number" ? p.fontsize : 72;
+            const yPct = typeof p.y_pct === "number" ? p.y_pct : 12;
             graphics.push({
               start_ms: c.start_ms,
               end_ms: c.start_ms + c.duration_ms,
               text: p.text.slice(0, 500),
-              y_pct: typeof p.y_pct === "number" ? p.y_pct : 12,
-              fontsize: typeof p.fontsize === "number" ? p.fontsize : 72,
-              color: typeof p.color === "string" ? p.color : "white",
+              y_pct: yPct >= 0 && yPct <= 100 ? yPct : 12,
+              fontsize: fontsize >= 8 && fontsize <= 400 ? Math.round(fontsize) : 72,
+              color: isDrawtextColor(color) ? color : "white",
               box: p.box !== false,
             });
           }
@@ -315,6 +318,16 @@ function escDrawtext(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, " ");
 }
 
+// Named colors / #rrggbb[aa] with optional @alpha — anything else falls
+// back to white so a hostile payload can't inject filter options.
+export function isDrawtextColor(value: string): boolean {
+  return /^(#[0-9a-f]{6}([0-9a-f]{2})?|[a-z]{3,20})(@(0(\.\d+)?|1(\.0)?))?$/i.test(value.trim());
+}
+
+function escFilterPath(path: string): string {
+  return path.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/:/g, "\\:");
+}
+
 export type BuiltExport = { args: string[]; inputCount: number; filter: string };
 
 export function buildFfmpegArgs(
@@ -327,6 +340,10 @@ export function buildFfmpegArgs(
     headingFace?: string;
     captionFace?: string;
     hyperframes?: { path: string; start_ms: number; end_ms: number }[];
+    // Staged card-text files, aligned with plan.graphics. When present the
+    // text is read from disk (apostrophes, %, emoji all safe); otherwise the
+    // text is inlined with escaping (legacy path, kept for tests).
+    graphicTexts?: (string | null)[];
   },
 ): BuiltExport {
   const burn = options?.burnCaptions !== false && srtPath !== null && plan.captions.length > 0;
@@ -417,10 +434,16 @@ export function buildFfmpegArgs(
       ? `font='${options.headingFace.replace(/'/g, "\\'")}':`
       : "";
   for (const g of plan.graphics) {
-    const out = `[vgfx${gidx++}]`;
+    const out = `[vgfx${gidx}]`;
+    const staged = options?.graphicTexts?.[gidx] ?? null;
+    gidx++;
     const y = `(h-text_h)*${(g.y_pct / 100).toFixed(3)}`;
+    const textArg =
+      staged !== null
+        ? `textfile='${escFilterPath(staged)}':expansion=none`
+        : `text='${escDrawtext(g.text)}'`;
     filters.push(
-      `${vcur}drawtext=${gfxFont}text='${escDrawtext(g.text)}':fontsize=${g.fontsize}:fontcolor=${g.color}:x=(w-text_w)/2:y=${y}:box=${g.box ? 1 : 0}:boxcolor=black@0.6:enable='between(t,${sec(g.start_ms)},${sec(g.end_ms)})'${out}`,
+      `${vcur}drawtext=${gfxFont}${textArg}:fontsize=${g.fontsize}:fontcolor=${g.color}:x=(w-text_w)/2:y=${y}:box=${g.box ? 1 : 0}:boxcolor=black@0.6:enable='between(t,${sec(g.start_ms)},${sec(g.end_ms)})'${out}`,
     );
     vcur = out;
   }
@@ -541,12 +564,18 @@ export async function runExport(
     start_ms: hf.start_ms,
     end_ms: hf.end_ms,
   }));
+  const graphicTexts = plan.graphics.map((g, i) => {
+    const path = join(exportsDir(), `${projectId}-${stamp}-gfx${i}.txt`);
+    writeFileSync(path, g.text);
+    return path;
+  });
   const { args } = buildFfmpegArgs(plan, srtPath, outPath, {
     burnCaptions: options?.burnCaptions,
     fontfile: gfxFont.fontfile,
     headingFace,
     captionFace,
     hyperframes: hfRenders,
+    graphicTexts,
   });
   options?.onStage?.("rendering");
   const logPath = join(exportsDir(), `${projectId}-${stamp}.log`);

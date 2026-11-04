@@ -146,6 +146,31 @@ describe("export builder", () => {
     assert.ok(args.includes("libx264") && args.includes("yuv420p"));
   });
 
+  it("reads staged card text from disk with expansion off", async () => {
+    const { buildFfmpegArgs } = await import("../lib/export");
+    const { filter } = buildFfmpegArgs(
+      plan({
+        graphics: [
+          { start_ms: 0, end_ms: 1000, text: "It's 50% off: wow", y_pct: 50, fontsize: 40, color: "white", box: false },
+        ],
+      }),
+      null,
+      "/o/out.mp4",
+      { graphicTexts: ["/o/gfx0.txt"] },
+    );
+    assert.match(filter, /textfile='\/o\/gfx0\.txt':expansion=none/);
+    assert.doesNotMatch(filter, /It's/);
+  });
+
+  it("validates drawtext colors", async () => {
+    const { isDrawtextColor } = await import("../lib/export");
+    assert.equal(isDrawtextColor("white"), true);
+    assert.equal(isDrawtextColor("#0b5fff"), true);
+    assert.equal(isDrawtextColor("black@0.6"), true);
+    assert.equal(isDrawtextColor("white,drawtext=textfile=/etc/passwd"), false);
+    assert.equal(isDrawtextColor("red'; rm -rf /"), false);
+  });
+
   it("escapes drawtext metacharacters", async () => {
     const { buildFfmpegArgs } = await import("../lib/export");
     const { filter } = buildFfmpegArgs(

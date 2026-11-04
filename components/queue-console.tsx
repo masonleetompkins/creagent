@@ -377,10 +377,10 @@ export default function QueueConsole(): React.ReactNode {
         }
       });
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "job failed");
-      reportResult(label, done.result);
       await refresh();
       if (targetSlot) await openSlot(targetSlot);
       else setSelected(null);
+      reportResult(label, done.result);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -490,6 +490,9 @@ export default function QueueConsole(): React.ReactNode {
   }
 
   async function markPosted(id: string): Promise<void> {
+    if (!window.confirm("Mark this slot posted? This is just a label — it doesn't post anything.")) {
+      return;
+    }
     if (publishHistory.some((h) => IN_FLIGHT.has(h.status))) {
       setPublishResult({
         ok: false,
@@ -520,6 +523,12 @@ export default function QueueConsole(): React.ReactNode {
   }
 
   async function publishNow(id: string): Promise<void> {
+    const slot = slots.find((s) => s.id === id) ?? selected;
+    const future = slot && Date.parse(slot.scheduled_at) > Date.now();
+    const action = future ? `schedule this post for ${slot ? fmtTime(slot.scheduled_at) : "later"}` : "POST THIS NOW to your connected accounts";
+    if (!window.confirm(`Are you sure you want to ${action}? This goes public.`)) {
+      return;
+    }
     setPublishing(true);
     setPublishResult(null);
     try {
@@ -877,18 +886,26 @@ export default function QueueConsole(): React.ReactNode {
           }),
         }),
       )) as { jobId: string };
+      let finished = false;
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const job = (await readJson(await fetch(`/api/jobs/${started.jobId}`))) as {
           state: string;
           failedReason?: string;
         };
-        if (job.state === "completed") break;
+        if (job.state === "completed") {
+          finished = true;
+          break;
+        }
         if (job.state === "failed") throw new Error(job.failedReason ?? "agent turn failed");
       }
       setAgentInput("");
       if (agentBoxRef.current) agentBoxRef.current.style.height = "auto";
-      setAgentNote("Done — the schedule below is updated. The full conversation is in the agent panel.");
+      setAgentNote(
+        finished
+          ? "Done — the schedule below is updated. The full conversation is in the agent panel."
+          : "Still working in the background — the schedule below updates when the agent finishes.",
+      );
       window.dispatchEvent(new CustomEvent("creagent:agent-updated"));
       await refresh();
     } catch (e) {

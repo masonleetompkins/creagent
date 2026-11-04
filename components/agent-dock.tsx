@@ -75,7 +75,7 @@ export default function AgentDock(): React.ReactNode {
       const typing =
         t !== null &&
         (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
-      if (e.altKey && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "a" && !typing) {
+      if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyA" && !typing) {
         e.preventDefault();
         onToggle();
       }

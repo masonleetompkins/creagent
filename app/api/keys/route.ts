@@ -34,6 +34,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (typeof key !== "string") {
     return NextResponse.json({ error: "key must be a string" }, { status: 400 });
   }
+  const { clear } = body as { clear?: unknown };
+  if (!key.trim() && clear !== true) {
+    return NextResponse.json(
+      { error: "empty key — type a key to save, or confirm clearing it" },
+      { status: 400 },
+    );
+  }
   saveKey(provider, key);
   return NextResponse.json({
     ok: true,

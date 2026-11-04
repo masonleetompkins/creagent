@@ -34,6 +34,19 @@ describe("splitApprovedCopy", () => {
     assert.match(slides[1].heading, /cont\./);
   });
 
+  it("drops the caption and splits on SLIDE markers", async () => {
+    const { splitApprovedCopy } = await import("../lib/carousel-copy");
+    const slides = splitApprovedCopy(
+      "Hook line here. Agree? #a #b\n\nSLIDE 1: Cover hook opens loop\n\nSLIDE 2: Because of that, point two.\n\nSLIDE 3: Payoff plus comment CTA",
+    );
+    assert.equal(slides.length, 3);
+    assert.ok(!slides.some((s) => `${s.heading} ${s.body}`.includes("#a")));
+    assert.ok(!slides.some((s) => s.heading.toLowerCase().startsWith("slide")));
+    assert.equal(slides[0].layout, "cover");
+    assert.equal(slides[2].layout, "cta");
+    assert.match(slides[0].heading, /Cover hook/);
+  });
+
   it("caps at ten slides and never returns empties", async () => {
     const { splitApprovedCopy } = await import("../lib/carousel-copy");
     const many = Array.from({ length: 14 }, (_, i) => `Point ${i + 1}`).join("\n\n");

@@ -51,7 +51,18 @@ const MAX_COPY_SLIDES = 10;
 const MAX_BODY_CHARS = 220;
 
 export function splitApprovedCopy(text: string): CopySlide[] {
-  const blocks = text
+  // The carousel guide writes "Caption first, then SLIDE 1..7 markers".
+  // The caption ships as the post caption (see extractPostCaption), never
+  // as a slide; each SLIDE block becomes exactly one slide.
+  let slidesText = text;
+  const firstMarker = text.search(/(?:^|\n)\s*\*{0,2}slide\s*1\b/i);
+  if (firstMarker >= 0) {
+    slidesText = text
+      .slice(firstMarker)
+      .replace(/(?:^|\n)\s*\*{0,2}slide\s*\d+\s*:?\*{0,2}\s*/gi, "\n\n")
+      .trim();
+  }
+  const blocks = slidesText
     .split(/\n\s*\n|(?:^|\n)\s*---\s*(?:\n|$)/)
     .map((b) => b.replace(/^(?:\s*\d+[.)]\s*)/, "").trim())
     .filter(Boolean);

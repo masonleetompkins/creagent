@@ -238,17 +238,22 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     }
   }
 
+  async function saveSlideQuiet(): Promise<void> {
+    if (!current) return;
+    await readJson(
+      await fetch(`/api/carousels/slides/${current.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ layout: draft.layout, heading: draft.heading, body: draft.body }),
+      }),
+    );
+    await load();
+  }
+
   async function saveSlide(): Promise<void> {
     if (!current) return;
     try {
-      await readJson(
-        await fetch(`/api/carousels/slides/${current.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ layout: draft.layout, heading: draft.heading, body: draft.body }),
-        }),
-      );
-      await load();
+      await saveSlideQuiet();
       setNote("Slide saved.");
     } catch (e) {
       setError((e as Error).message);
@@ -279,11 +284,21 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   }
 
   async function decideRequest(id: string, decision: "approve" | "reject"): Promise<void> {
+    setBusy(true);
     try {
-      await readJson(await fetch(`/api/gen-requests/${id}/${decision}`, { method: "POST" }));
+      const data = await readJson(await fetch(`/api/gen-requests/${id}/${decision}`, { method: "POST" }));
+      if (decision === "approve" && typeof data.jobId === "string") {
+        setNote("Generating image…");
+        const done = await pollJob(data.jobId);
+        if (done.state === "failed") throw new Error((done.failedReason as string) ?? "image job failed");
+        setImgTick((t) => t + 1);
+      }
       await load();
+      if (decision === "approve") setNote("Image ready.");
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -551,7 +566,9 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   async function renderAllSlides(): Promise<HTMLCanvasElement[]> {
     const out: HTMLCanvasElement[] = [];
     for (const s of slides) {
-      const image = s.image_path ? await loadImage(`/api/carousels/slides/${s.id}/image`).catch(() => null) : null;
+      const image = s.image_path
+        ? await loadImage(`/api/carousels/slides/${s.id}/image?cb=${Date.now()}`).catch(() => null)
+        : null;
       let regions: Region[] = [];
       if (s.image_path) {
         try {
@@ -579,6 +596,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
   async function exportAll(): Promise<void> {
     setBusy(true);
     try {
+      await saveSlideQuiet();
       const rendered = await renderAllSlides();
       for (let i = 0; i < rendered.length; i++) {
         download(rendered[i], `slide-${String(i + 1).padStart(2, "0")}.png`);
@@ -605,6 +623,20 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
     if (!project?.slot_id || slides.length === 0) return;
     setBusy(true);
     try {
+      await saveSlideQuiet();
+      // Replace, don't append: clear prior slide images so publish never
+      // ships duplicate sets.
+      try {
+        const prior = await readJson(await fetch(`/api/slots/${project.slot_id}/attachments`));
+        const images = ((prior.attachments as { id: string; kind: string }[]) ?? []).filter(
+          (a) => a.kind === "image",
+        );
+        for (const a of images) {
+          await fetch(`/api/attachments/${a.id}`, { method: "DELETE" });
+        }
+      } catch {
+        /* attach still proceeds; worst case is the old append behavior */
+      }
       const rendered = await renderAllSlides();
       for (let i = 0; i < rendered.length; i++) {
         const blob = await canvasBlob(rendered[i]);

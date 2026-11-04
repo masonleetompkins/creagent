@@ -461,7 +461,8 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
 
   const applyTakes = useCallback(async () => {
     if (!detail || !transcriptAsset) return;
-    const v1 = detail.tracks.find((t) => t.kind === "video");
+    const v1 = detail.tracks.find((t) => t.kind === "video" && t.name === "Main")
+      ?? detail.tracks.find((t) => t.kind === "video");
     if (!v1) {
       setError("no video track to apply takes to");
       return;
@@ -482,7 +483,8 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
   const addTakeToTimeline = useCallback(
     async (take: Take) => {
       if (!detail || !rawAsset) return;
-      const v1 = detail.tracks.find((t) => t.kind === "video");
+      const v1 = detail.tracks.find((t) => t.kind === "video" && t.name === "Main")
+      ?? detail.tracks.find((t) => t.kind === "video");
       if (!v1) return;
       await fetch(`/api/video-projects/${projectId}/clips`, {
         method: "POST",
@@ -593,7 +595,8 @@ export default function VideoEditor({ projectId }: { projectId: string }): React
 
   const splitAtPlayhead = useCallback(async () => {
     if (!detail) return;
-    const v1 = detail.tracks.find((t) => t.kind === "video");
+    const v1 = detail.tracks.find((t) => t.kind === "video" && t.name === "Main")
+      ?? detail.tracks.find((t) => t.kind === "video");
     if (!v1) return;
     const hit = v1.clips.find(
       (c) => playhead > c.start_ms && playhead < c.start_ms + c.duration_ms,
