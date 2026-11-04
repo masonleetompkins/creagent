@@ -9,9 +9,9 @@ import { generateStyledImageBytes } from "./carousel-image";
 import { resolveSlotOutline } from "./carousel-plan";
 import { getDb } from "./db";
 import { loadKeys } from "./keys";
-import { mediaDir, registerLocalFile } from "./media";
+import { getMedia, mediaDir, registerLocalFile } from "./media";
 import { getMetaClient, metaTextModel } from "./meta";
-import { getTranscript, type Word } from "./transcribe";
+import { detectSilences, getTranscript, type Silence, type Word } from "./transcribe";
 import { addClip, addTrack, deleteClip, getProjectDetail } from "./video";
 
 export type Statement = {
@@ -25,9 +25,15 @@ export type Statement = {
 };
 
 // Pure: split timed words into sentences, keeping asset timings.
+// Punctuation first, then word gaps, then measured speech pauses —
+// whisper words can arrive with none of the first two, which used to
+// collapse a whole take into one statement (and one scene).
 export function statementsFromWords(
   words: Word[],
+  options?: { sentenceGapMs?: number; silences?: Silence[] },
 ): Array<Pick<Statement, "index" | "text" | "assetId" | "startAssetMs" | "endAssetMs">> {
+  const sentenceGapMs = options?.sentenceGapMs ?? 600;
+  const silences = options?.silences ?? [];
   const out: Array<{ text: string; assetMs: [number, number]; words: Word[] }> = [];
   let current: Word[] = [];
   const flush = (): void => {
@@ -39,9 +45,18 @@ export function statementsFromWords(
     });
     current = [];
   };
+  let prev: Word | null = null;
+  let sentStart = 0;
   for (const w of words) {
+    if (prev && current.length > 0) {
+      const gap = w.start_ms - prev.end_ms >= sentenceGapMs;
+      const paused = silences.some((s) => s.start_ms >= sentStart && s.end_ms <= w.start_ms);
+      if (gap || paused) flush();
+    }
+    if (current.length === 0) sentStart = w.start_ms;
     current.push(w);
     if (/[.!?…]\s*$/.test(w.word)) flush();
+    prev = w;
   }
   flush();
   return out
@@ -71,7 +86,16 @@ export function collectStatements(projectId: string): Statement[] {
     if (!clip.asset_id || seenAssets.has(clip.asset_id)) continue;
     seenAssets.add(clip.asset_id);
     const { words } = getTranscript(clip.asset_id);
-    for (const st of statementsFromWords(words)) {
+    // Measured pauses steer splits when punctuation/gaps are absent —
+    // best effort, the timing heuristics still run without them.
+    let silences: Silence[] = [];
+    try {
+      const media = getMedia(clip.asset_id);
+      silences = media ? detectSilences(media.path) : [];
+    } catch {
+      silences = [];
+    }
+    for (const st of statementsFromWords(words, { silences })) {
       const host = clips.find(
         (c) =>
           c.asset_id === clip.asset_id &&

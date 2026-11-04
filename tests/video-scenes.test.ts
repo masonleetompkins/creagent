@@ -42,6 +42,28 @@ describe("statementsFromWords", () => {
     assert.equal(out.length, 1);
     assert.equal(out[0].text, "trailing thought");
   });
+
+  it("splits flat unpunctuated words at gaps and measured pauses", async () => {
+    const { statementsFromWords } = await import("../lib/video-scenes");
+    const flat = [
+      { word: "alpha", start_ms: 0, end_ms: 200, conf: null },
+      { word: "beta", start_ms: 200, end_ms: 400, conf: null },
+      { word: "gamma", start_ms: 400, end_ms: 600, conf: null },
+      { word: "delta", start_ms: 600, end_ms: 800, conf: null },
+      { word: "epsilon", start_ms: 800, end_ms: 1000, conf: null },
+      { word: "zeta", start_ms: 1000, end_ms: 1200, conf: null },
+    ];
+    const paused = statementsFromWords(flat, { silences: [{ start_ms: 450, end_ms: 550 }] });
+    assert.equal(paused.length, 2);
+    assert.equal(paused[0].text, "alpha beta gamma");
+    assert.equal(paused[1].text, "delta epsilon zeta");
+    assert.equal(paused[1].startAssetMs, 600);
+    const gapped = statementsFromWords([
+      { word: "one", start_ms: 0, end_ms: 200, conf: null },
+      { word: "two", start_ms: 2000, end_ms: 2200, conf: null },
+    ]);
+    assert.equal(gapped.length, 2);
+  });
 });
 
 describe("parseSceneJson", () => {
