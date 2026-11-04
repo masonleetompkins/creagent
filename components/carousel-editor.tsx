@@ -740,7 +740,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
 
       <div className="edgrid work">
         <div>
-          <section className="keycard">
+          <section className="keycard" style={{ marginTop: 0 }}>
             <h2>Photo library</h2>
             <p className="muted">Upload once, analyze, reuse across every carousel.</p>
           <div className="row">
@@ -887,6 +887,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
             </section>
         </div>
         <div>
+          <section className="keycard" style={{ marginTop: 0 }}>
           <h2>Slides ({slides.length})</h2>
           <div className="ced-slides">
             {slides.map((s, i) => (
@@ -907,6 +908,7 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
               </button>
             ))}
           </div>
+          </section>
         </div>
         <div>
             <section className="keycard" style={{ marginTop: 0 }}>
