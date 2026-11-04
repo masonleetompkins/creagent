@@ -2205,7 +2205,7 @@ a.asset-chip:hover {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  overflow: hidden;
+  overflow: visible;
 }
 .edgrid.work > div:first-child > section,
 .edgrid.work > div:last-child > section:first-child {
