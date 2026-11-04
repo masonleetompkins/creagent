@@ -154,6 +154,70 @@ describe("draftCarouselFromSlot full build", () => {
   });
 });
 
+describe("resolveSlotOutline", () => {
+  async function seedSlot(withPin: boolean): Promise<string> {
+    const { getDb, nowIso } = await import("../lib/db");
+    const db = getDb();
+    const slotId = randomUUID();
+    const ts = nowIso();
+    db.prepare(
+      `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, created_at)
+       VALUES (?, ?, 'carousel', '[]', 'orange', ?)`,
+    ).run(slotId, "2026-11-01T09:00:00.000Z", ts);
+    const struct = JSON.stringify({
+      layout: "pick-one",
+      options: [
+        { label: "A", body: "Caption A\n\nSLIDE 1: hook A" },
+        { label: "B", body: "Caption B\n\nSLIDE 1: hook B" },
+      ],
+    });
+    const oldId = randomUUID();
+    db.prepare(
+      `INSERT INTO drafts (id, slot_id, kind, body, status, created_at, structure, selection)
+       VALUES (?, ?, 'carousel', 'old', 'draft', ?, ?, '1')`,
+    ).run(oldId, slotId, "2026-11-01T08:00:00.000Z", struct);
+    if (withPin) {
+      db.prepare(`UPDATE queue_slots SET approved_draft_id = ?, approved_option = 1 WHERE id = ?`).run(
+        oldId,
+        slotId,
+      );
+    }
+    return slotId;
+  }
+
+  it("prefers the approved pick", async () => {
+    const { resolveSlotOutline } = await import("../lib/carousel-copy");
+    const slotId = await seedSlot(true);
+    assert.match(resolveSlotOutline(slotId), /hook B/);
+  });
+
+  it("falls back to the newest draft's selection", async () => {
+    const { getDb } = await import("../lib/db");
+    const { resolveSlotOutline } = await import("../lib/carousel-copy");
+    const slotId = await seedSlot(false);
+    // Newest unapproved draft has selection=1 -> option B.
+    assert.match(resolveSlotOutline(slotId), /hook B/);
+    // Whole-body prose (structure cleared by edit) comes back whole.
+    getDb()
+      .prepare(`UPDATE drafts SET body = ?, structure = NULL, selection = NULL WHERE slot_id = ?`)
+      .run("My revised outline\n\nSLIDE 1: mine", slotId);
+    assert.equal(resolveSlotOutline(slotId), "My revised outline\n\nSLIDE 1: mine");
+  });
+
+  it("returns empty when the slot has no drafts", async () => {
+    const { getDb, nowIso } = await import("../lib/db");
+    const { resolveSlotOutline } = await import("../lib/carousel-copy");
+    const slotId = randomUUID();
+    getDb()
+      .prepare(
+        `INSERT INTO queue_slots (id, scheduled_at, content_type, platforms, status, created_at)
+         VALUES (?, ?, 'carousel', '[]', 'red', ?)`,
+      )
+      .run(slotId, "2026-11-01T09:00:00.000Z", nowIso());
+    assert.equal(resolveSlotOutline(slotId), "");
+  });
+});
+
 describe("edit_slide agent tool", () => {
   it("edits layout and background as well as copy", async () => {
     const { AGENT_TOOLS } = await import("../lib/agent-tools");

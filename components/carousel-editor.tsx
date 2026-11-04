@@ -372,7 +372,12 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
       );
       const done = await pollJob(started.jobId as string);
       if (done.state === "failed") throw new Error((done.failedReason as string) ?? "copy job failed");
-      setNote(`Copy ready: ${JSON.stringify(done.result ?? {})}`);
+      const seeded = ((done.result ?? {}) as { seeded?: unknown }).seeded === true;
+      setNote(
+        seeded
+          ? `Copy ready — written from your slot outline (${JSON.stringify(done.result ?? {})}).`
+          : `Copy ready — fresh angle, no outline on this slot (${JSON.stringify(done.result ?? {})}).`,
+      );
       setSel(0);
       await load();
     } catch (e) {

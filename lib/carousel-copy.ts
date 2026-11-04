@@ -108,7 +108,36 @@ export function splitApprovedCopy(text: string): CopySlide[] {
 export type CarouselCopyResult = {
   slides: number;
   replaced: boolean;
+  seeded: boolean;
 };
+
+// The copy Generate-copy must honor on a slot-linked project: the approved
+// pick first, else the newest draft's selected option (or full body). The
+// user revised that text by hand — inventing a fresh post instead is the
+// "random new post" bug.
+export function resolveSlotOutline(slotId: string): string {
+  const db = getDb();
+  const slot = db
+    .prepare(`SELECT approved_draft_id, approved_option FROM queue_slots WHERE id = ?`)
+    .get(slotId) as { approved_draft_id: string | null; approved_option: number | null } | undefined;
+  if (slot?.approved_draft_id) {
+    const pinned = db
+      .prepare(`SELECT body, structure FROM drafts WHERE id = ?`)
+      .get(slot.approved_draft_id) as { body: string; structure: string | null } | undefined;
+    if (pinned) {
+      const text = approvedBody(pinned, slot.approved_option).trim();
+      if (text) return text;
+    }
+  }
+  const latest = db
+    .prepare(
+      `SELECT body, structure, selection FROM drafts WHERE slot_id = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(slotId) as { body: string; structure: string | null; selection: string | null } | undefined;
+  if (!latest) return "";
+  const parsed = Number.parseInt(latest.selection ?? "", 10);
+  return approvedBody(latest, Number.isNaN(parsed) ? 0 : parsed).trim();
+}
 
 // Image-draft pipeline: approved queue-slot copy -> parsed slides ->
 // auto-matched library photos -> art direction (layouts + backgrounds).
@@ -193,6 +222,7 @@ export async function runCarouselCopy(
   const context = buildDraftContext(
     hits.map((h) => ({ doc_type: h.doc_type, title: h.title, body: h.body })),
   );
+  const outline = project.slot_id ? resolveSlotOutline(project.slot_id) : "";
 
   const client = getMetaClient(metaKey);
   const input = `You write Instagram carousel copy for a creator. Match their voice from the VAULT CONTEXT.
@@ -200,8 +230,9 @@ export async function runCarouselCopy(
 Carousel title: ${project.title}
 ${pillarLine}
 ${brief ? `Brief: ${brief}` : "Brief: (none — pick the strongest angle yourself)"}
+${outline ? `\nUSER'S OUTLINE — follow it faithfully. Expand it into slides; do NOT invent a new topic:\n${outline.slice(0, 4000)}` : ""}
 
-Write exactly ${numSlides} slides. Slide 1 is the cover hook, the last slide is a CTA (follow/save/comment). Respond with ONLY a JSON array, no prose, shaped like:
+${outline ? `Expand the outline above into exactly ${numSlides} slides.` : `Write exactly ${numSlides} slides.`} Slide 1 is the cover hook, the last slide is a CTA (follow/save/comment). Respond with ONLY a JSON array, no prose, shaped like:
 [{"heading": "short punchy line", "body": "1-3 supporting lines", "layout": "cover|content|photo|cta", "image_idea": "one-line visual idea for this slide"}]
 
 VAULT CONTEXT:
@@ -241,5 +272,5 @@ ${context}`;
       updateSlide(created.id, { image_prompt: s.image_idea.slice(0, 500) });
     }
   }
-  return { slides: slides.length, replaced };
+  return { slides: slides.length, replaced, seeded: outline.length > 0 };
 }
