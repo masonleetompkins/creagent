@@ -33,7 +33,7 @@ function normalize(word: string): string {
   return word.toLowerCase().replace(/[^a-z0-9'\- ]/g, "").trim();
 }
 
-function splitSentences(words: Word[]): Sentence[] {
+function splitSentences(words: Word[], sentenceGapMs: number): Sentence[] {
   const out: Sentence[] = [];
   let current: Word[] = [];
   const flush = (): void => {
@@ -55,9 +55,14 @@ function splitSentences(words: Word[]): Sentence[] {
     });
     current = [];
   };
+  // Whisper word tokens often carry no punctuation at all — without the gap
+  // rule a whole take collapses into one sentence and the cut finds nothing.
+  let prev: Word | null = null;
   for (const w of words) {
+    if (prev && current.length > 0 && w.start_ms - prev.end_ms >= sentenceGapMs) flush();
     current.push(w);
     if (END_PUNCT.test(w.word.trim()) || /[.!?]/.test(w.word)) flush();
+    prev = w;
   }
   flush();
   return out;
@@ -70,17 +75,62 @@ function overlap(a: Sentence, b: Sentence): number {
   return hit / Math.max(a.tokens.length, b.tokens.length);
 }
 
+function tokenizeText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9'\- ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+// Script relevance: a kept line that shares almost nothing with any script
+// sentence is probably off-script rambling — park it as unsure (one click
+// from the timeline) instead of cutting it outright. Short lines are
+// exempt: "yeah, that's right" can't overlap much with anything.
+function demoteOffScript(takes: Take[], script: string | undefined, minOverlap: number): void {
+  if (!script?.trim()) return;
+  const refs = script
+    .split(/[.!?\n]+/g)
+    .map(tokenizeText)
+    .filter((t) => t.length > 0);
+  if (refs.length === 0) return;
+  for (const t of takes) {
+    if (t.verdict !== "keep") continue;
+    const tokens = tokenizeText(t.text);
+    if (tokens.length < 4) continue;
+    let best = 0;
+    for (const ref of refs) {
+      const set = new Set(ref);
+      const hit = tokens.filter((tok) => set.has(tok)).length;
+      best = Math.max(best, hit / Math.max(tokens.length, ref.length));
+    }
+    if (best < minOverlap) {
+      t.verdict = "unsure";
+      t.label = `${t.label} (off-script?)`;
+    }
+  }
+}
+
 // Pure: cluster sentences into takes and score them.
 export function detectTakes(
   words: Word[],
-  options?: { similarity?: number; silenceMs?: number; handleMs?: number; minConf?: number },
+  options?: {
+    similarity?: number;
+    silenceMs?: number;
+    handleMs?: number;
+    minConf?: number;
+    sentenceGapMs?: number;
+    script?: string;
+    scriptMinOverlap?: number;
+  },
 ): Take[] {
   const similarity = options?.similarity ?? 0.75;
   const silenceMs = options?.silenceMs ?? 1200;
   const handleMs = options?.handleMs ?? 120;
   const minConf = options?.minConf ?? 0.3;
+  const sentenceGapMs = options?.sentenceGapMs ?? 600;
   const takes: Take[] = [];
-  const sentences = splitSentences(words).filter((s) => s.tokens.length > 0);
+  const sentences = splitSentences(words, sentenceGapMs).filter((s) => s.tokens.length > 0);
 
   // Cluster near-duplicate sentences (repeated takes of the same line).
   const clusterOf = new Array<number>(sentences.length).fill(-1);
@@ -150,6 +200,8 @@ export function detectTakes(
       });
     });
   }
+
+  demoteOffScript(takes, options?.script, options?.scriptMinOverlap ?? 0.2);
 
   // Silence between consecutive words becomes cut regions.
   for (let i = 1; i < words.length; i++) {

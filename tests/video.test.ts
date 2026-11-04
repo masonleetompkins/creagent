@@ -141,4 +141,31 @@ describe("detectTakes", () => {
     const takes = autocut.detectTakes(words("mumble mumble.", 0, 0.1));
     assert.equal(takes[0].verdict, "unsure");
   });
+
+  it("splits unpunctuated whisper words at speech gaps", async () => {
+    const { autocut } = await libs();
+    const takes = autocut.detectTakes(
+      words("imagine trading snacks at school", 0).concat(words("cupcake costs ten cookies", 5000)),
+    );
+    const lines = takes.filter((t) => t.label === "line");
+    assert.equal(lines.length, 2);
+    assert.ok(lines.every((t) => t.verdict === "keep"));
+  });
+
+  it("parks off-script rambling as unsure, keeps on-script and short lines", async () => {
+    const { autocut } = await libs();
+    const script = "Imagine you're trading snacks at school. I say my cupcake costs ten cookies.";
+    const takes = autocut.detectTakes(
+      words("imagine you are trading snacks at school", 0)
+        .concat(words("yesterday I drove to the grocery store for milk", 5000))
+        .concat(words("yeah that's right", 10000)),
+      { script },
+    );
+    const lines = takes.filter((t) => t.label.startsWith("line"));
+    assert.equal(lines.length, 3);
+    assert.equal(lines[0].verdict, "keep");
+    assert.equal(lines[1].verdict, "unsure");
+    assert.match(lines[1].label, /off-script/);
+    assert.equal(lines[2].verdict, "keep");
+  });
 });

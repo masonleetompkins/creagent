@@ -1,11 +1,14 @@
 // Agent video autonomy: approved script + attached footage -> rough cut.
 // For each new video attachment on the slot: register, transcribe, auto-cut
-// takes, lay keeps on the Main track. Slot goes orange for user review.
+// takes against the script, lay keeps on the Main track, then generate
+// captions for the fresh cut. Slot goes orange for user review.
 import { randomUUID } from "node:crypto";
 import { getDb, nowIso } from "./db";
 import { detectTakes, saveTakes } from "./autocut";
+import { clearCaptions, generateCaptions } from "./captions";
+import { resolveSlotOutline } from "./carousel-plan";
 import { registerLocalFile } from "./media";
-import { getTranscript, runTranscription } from "./transcribe";
+import { getTranscript, runTranscription, type Word } from "./transcribe";
 import { attachmentPath, listAttachments } from "./uploads";
 import { addClip, addTrack } from "./video";
 
@@ -74,10 +77,20 @@ export async function runSlotAutoEdit(
   const projectId = findOrCreateVideoProject(slotId, `Video — ${slot.content_type} — ${date}`);
   const trackId = mainTrackId(projectId);
 
+  // The approved script steers take selection; a missing/failed lookup
+  // just means no script check, never a failed cut.
+  let script = "";
+  try {
+    script = resolveSlotOutline(slotId);
+  } catch {
+    script = "";
+  }
+
   let assets = 0;
   let clips = 0;
   let takes = 0;
   let done = 0;
+  const captioned: Array<{ assetId: string; words: Word[] }> = [];
   for (const file of footage) {
     const disk = attachmentPath(file.id);
     if (!disk) continue;
@@ -92,7 +105,7 @@ export async function runSlotAutoEdit(
     await runTranscription(asset.id);
     onStage?.("takes", `Detecting takes in ${file.filename}`);
     const { transcript, words } = getTranscript(asset.id);
-    const detected = transcript ? saveTakes(transcript.id, detectTakes(words)) : [];
+    const detected = transcript ? saveTakes(transcript.id, detectTakes(words, { script })) : [];
     const kept = detected.filter((t) => t.verdict === "keep");
     takes += kept.length > 0 ? kept.length : 0;
     onStage?.("timeline", "Laying keeps on the Main track");
@@ -112,6 +125,16 @@ export async function runSlotAutoEdit(
         words.length > 0 ? words[words.length - 1].end_ms : 10000;
       addClip({ trackId, assetId: asset.id, name: file.filename, inMs: 0, durationMs: fallback });
       clips++;
+    }
+    captioned.push({ assetId: asset.id, words });
+  }
+  // Fresh cut, fresh captions: replace any stale blocks, then caption each
+  // newly cut asset from its transcript mapped onto the timeline.
+  if (captioned.length > 0) {
+    onStage?.("captions", "Generating captions for the cut");
+    clearCaptions(projectId);
+    for (const c of captioned) {
+      generateCaptions(projectId, c.assetId, c.words);
     }
   }
   db.prepare(`UPDATE queue_slots SET status = 'orange' WHERE id = ?`).run(slotId);
