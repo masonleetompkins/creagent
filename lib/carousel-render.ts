@@ -78,26 +78,40 @@ export function inkForBackground(
   return luminance(rgb) > 0.35 ? kit.secondary : "#ffffff";
 }
 
-function wrap(
+// Newline-aware wrap: each paragraph wraps on its own, single breaks
+// become line breaks, blank lines become paragraph gaps — so textarea
+// edits land on the canvas exactly as typed.
+export function wrap(
   ctx: CanvasRenderingContext2D,
   text: string,
   maxWidth: number,
   maxLines: number,
 ): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = word;
+  const paras = text.split("\n");
+  for (let p = 0; p < paras.length; p++) {
+    if (lines.length >= maxLines) break;
+    const words = paras[p].split(/\s+/).filter(Boolean);
+    if (words.length === 0) {
+      if (lines.length > 0 && p < paras.length - 1) lines.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        lines.push(line);
+        line = word;
+        if (lines.length === maxLines) return lines;
+      } else {
+        line = test;
+      }
+    }
+    if (line) {
       if (lines.length === maxLines) return lines;
-    } else {
-      line = test;
+      lines.push(line);
     }
   }
-  if (line && lines.length < maxLines) lines.push(line);
   return lines;
 }
 

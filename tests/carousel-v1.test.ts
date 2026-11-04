@@ -80,6 +80,26 @@ describe("clearBand / bandTopClearOf", () => {
   });
 });
 
+describe("wrap", () => {
+  const stub = { measureText: (s: string) => ({ width: s.length * 10 }) };
+
+  it("honors single breaks, blank lines, and trims edges", async () => {
+    const { wrap } = await import("../lib/carousel-render");
+    const ctx = stub as unknown as CanvasRenderingContext2D;
+    assert.deepEqual(wrap(ctx, "a\nb", 1000, 5), ["a", "b"]);
+    assert.deepEqual(wrap(ctx, "a\n\nb", 1000, 5), ["a", "", "b"]);
+    assert.deepEqual(wrap(ctx, "\na\n", 1000, 5), ["a"]);
+  });
+
+  it("still wraps on spaces and caps lines", async () => {
+    const { wrap } = await import("../lib/carousel-render");
+    const ctx = stub as unknown as CanvasRenderingContext2D;
+    assert.deepEqual(wrap(ctx, "aa bb cc", 45, 5), ["aa", "bb", "cc"]);
+    assert.deepEqual(wrap(ctx, "a\nb\nc", 1000, 2), ["a", "b"]);
+    assert.deepEqual(wrap(ctx, "abcdefgh", 10, 5), ["abcdefgh"]);
+  });
+});
+
 describe("photo regions", () => {
   it("adds, lists, and deletes zones; rejects out-of-bounds boxes", async () => {
     const { addRegion, deleteRegion, listRegions } = await import("../lib/photo-regions");
