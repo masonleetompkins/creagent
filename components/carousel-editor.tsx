@@ -817,10 +817,18 @@ export default function CarouselEditor({ projectId }: { projectId: string }): Re
           Generate copy
         </button>
         <button disabled={busy} onClick={() => void runCopyJob(true)}>Replace</button>
-        <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/autopick`, {}, "Auto-picked")}>
+        <button
+          disabled={busy || slides.length === 0}
+          onClick={() => void runAgentJob(`/api/carousels/${projectId}/autopick`, {}, "Auto-picked")}
+          title={slides.length === 0 ? "Generate copy first — there are no slides to match yet" : undefined}
+        >
           Auto-pick photos
         </button>
-        <button disabled={busy} onClick={() => void runAgentJob(`/api/carousels/${projectId}/plan-images`, {}, "Planned")}>
+        <button
+          disabled={busy || slides.length === 0}
+          onClick={() => void runAgentJob(`/api/carousels/${projectId}/plan-images`, {}, "Planned")}
+          title={slides.length === 0 ? "Generate copy first — there are no slides to plan for yet" : undefined}
+        >
           Plan images
         </button>
         <button disabled={busy || slides.length === 0} onClick={() => void runAutoDesign()} title="Let the model art-direct every slide's layout and background">

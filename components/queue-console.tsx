@@ -768,9 +768,26 @@ export default function QueueConsole(): React.ReactNode {
   async function openCarousel(slot: Slot): Promise<void> {
     try {
       const list = await readJson(await fetch("/api/carousels"));
-      const existing = ((list.projects ?? []) as { id: string; slot_id: string | null }[]).find(
-        (p) => p.slot_id === slot.id,
-      );
+      const existing = (
+        (list.projects ?? []) as { id: string; slot_id: string | null; slide_count?: number }[]
+      ).find((p) => p.slot_id === slot.id);
+      // A project with slides resumes as-is. An empty shell (or none) with
+      // approved copy gets the full build instead of a dead-end editor.
+      if (existing && (existing.slide_count ?? 0) > 0) {
+        window.location.href = `/carousels/${existing.id}`;
+        return;
+      }
+      if (slot.approved_draft_id) {
+        if (existing) {
+          try {
+            await readJson(await fetch(`/api/carousels/${existing.id}`, { method: "DELETE" }));
+          } catch {
+            // Build anyway; worst case is a leftover empty shell.
+          }
+        }
+        await imageDraft(slot);
+        return;
+      }
       if (existing) {
         window.location.href = `/carousels/${existing.id}`;
         return;
